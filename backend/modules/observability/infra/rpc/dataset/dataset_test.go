@@ -1,4 +1,4 @@
-// Copyright (c) 2025 coze-dev Authors
+// Copyright (c) 2025 ynet Authors
 // SPDX-License-Identifier: Apache-2.0			Type:       int64(dataset_domain.ItemErrorType_MismatchSchema),
 package dataset
 
