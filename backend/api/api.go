@@ -140,7 +140,11 @@ func Start(handler *apis.APIHandler) {
 	bindConfig := binding.NewBindConfig()
 	bindConfig.UseThirdPartyJSONUnmarshaler(js_conv.GetUnmarshaler())
 
-	h := server.Default(server.WithHostPorts(":8889"), server.WithBindConfig(bindConfig), server.WithMaxRequestBodySize(20*1024*1024))
+	listenAddr := os.Getenv("LISTEN_ADDR")
+	if listenAddr == "" {
+		listenAddr = ":8888"
+	}
+	h := server.Default(server.WithHostPorts(listenAddr), server.WithBindConfig(bindConfig), server.WithMaxRequestBodySize(20*1024*1024))
 
 	h.Use(observability.HTTPRequestsMiddleware())
 	h.GET("/metrics", observability.MetricsHandler())
