@@ -69,6 +69,7 @@ require (
 	github.com/panjf2000/ants/v2 v2.11.3
 	github.com/parquet-go/parquet-go v0.25.0
 	github.com/pkg/errors v0.9.2-0.20201214064552-5dd12d0cfe7f
+	github.com/prometheus/client_golang v1.20.0
 	github.com/redis/go-redis/v9 v9.7.3
 	github.com/rs/xid v1.6.0
 	github.com/saintfish/chardet v0.0.0-20230101081208-5e3ef4b5456d
@@ -99,7 +100,15 @@ require (
 	gorm.io/plugin/soft_delete v1.2.1
 )
 
-require github.com/grpc-ecosystem/grpc-gateway/v2 v2.27.1 // indirect
+require (
+	github.com/beorn7/perks v1.0.1 // indirect
+	github.com/grpc-ecosystem/grpc-gateway/v2 v2.27.1 // indirect
+	github.com/kylelemons/godebug v1.1.0 // indirect
+	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
+	github.com/prometheus/client_model v0.6.1 // indirect
+	github.com/prometheus/common v0.55.0 // indirect
+	github.com/prometheus/procfs v0.15.1 // indirect
+)
 
 require (
 	cloud.google.com/go v0.116.0 // indirect
