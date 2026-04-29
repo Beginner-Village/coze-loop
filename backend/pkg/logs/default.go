@@ -110,6 +110,7 @@ func newDefaultLogger() Logger {
 	log := logrus.New()
 	log.SetFormatter(&customFormatter{})
 	log.SetLevel(logrus.InfoLevel)
+	log.SetOutput(NewWriter())
 	return &defaultLogger{log: log}
 }
 
