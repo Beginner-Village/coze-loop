@@ -38,6 +38,7 @@ import (
 	"github.com/coze-dev/coze-loop/backend/pkg/conf"
 	"github.com/coze-dev/coze-loop/backend/pkg/lang/js_conv"
 	"github.com/coze-dev/coze-loop/backend/pkg/observability"
+	"os"
 )
 
 func Init(
