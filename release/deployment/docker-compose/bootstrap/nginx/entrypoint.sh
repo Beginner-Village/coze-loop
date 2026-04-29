@@ -20,7 +20,7 @@ print_banner "Starting..."
 
 for i in $(seq 1 300); do
   if curl \
-      -s http://coze-loop-app:8888/ping \
+      -s http://coze-loop-app:8889/ping \
       2>/dev/null \
       | grep -q pong; then
     break
@@ -69,7 +69,7 @@ http {
 
         # app proxy
         location /api/ {
-            proxy_pass         http://coze-loop-app:8888;
+            proxy_pass         http://coze-loop-app:8889;
             proxy_http_version 1.1;
 
             proxy_set_header   Host \$host;

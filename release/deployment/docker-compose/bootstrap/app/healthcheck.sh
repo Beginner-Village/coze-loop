@@ -3,7 +3,7 @@
 set -e
 
 if wget \
-    -qO- http://localhost:8888/ping \
+    -qO- http://localhost:8889/ping \
     2>/dev/null \
     | grep -q pong; then
   exit 0

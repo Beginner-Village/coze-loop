@@ -138,7 +138,7 @@ func Start(handler *apis.APIHandler) {
 	bindConfig := binding.NewBindConfig()
 	bindConfig.UseThirdPartyJSONUnmarshaler(js_conv.GetUnmarshaler())
 
-	h := server.Default(server.WithBindConfig(bindConfig), server.WithMaxRequestBodySize(20*1024*1024))
+	h := server.Default(server.WithHostPorts(":8889"), server.WithBindConfig(bindConfig), server.WithMaxRequestBodySize(20*1024*1024))
 
 	register(h, handler)
 

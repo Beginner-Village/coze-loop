@@ -1,7 +1,7 @@
 service:
   type: ClusterIP
-  port: 8888
-  targetPort: 8888
+  port: 8889
+  targetPort: 8889
 
 image:
   registry: "docker.io"
