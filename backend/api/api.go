@@ -37,6 +37,7 @@ import (
 	"github.com/coze-dev/coze-loop/backend/loop_gen/coze/loop/prompt/lomanage"
 	"github.com/coze-dev/coze-loop/backend/pkg/conf"
 	"github.com/coze-dev/coze-loop/backend/pkg/lang/js_conv"
+	"github.com/coze-dev/coze-loop/backend/pkg/observability"
 )
 
 func Init(
@@ -139,6 +140,9 @@ func Start(handler *apis.APIHandler) {
 	bindConfig.UseThirdPartyJSONUnmarshaler(js_conv.GetUnmarshaler())
 
 	h := server.Default(server.WithHostPorts(":8889"), server.WithBindConfig(bindConfig), server.WithMaxRequestBodySize(20*1024*1024))
+
+	h.Use(observability.HTTPRequestsMiddleware())
+	h.GET("/metrics", observability.MetricsHandler())
 
 	register(h, handler)
 
