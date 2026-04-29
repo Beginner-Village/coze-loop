@@ -24,6 +24,7 @@ import (
 	"github.com/coze-dev/coze-loop/backend/pkg/json"
 	"github.com/coze-dev/coze-loop/backend/pkg/lang/conv"
 	"github.com/coze-dev/coze-loop/backend/pkg/logs"
+	"github.com/coze-dev/coze-loop/backend/pkg/observability"
 )
 
 type ExptCheckFn = func(ctx context.Context, expt *entity.Experiment, session *entity.Session) error
@@ -291,6 +292,8 @@ func (e *ExptMangerImpl) Run(ctx context.Context, exptID, runID, spaceID int64, 
 		return err
 	}
 
+	observability.LoopTaskTotal.WithLabelValues("queued").Inc()
+
 	return nil
 }
 
@@ -545,9 +548,30 @@ func (e *ExptMangerImpl) CompleteExpt(ctx context.Context, exptID, spaceID int64
 	}
 
 	e.mtr.EmitExptExecResult(spaceID, int64(got.ExptType), int64(status), gptr.Indirect(got.StartAt))
+
+	observability.LoopTaskTotal.WithLabelValues(exptStatusLabel(status)).Inc()
+	if got.StartAt != nil {
+		observability.LoopTaskDuration.WithLabelValues("total").Observe(time.Since(*got.StartAt).Seconds())
+	}
+
 	logs.CtxInfo(ctx, "[ExptEval] CompleteExpt success, expt_id: %v, status: %v, stats: %v", exptID, status, json.Jsonify(stats))
 
 	return nil
+}
+
+func exptStatusLabel(s entity.ExptStatus) string {
+	switch s {
+	case entity.ExptStatus_Success:
+		return "success"
+	case entity.ExptStatus_Failed:
+		return "failed"
+	case entity.ExptStatus_Terminated:
+		return "terminated"
+	case entity.ExptStatus_SystemTerminated:
+		return "system_terminated"
+	default:
+		return "other"
+	}
 }
 
 func (e *ExptMangerImpl) terminateItemTurns(ctx context.Context, exptID int64, itemTurnIDs []*entity.ItemTurnID, spaceID int64, session *entity.Session) error {

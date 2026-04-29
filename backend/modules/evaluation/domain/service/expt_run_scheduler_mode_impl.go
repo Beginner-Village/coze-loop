@@ -20,6 +20,7 @@ import (
 	"github.com/coze-dev/coze-loop/backend/pkg/lang/conv"
 	"github.com/coze-dev/coze-loop/backend/pkg/lang/maps"
 	"github.com/coze-dev/coze-loop/backend/pkg/logs"
+	"github.com/coze-dev/coze-loop/backend/pkg/observability"
 )
 
 // SchedulerModeFactory 定义创建 ExptSchedulerMode 实例的接口
@@ -260,6 +261,8 @@ func (e *ExptSubmitExec) ExptStart(ctx context.Context, event *entity.ExptSchedu
 		return err
 	}
 
+	observability.LoopTaskTotal.WithLabelValues("running").Inc()
+
 	duration := time.Duration(e.configer.GetExptExecConf(ctx, event.SpaceID).GetZombieIntervalSecond()) * time.Second * 2
 	if err := e.idem.Set(ctx, idemKey, duration); err != nil {
 		return err
@@ -490,6 +493,8 @@ func (e *ExptFailRetryExec) ExptStart(ctx context.Context, event *entity.ExptSch
 	if err := e.exptRepo.Update(ctx, exptDo); err != nil {
 		return err
 	}
+
+	observability.LoopTaskTotal.WithLabelValues("running").Inc()
 
 	duration := time.Duration(e.configer.GetExptExecConf(ctx, event.SpaceID).GetZombieIntervalSecond()) * time.Second * 2
 	if err := e.idem.Set(ctx, idemKey, duration); err != nil {
