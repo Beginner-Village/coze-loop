@@ -147,7 +147,6 @@ func Start(handler *apis.APIHandler) {
 	h := server.Default(server.WithHostPorts(listenAddr), server.WithBindConfig(bindConfig), server.WithMaxRequestBodySize(20*1024*1024))
 
 	h.Use(observability.HTTPRequestsMiddleware())
-	h.GET("/metrics", observability.MetricsHandler())
 
 	register(h, handler)
 

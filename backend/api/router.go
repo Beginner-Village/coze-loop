@@ -9,11 +9,11 @@ import (
 	"github.com/cloudwego/hertz/pkg/app/server"
 
 	handler "github.com/coze-dev/coze-loop/backend/api/handler"
+	"github.com/coze-dev/coze-loop/backend/pkg/observability"
 )
 
 // customizeRegister registers customize routers.
 func customizedRegister(r *server.Hertz) {
 	r.GET("/ping", handler.Ping)
-
-	// your code ...
+	r.GET("/metrics", observability.MetricsHandler())
 }
