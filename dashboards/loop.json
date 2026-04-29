@@ -1,0 +1,27 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {"type": "stat", "title": "Loop Up", "gridPos": {"h": 4, "w": 4, "x": 0, "y": 0}, "datasource": "Prometheus", "targets": [{"expr": "up{service=\"loop\"}"}], "options": {"colorMode": "value"}, "fieldConfig": {"defaults": {"thresholds": {"steps": [{"value": 0, "color": "red"}, {"value": 1, "color": "green"}]}}}},
+    {"type": "stat", "title": "QPS (5m)", "gridPos": {"h": 4, "w": 4, "x": 4, "y": 0}, "datasource": "Prometheus", "targets": [{"expr": "sum(rate(http_requests_total{service=\"loop\"}[5m]))"}]},
+    {"type": "stat", "title": "P99 latency", "gridPos": {"h": 4, "w": 4, "x": 8, "y": 0}, "datasource": "Prometheus", "targets": [{"expr": "histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{service=\"loop\"}[5m])))"}], "fieldConfig": {"defaults": {"unit": "s"}}},
+    {"type": "stat", "title": "Error rate (5m)", "gridPos": {"h": 4, "w": 4, "x": 12, "y": 0}, "datasource": "Prometheus", "targets": [{"expr": "sum(rate(http_requests_total{service=\"loop\",status=~\"5..\"}[5m])) / sum(rate(http_requests_total{service=\"loop\"}[5m]))"}], "fieldConfig": {"defaults": {"unit": "percentunit"}}},
+    {"type": "timeseries", "title": "Requests/sec by path", "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4}, "datasource": "Prometheus", "targets": [{"expr": "topk(10, sum by (path) (rate(http_requests_total{service=\"loop\"}[5m])))", "legendFormat": "{{path}}"}]},
+    {"type": "timeseries", "title": "Latency P50/P90/P99", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4}, "datasource": "Prometheus", "targets": [{"expr": "histogram_quantile(0.50, sum by (le) (rate(http_request_duration_seconds_bucket{service=\"loop\"}[5m])))", "legendFormat": "p50"}, {"expr": "histogram_quantile(0.90, sum by (le) (rate(http_request_duration_seconds_bucket{service=\"loop\"}[5m])))", "legendFormat": "p90"}, {"expr": "histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{service=\"loop\"}[5m])))", "legendFormat": "p99"}], "fieldConfig": {"defaults": {"unit": "s"}}},
+    {"type": "timeseries", "title": "Task pipeline (events/sec)", "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12}, "datasource": "Prometheus", "targets": [{"expr": "sum by (status) (rate(loop_task_total[5m]))", "legendFormat": "{{status}}"}]},
+    {"type": "timeseries", "title": "Task duration P95 by stage", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12}, "datasource": "Prometheus", "targets": [{"expr": "histogram_quantile(0.95, sum by (le, stage) (rate(loop_task_duration_seconds_bucket[5m])))", "legendFormat": "{{stage}}"}], "fieldConfig": {"defaults": {"unit": "s"}}},
+    {"type": "timeseries", "title": "Evaluator invocations/sec", "gridPos": {"h": 8, "w": 24, "x": 0, "y": 20}, "datasource": "Prometheus", "targets": [{"expr": "topk(10, sum by (evaluator_name) (rate(loop_evaluator_invocation_total[5m])))", "legendFormat": "{{evaluator_name}}"}]}
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["ynet", "loop"],
+  "time": {"from": "now-1h", "to": "now"},
+  "title": "Loop",
+  "uid": "ynet-loop",
+  "version": 1
+}
