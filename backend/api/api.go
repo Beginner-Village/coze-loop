@@ -38,6 +38,8 @@ import (
 	"github.com/coze-dev/coze-loop/backend/pkg/conf"
 	"github.com/coze-dev/coze-loop/backend/pkg/lang/js_conv"
 	"github.com/coze-dev/coze-loop/backend/pkg/observability"
+	"fmt"
+	"net/http"
 	"os"
 )
 
@@ -150,5 +152,28 @@ func Start(handler *apis.APIHandler) {
 
 	register(h, handler)
 
+	// Sidecar metrics server on a separate port (Hertz routing has quirks with /metrics).
+	// METRICS_ENABLED=false disables it entirely; default empty/true enables.
+	// METRICS_PORT controls the port (default 8890).
+	fmt.Printf("[metrics] IsMetricsEnabled=%v, METRICS_ENABLED=%q\n",
+		observability.IsMetricsEnabled(), os.Getenv("METRICS_ENABLED"))
+	if observability.IsMetricsEnabled() {
+		go startMetricsServer()
+	}
+
 	h.Spin()
+}
+
+func startMetricsServer() {
+	addr := os.Getenv("METRICS_LISTEN_ADDR")
+	if addr == "" {
+		addr = ":8890"
+	}
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", observability.PromHandler())
+	srv := &http.Server{Addr: addr, Handler: mux}
+	fmt.Printf("[metrics] sidecar HTTP server starting on %s\n", addr)
+	if err := srv.ListenAndServe(); err != nil {
+		fmt.Printf("[metrics] sidecar server failed: %v\n", err)
+	}
 }
