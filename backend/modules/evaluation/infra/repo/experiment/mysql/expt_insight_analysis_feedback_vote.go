@@ -8,13 +8,14 @@ import (
 	"errors"
 	"fmt"
 
+	"gorm.io/gorm"
+
 	"github.com/coze-dev/coze-loop/backend/infra/db"
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/domain/entity"
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/infra/repo/experiment/mysql/gorm_gen/model"
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/infra/repo/experiment/mysql/gorm_gen/query"
 	"github.com/coze-dev/coze-loop/backend/pkg/errorx"
 	"github.com/coze-dev/coze-loop/backend/pkg/json"
-	"gorm.io/gorm"
 )
 
 //go:generate  mockgen -destination=mocks/expt_insight_analysis_feedback_vote.go  -package mocks . IExptInsightAnalysisFeedbackVoteDAO
@@ -22,7 +23,7 @@ type IExptInsightAnalysisFeedbackVoteDAO interface {
 	Create(ctx context.Context, feedbackVote *model.ExptInsightAnalysisFeedbackVote, opts ...db.Option) error
 	Update(ctx context.Context, feedbackVote *model.ExptInsightAnalysisFeedbackVote, opts ...db.Option) error
 	GetByUser(ctx context.Context, spaceID, exptID, recordID int64, userID string, opts ...db.Option) (*model.ExptInsightAnalysisFeedbackVote, error)
-	Count(ctx context.Context, spaceID, exptID, recordID int64) (int64, int64, error)
+	Count(ctx context.Context, spaceID, exptID, recordID int64, opts ...db.Option) (int64, int64, error)
 }
 
 func NewExptInsightAnalysisFeedbackVoteDAO(db db.Provider) IExptInsightAnalysisFeedbackVoteDAO {
@@ -58,7 +59,7 @@ func (e exptInsightAnalysisFeedbackVoteDAO) Update(ctx context.Context, feedback
 }
 
 func (e exptInsightAnalysisFeedbackVoteDAO) GetByUser(ctx context.Context, spaceID, exptID, recordID int64, userID string, opts ...db.Option) (*model.ExptInsightAnalysisFeedbackVote, error) {
-	db := e.db.NewSession(ctx)
+	db := e.db.NewSession(ctx, opts...)
 	q := query.Use(db).ExptInsightAnalysisFeedbackVote
 
 	feedbackVote, err := q.WithContext(ctx).Where(
@@ -77,8 +78,8 @@ func (e exptInsightAnalysisFeedbackVoteDAO) GetByUser(ctx context.Context, space
 	return feedbackVote, nil
 }
 
-func (e exptInsightAnalysisFeedbackVoteDAO) Count(ctx context.Context, spaceID, exptID, recordID int64) (int64, int64, error) {
-	db := e.db.NewSession(ctx)
+func (e exptInsightAnalysisFeedbackVoteDAO) Count(ctx context.Context, spaceID, exptID, recordID int64, opts ...db.Option) (int64, int64, error) {
+	db := e.db.NewSession(ctx, opts...)
 	type VoteStatistic struct {
 		UpvoteCount   int64 `json:"upvote_count"`
 		DownvoteCount int64 `json:"downvote_count"`

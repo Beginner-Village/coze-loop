@@ -12,8 +12,17 @@ import (
 func NewConsumerWorkers(
 	loader conf.IConfigLoader,
 	handler application.IAnnotationQueueConsumer,
+	taskConsumer application.ITaskQueueConsumer,
 ) ([]mq.IConsumerWorker, error) {
-	return []mq.IConsumerWorker{
-		newAnnotationConsumer(handler, loader),
-	}, nil
+	workers := []mq.IConsumerWorker{}
+	workers = append(workers,
+		NewAnnotationConsumer(handler, loader),
+		NewTaskConsumer(taskConsumer, loader),
+		NewCallbackConsumer(taskConsumer, loader),
+		NewCorrectionConsumer(taskConsumer, loader),
+		NewBackFillConsumer(taskConsumer, loader),
+		NewSpanWithAnnotationConsumer(taskConsumer, loader),
+	)
+
+	return workers, nil
 }

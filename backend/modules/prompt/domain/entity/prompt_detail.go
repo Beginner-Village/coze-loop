@@ -30,6 +30,7 @@ type PromptDetail struct {
 	Tools          []*Tool           `json:"tools,omitempty"`
 	ToolCallConfig *ToolCallConfig   `json:"tool_call_config,omitempty"`
 	ModelConfig    *ModelConfig      `json:"model_config,omitempty"`
+	McpConfig      *McpConfig        `json:"mcp_config,omitempty"`
 	ExtInfos       map[string]string `json:"ext_infos,omitempty"`
 }
 
@@ -37,13 +38,19 @@ type PromptTemplate struct {
 	TemplateType TemplateType   `json:"template_type"`
 	Messages     []*Message     `json:"messages,omitempty"`
 	VariableDefs []*VariableDef `json:"variable_defs,omitempty"`
+
+	HasSnippets bool              `json:"has_snippets"`
+	Snippets    []*Prompt         `json:"snippets,omitempty"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
 }
 
 type TemplateType string
 
 const (
-	TemplateTypeNormal TemplateType = "normal"
-	TemplateTypeJinja2 TemplateType = "jinja2"
+	TemplateTypeNormal          TemplateType = "normal"
+	TemplateTypeJinja2          TemplateType = "jinja2"
+	TemplateTypeGoTemplate      TemplateType = "go_template"
+	TemplateTypeCustomTemplateM TemplateType = "custom_template_m"
 )
 
 type Message struct {
@@ -53,6 +60,10 @@ type Message struct {
 	Parts            []*ContentPart `json:"parts,omitempty"`
 	ToolCallID       *string        `json:"tool_call_id,omitempty"`
 	ToolCalls        []*ToolCall    `json:"tool_calls,omitempty"`
+	SkipRender       *bool          `json:"skip_render,omitempty"`
+	Signature        *string        `json:"signature,omitempty"` // gemini3 thought_signature
+
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 type Role string
@@ -66,10 +77,13 @@ const (
 )
 
 type ContentPart struct {
-	Type       ContentType `json:"type"`
-	Text       *string     `json:"text,omitempty"`
-	ImageURL   *ImageURL   `json:"image_url,omitempty"`
-	Base64Data *string     `json:"base64_data,omitempty"`
+	Type        ContentType  `json:"type"`
+	Text        *string      `json:"text,omitempty"`
+	ImageURL    *ImageURL    `json:"image_url,omitempty"`
+	VideoURL    *VideoURL    `json:"video_url,omitempty"`
+	Base64Data  *string      `json:"base64_data,omitempty"`
+	MediaConfig *MediaConfig `json:"media_config,omitempty"`
+	Signature   *string      `json:"signature,omitempty"` // gemini3 thought_signature
 }
 
 type ContentType string
@@ -77,6 +91,7 @@ type ContentType string
 const (
 	ContentTypeText              ContentType = "text"
 	ContentTypeImageURL          ContentType = "image_url"
+	ContentTypeVideoURL          ContentType = "video_url"
 	ContentTypeBase64Data        ContentType = "base64_data"
 	ContentTypeMultiPartVariable ContentType = "multi_part_variable"
 )
@@ -84,6 +99,15 @@ const (
 type ImageURL struct {
 	URI string `json:"uri"`
 	URL string `json:"url"`
+}
+
+type VideoURL struct {
+	URI string `json:"uri"`
+	URL string `json:"url"`
+}
+
+type MediaConfig struct {
+	Fps *float64 `json:"fps,omitempty"`
 }
 
 type VariableDef struct {
@@ -125,7 +149,8 @@ type Tool struct {
 type ToolType string
 
 const (
-	ToolTypeFunction ToolType = "function"
+	ToolTypeFunction     ToolType = "function"
+	ToolTypeGoogleSearch ToolType = "google_search"
 )
 
 type Function struct {
@@ -135,21 +160,29 @@ type Function struct {
 }
 
 type ToolCallConfig struct {
-	ToolChoice ToolChoiceType `json:"tool_choice"`
+	ToolChoice              ToolChoiceType           `json:"tool_choice"`
+	ToolChoiceSpecification *ToolChoiceSpecification `json:"tool_choice_specification,omitempty"`
 }
 
 type ToolChoiceType string
 
 const (
-	ToolChoiceTypeNone ToolChoiceType = "none"
-	ToolChoiceTypeAuto ToolChoiceType = "auto"
+	ToolChoiceTypeNone     ToolChoiceType = "none"
+	ToolChoiceTypeAuto     ToolChoiceType = "auto"
+	ToolChoiceTypeSpecific ToolChoiceType = "specific"
 )
+
+type ToolChoiceSpecification struct {
+	Type ToolType `json:"type"`
+	Name string   `json:"name"`
+}
 
 type ToolCall struct {
 	Index        int64         `json:"index"`
 	ID           string        `json:"id"`
 	Type         ToolType      `json:"type"`
 	FunctionCall *FunctionCall `json:"function_call,omitempty"`
+	Signature    *string       `json:"signature,omitempty"` // gemini3 thought_signature
 }
 
 type FunctionCall struct {
@@ -158,14 +191,67 @@ type FunctionCall struct {
 }
 
 type ModelConfig struct {
-	ModelID          int64    `json:"model_id"`
-	MaxTokens        *int32   `json:"max_tokens,omitempty"`
-	Temperature      *float64 `json:"temperature,omitempty"`
-	TopK             *int32   `json:"top_k,omitempty"`
-	TopP             *float64 `json:"top_p,omitempty"`
-	PresencePenalty  *float64 `json:"presence_penalty,omitempty"`
-	FrequencyPenalty *float64 `json:"frequency_penalty,omitempty"`
-	JSONMode         *bool    `json:"json_mode,omitempty"`
+	ModelID           int64               `json:"model_id"`
+	MaxTokens         *int32              `json:"max_tokens,omitempty"`
+	Temperature       *float64            `json:"temperature,omitempty"`
+	TopK              *int32              `json:"top_k,omitempty"`
+	TopP              *float64            `json:"top_p,omitempty"`
+	PresencePenalty   *float64            `json:"presence_penalty,omitempty"`
+	FrequencyPenalty  *float64            `json:"frequency_penalty,omitempty"`
+	JSONMode          *bool               `json:"json_mode,omitempty"`
+	Extra             *string             `json:"extra,omitempty"`
+	Thinking          *ThinkingConfig     `json:"thinking,omitempty"`
+	ParamConfigValues []*ParamConfigValue `json:"param_config_values,omitempty"`
+}
+
+// ThinkingConfig 配置thinking/reasoning相关参数
+type ThinkingConfig struct {
+	BudgetTokens    *int64           `json:"budget_tokens,omitempty"`    // thinking内容的最大输出token
+	ThinkingOption  *ThinkingOption  `json:"thinking_option,omitempty"`  // thinking开关选项
+	ReasoningEffort *ReasoningEffort `json:"reasoning_effort,omitempty"` // 思考长度
+}
+
+// ThinkingOption thinking开关选项
+type ThinkingOption string
+
+const (
+	ThinkingOptionDisabled ThinkingOption = "disabled"
+	ThinkingOptionEnabled  ThinkingOption = "enabled"
+	ThinkingOptionAuto     ThinkingOption = "auto"
+)
+
+// ReasoningEffort 思考长度
+type ReasoningEffort string
+
+const (
+	ReasoningEffortMinimal ReasoningEffort = "minimal"
+	ReasoningEffortLow     ReasoningEffort = "low"
+	ReasoningEffortMedium  ReasoningEffort = "medium"
+	ReasoningEffortHigh    ReasoningEffort = "high"
+)
+
+type ParamConfigValue struct {
+	Name  string       `json:"name"`
+	Label string       `json:"label"`
+	Value *ParamOption `json:"value,omitempty"`
+}
+
+type ParamOption struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+}
+
+type McpConfig struct {
+	IsMcpCallAutoRetry *bool               `json:"is_mcp_call_auto_retry,omitempty"`
+	McpServers         []*McpServerCombine `json:"mcp_servers,omitempty"`
+}
+
+type McpServerCombine struct {
+	McpServerID    *int64   `json:"mcp_server_id,omitempty"`
+	AccessPointID  *int64   `json:"access_point_id,omitempty"`
+	DisabledTools  []string `json:"disabled_tools,omitempty"`
+	EnabledTools   []string `json:"enabled_tools,omitempty"`
+	IsEnabledTools *bool    `json:"is_enabled_tools,omitempty"`
 }
 
 func (pt *PromptTemplate) formatMessages(messages []*Message, variableVals []*VariableVal) ([]*Message, error) {
@@ -205,28 +291,63 @@ func (pt *PromptTemplate) formatMessages(messages []*Message, variableVals []*Va
 					formattedMessages = append(formattedMessages, placeholderMessage)
 				}
 			}
-		default:
-			if templateStr := ptr.From(message.Content); templateStr != "" {
-				formattedStr, err := formatText(pt.TemplateType, templateStr, defMap, valMap)
-				if err != nil {
+
+		case RoleTool:
+			// Tool：不渲染
+			formattedMessages = append(formattedMessages, message)
+
+		case RoleSystem, RoleUser:
+			// System/User：渲染，除非 SkipRender=true
+			if message.SkipRender == nil || !ptr.From(message.SkipRender) {
+				// 需要渲染
+				if err := pt.renderMessage(message, defMap, valMap); err != nil {
 					return nil, err
 				}
-				message.Content = ptr.Of(formattedStr)
 			}
-			for _, part := range message.Parts {
-				if part.Type == ContentTypeText && ptr.From(part.Text) != "" {
-					formattedStr, err := formatText(pt.TemplateType, ptr.From(part.Text), defMap, valMap)
-					if err != nil {
-						return nil, err
-					}
-					part.Text = ptr.Of(formattedStr)
+			formattedMessages = append(formattedMessages, message)
+
+		case RoleAssistant:
+			// Assistant：仅当 SkipRender=false（显式标记，通常来自原始 prompt）才渲染；nil 或 true 均不渲染
+			if message.SkipRender != nil && !ptr.From(message.SkipRender) {
+				// SkipRender=false，需要渲染
+				if err := pt.renderMessage(message, defMap, valMap); err != nil {
+					return nil, err
 				}
 			}
-			message.Parts = formatMultiPart(message.Parts, defMap, valMap)
+			formattedMessages = append(formattedMessages, message)
+
+		default:
+			// 其他角色默认不渲染
 			formattedMessages = append(formattedMessages, message)
 		}
 	}
 	return formattedMessages, nil
+}
+
+func (pt *PromptTemplate) renderMessage(message *Message, defMap map[string]*VariableDef, valMap map[string]*VariableVal) error {
+	// 渲染消息内容
+	if templateStr := ptr.From(message.Content); templateStr != "" {
+		formattedStr, err := formatText(pt.TemplateType, templateStr, defMap, valMap)
+		if err != nil {
+			return err
+		}
+		message.Content = ptr.Of(formattedStr)
+	}
+
+	// 渲染消息部分
+	for _, part := range message.Parts {
+		if part.Type == ContentTypeText && ptr.From(part.Text) != "" {
+			formattedStr, err := formatText(pt.TemplateType, ptr.From(part.Text), defMap, valMap)
+			if err != nil {
+				return err
+			}
+			part.Text = ptr.Of(formattedStr)
+		}
+	}
+
+	// 格式化多部分内容
+	message.Parts = formatMultiPart(message.Parts, defMap, valMap)
+	return nil
 }
 
 func (pt *PromptTemplate) getTemplateMessages(messages []*Message) []*Message {
@@ -234,7 +355,16 @@ func (pt *PromptTemplate) getTemplateMessages(messages []*Message) []*Message {
 		return nil
 	}
 	var messagesToFormat []*Message
-	messagesToFormat = append(messagesToFormat, pt.Messages...)
+
+	// 对于来自pt的messages（原始托管的message），统一设置skip_render为false，表示一定要渲染
+	for _, msg := range pt.Messages {
+		if msg != nil {
+			msg.SkipRender = ptr.Of(false)
+			messagesToFormat = append(messagesToFormat, msg)
+		}
+	}
+
+	// 入参的messages的skip_render不需要改变，保持原状
 	messagesToFormat = append(messagesToFormat, messages...)
 	return messagesToFormat
 }
@@ -260,7 +390,7 @@ func formatMultiPart(parts []*ContentPart, defMap map[string]*VariableDef, valMa
 		if pt == nil {
 			continue
 		}
-		if ptr.From(pt.Text) != "" || pt.ImageURL != nil {
+		if ptr.From(pt.Text) != "" || pt.ImageURL != nil || pt.VideoURL != nil || ptr.From(pt.Base64Data) != "" {
 			filtered = append(filtered, pt)
 		}
 	}
@@ -284,6 +414,8 @@ func formatText(templateType TemplateType, templateStr string, defMap map[string
 			}), nil
 	case TemplateTypeJinja2:
 		return renderJinja2Template(templateStr, defMap, valMap)
+	case TemplateTypeGoTemplate:
+		return renderGoTemplate(templateStr, defMap, valMap)
 	default:
 		return "", errorx.NewByCode(prompterr.UnsupportedTemplateTypeCode, errorx.WithExtraMsg("unknown template type: "+string(templateType)))
 	}
@@ -298,6 +430,17 @@ func renderJinja2Template(templateStr string, defMap map[string]*VariableDef, va
 	}
 
 	return template.InterpolateJinja2(templateStr, variables)
+}
+
+// renderGoTemplate 渲染 Go Template 模板
+func renderGoTemplate(templateStr string, defMap map[string]*VariableDef, valMap map[string]*VariableVal) (string, error) {
+	// 转换变量为 map[string]any 格式
+	variables, err := convertVariablesToMap(defMap, valMap)
+	if err != nil {
+		return "", err
+	}
+
+	return template.InterpolateGoTemplate(templateStr, variables)
 }
 
 // convertVariablesToMap 将变量定义和变量值转换为模板引擎可用的 map

@@ -97,7 +97,7 @@ func (r *ExptTurnResultRepoImpl) CreateTurnEvaluatorRefs(ctx context.Context, re
 	return r.exptTurnResultDAO.CreateTurnEvaluatorRefs(ctx, pos)
 }
 
-func (r *ExptTurnResultRepoImpl) BatchGet(ctx context.Context, spaceID int64, exptID int64, itemIDs []int64) ([]*entity.ExptTurnResult, error) {
+func (r *ExptTurnResultRepoImpl) BatchGet(ctx context.Context, spaceID, exptID int64, itemIDs []int64) ([]*entity.ExptTurnResult, error) {
 	exptTurnResultPOs, err := r.exptTurnResultDAO.BatchGet(ctx, spaceID, exptID, itemIDs)
 	if err != nil {
 		return nil, errorx.Wrapf(err, "BatchGet fail, spaceID: %v, exptID: %v, itemIDs: %v", spaceID, exptID, itemIDs)
@@ -110,7 +110,7 @@ func (r *ExptTurnResultRepoImpl) BatchGet(ctx context.Context, spaceID int64, ex
 	return exptTurnResults, nil
 }
 
-func (r *ExptTurnResultRepoImpl) Get(ctx context.Context, spaceID, exptID int64, itemID, turnID int64) (*entity.ExptTurnResult, error) {
+func (r *ExptTurnResultRepoImpl) Get(ctx context.Context, spaceID, exptID, itemID, turnID int64) (*entity.ExptTurnResult, error) {
 	exptTurnResultPO, err := r.exptTurnResultDAO.Get(ctx, spaceID, exptID, itemID, turnID)
 	if err != nil {
 		return nil, errorx.Wrapf(err, "BatchGet fail, spaceID: %v, exptID: %v, itemID: %v, turnID: %v", spaceID, exptID, itemID, turnID)
@@ -269,6 +269,18 @@ func (r *ExptTurnResultRepoImpl) ListTurnResult(ctx context.Context, spaceID, ex
 		exptTurnResults = append(exptTurnResults, exptTurnResult)
 	}
 	return exptTurnResults, total, nil
+}
+
+func (r *ExptTurnResultRepoImpl) ListTurnResultWithCursor(ctx context.Context, spaceID, exptID int64, filter *entity.ExptTurnResultFilter, cursor *entity.ExptTurnResultListCursor, limit int, desc bool) ([]*entity.ExptTurnResult, int64, *entity.ExptTurnResultListCursor, error) {
+	pos, total, next, err := r.exptTurnResultDAO.ListTurnResultByCursor(ctx, spaceID, exptID, filter, cursor, limit, desc)
+	if err != nil {
+		return nil, 0, nil, errorx.Wrapf(err, "ListTurnResultWithCursor fail, spaceID: %v, exptID: %v", spaceID, exptID)
+	}
+	out := make([]*entity.ExptTurnResult, 0, len(pos))
+	for _, po := range pos {
+		out = append(out, convert.NewExptTurnResultConvertor().PO2DO(po, nil))
+	}
+	return out, total, next, nil
 }
 
 // nolint: byted_s_too_many_lines_in_func

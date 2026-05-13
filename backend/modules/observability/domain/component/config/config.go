@@ -20,6 +20,7 @@ type SystemView struct {
 
 type PlatformTenantsCfg struct {
 	Config map[string][]string `mapstructure:"config" json:"config"`
+	Table  string              `mapstructure:"table" json:"table"`
 }
 
 type SpanTransHandlerConfig struct {
@@ -45,6 +46,9 @@ type MqConsumerCfg struct {
 	Topic         string   `mapstructure:"topic" json:"topic"`
 	ConsumerGroup string   `mapstructure:"consumer_group" json:"consumer_group"`
 	WorkerNum     int      `mapstructure:"worker_num" json:"worker_num"`
+	EnablePPE     *bool    `mapstructure:"enable_ppe" json:"enable_ppe"`
+	IsEnabled     *bool    `mapstructure:"is_enabled" json:"is_enabled"`
+	TagExpression *string  `mapstructure:"tag_expression" json:"tag_expression"`
 }
 
 type TraceCKCfg struct {
@@ -102,6 +106,23 @@ type QueryTraceRateLimitConfig struct {
 	SpaceMaxQPS   map[string]int `mapstructure:"space_max_qps" json:"space_max_qps"`
 }
 
+type ConsumerListening struct {
+	IsEnabled  bool     `json:"is_enabled"`
+	Clusters   []string `json:"clusters"`
+	IsAllSpace bool     `json:"is_all_space"`
+	SpaceList  []int64  `json:"space_list"`
+}
+
+type MetricQueryConfig struct {
+	SupportOffline       bool                    `mapstructure:"support_offline" json:"support_offline"`
+	OfflineCriticalPoint int                     `mapstructure:"offline_critical_point" json:"offline_critical_point"`
+	SpaceConfigs         map[string]*SpaceConfig `mapstructure:"space_configs" json:"space_configs"`
+}
+
+type SpaceConfig struct {
+	DisableQuery bool `mapstructure:"disable_query" json:"disable_query"`
+}
+
 //go:generate mockgen -destination=mocks/config.go -package=mocks . ITraceConfig
 type ITraceConfig interface {
 	GetSystemViews(ctx context.Context) ([]*SystemView, error)
@@ -116,6 +137,12 @@ type ITraceConfig interface {
 	GetDefaultTraceTenant(ctx context.Context) string
 	GetAnnotationSourceCfg(ctx context.Context) (*AnnotationSourceConfig, error)
 	GetQueryMaxQPS(ctx context.Context, key string) (int, error)
+	GetKeySpanTypes(ctx context.Context) map[string][]string
+	GetBackfillMqProducerCfg(ctx context.Context) (*MqProducerCfg, error)
+	GetConsumerListening(ctx context.Context) (*ConsumerListening, error)
+	GetSpanWithAnnotationMqProducerCfg(ctx context.Context) (*MqProducerCfg, error)
+	GetMetricPlatformTenants(ctx context.Context) (*PlatformTenantsCfg, error)
+	GetMetricQueryConfig(ctx context.Context) *MetricQueryConfig
 
 	conf.IConfigLoader
 }

@@ -8,8 +8,12 @@ import (
 
 	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/evaluation/domain/common"
 	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/evaluation/domain/eval_target"
+	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/evaluation/openapi"
+	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/evaluation/spi"
 	commonconvertor "github.com/coze-dev/coze-loop/backend/modules/evaluation/application/convertor/common"
+	"github.com/coze-dev/coze-loop/backend/modules/evaluation/consts"
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/domain/entity"
+	"github.com/coze-dev/coze-loop/backend/modules/evaluation/pkg/errno"
 )
 
 func EvalTargetRecordDO2DTO(src *entity.EvalTargetRecord) *eval_target.EvalTargetRecord {
@@ -39,7 +43,11 @@ func EvalTargetRecordDO2DTO(src *entity.EvalTargetRecord) *eval_target.EvalTarge
 			DeletedAt: src.BaseInfo.DeletedAt,
 		},
 	}
-
+	if src.BaseInfo != nil {
+		res.BaseInfo.CreatedAt = src.BaseInfo.CreatedAt
+		res.BaseInfo.UpdatedAt = src.BaseInfo.UpdatedAt
+		res.BaseInfo.DeletedAt = src.BaseInfo.DeletedAt
+	}
 	return res
 }
 
@@ -49,7 +57,7 @@ func RecordDTO2DO(src *eval_target.EvalTargetRecord) *entity.EvalTargetRecord {
 		return nil
 	}
 
-	return &entity.EvalTargetRecord{
+	record := &entity.EvalTargetRecord{
 		ID:                   getInt64Value(src.ID),
 		SpaceID:              getInt64Value(src.WorkspaceID),
 		TargetID:             getInt64Value(src.TargetID),
@@ -62,15 +70,14 @@ func RecordDTO2DO(src *eval_target.EvalTargetRecord) *entity.EvalTargetRecord {
 		EvalTargetInputData:  InputDTO2ToDO(src.EvalTargetInputData),
 		EvalTargetOutputData: OutputDTO2ToDO(src.EvalTargetOutputData),
 		Status:               StatusDTO2DO(src.Status),
-		BaseInfo: &entity.BaseInfo{
-			// todo
-			// CreatedBy: src.GetBaseInfo().GetCreatedBy(),
-			// UpdatedBy: src.GetBaseInfo().GetUpdatedBy(),
-			CreatedAt: src.BaseInfo.CreatedAt,
-			UpdatedAt: src.BaseInfo.UpdatedAt,
-			DeletedAt: src.BaseInfo.DeletedAt,
-		},
+		BaseInfo:             &entity.BaseInfo{},
 	}
+	if src.BaseInfo != nil {
+		record.BaseInfo.CreatedAt = src.BaseInfo.CreatedAt
+		record.BaseInfo.UpdatedAt = src.BaseInfo.UpdatedAt
+		record.BaseInfo.DeletedAt = src.BaseInfo.DeletedAt
+	}
+	return record
 }
 
 func UnixMsPtr2Time(ms *int64) time.Time {
@@ -101,6 +108,7 @@ func OutputDO2DTO(src *entity.EvalTargetOutputData) *eval_target.EvalTargetOutpu
 	}
 	return &eval_target.EvalTargetOutputData{
 		OutputFields:       ContentDOToDTOs(src.OutputFields),
+		Ext:                src.Ext,
 		EvalTargetUsage:    UsageDO2DTO(src.EvalTargetUsage),
 		EvalTargetRunError: RunErrorDO2DTO(src.EvalTargetRunError),
 		TimeConsumingMs:    src.TimeConsumingMS,
@@ -125,6 +133,7 @@ func OutputDTO2ToDO(src *eval_target.EvalTargetOutputData) *entity.EvalTargetOut
 	}
 	return &entity.EvalTargetOutputData{
 		OutputFields:       ContentDTO2DOs(src.OutputFields),
+		Ext:                src.Ext,
 		EvalTargetUsage:    UsageDTO2DO(src.EvalTargetUsage),
 		EvalTargetRunError: RunErrorDTO2DO(src.EvalTargetRunError),
 		TimeConsumingMS:    src.TimeConsumingMs,
@@ -224,6 +233,7 @@ func UsageDO2DTO(src *entity.EvalTargetUsage) *eval_target.EvalTargetUsage {
 	return &eval_target.EvalTargetUsage{
 		InputTokens:  src.InputTokens,
 		OutputTokens: src.OutputTokens,
+		TotalTokens:  src.TotalTokens,
 	}
 }
 
@@ -244,6 +254,7 @@ func UsageDTO2DO(src *eval_target.EvalTargetUsage) *entity.EvalTargetUsage {
 	return &entity.EvalTargetUsage{
 		InputTokens:  src.InputTokens,
 		OutputTokens: src.OutputTokens,
+		TotalTokens:  src.TotalTokens,
 	}
 }
 
@@ -262,4 +273,136 @@ func getInt32Value(ptr *int32) int32 {
 		return *ptr
 	}
 	return 0
+}
+
+func ToSPIContentDO(spiContent *spi.Content) *entity.Content {
+	if spiContent == nil {
+		return nil
+	}
+
+	var contentType *entity.ContentType
+	if spiContent.ContentType != nil {
+		ct := toSPIContentTypeDO(*spiContent.ContentType)
+		contentType = &ct
+	}
+
+	var image *entity.Image
+	if spiContent.Image != nil {
+		image = &entity.Image{
+			URL: spiContent.Image.URL,
+		}
+	}
+	var audio *entity.Audio
+	if spiContent.Audio != nil {
+		audio = &entity.Audio{
+			URL: spiContent.Audio.URL,
+		}
+	}
+	var video *entity.Video
+	if spiContent.Video != nil {
+		video = &entity.Video{
+			URL: spiContent.Video.URL,
+		}
+	}
+	var multiPart []*entity.Content
+	if spiContent.MultiPart != nil {
+		multiPart = make([]*entity.Content, 0, len(spiContent.MultiPart))
+		for _, part := range spiContent.MultiPart {
+			multiPart = append(multiPart, ToSPIContentDO(part))
+		}
+	}
+
+	return &entity.Content{
+		ContentType: contentType,
+		Text:        spiContent.Text,
+		Image:       image,
+		Audio:       audio,
+		Video:       video,
+		MultiPart:   multiPart,
+	}
+}
+
+func toSPIContentTypeDO(spiContentType spi.ContentType) entity.ContentType {
+	switch spiContentType {
+	case spi.ContentTypeText:
+		return entity.ContentTypeText
+	case spi.ContentTypeImage:
+		return entity.ContentTypeImage
+	case spi.ContentTypeAudio:
+		return entity.ContentTypeAudio
+	case spi.ContentTypeVideo:
+		return entity.ContentTypeVideo
+	case spi.ContentTypeMultiPart:
+		return entity.ContentTypeMultipart
+	default:
+		return entity.ContentTypeText
+	}
+}
+
+func ToTargetRunStatsDO(status spi.InvokeEvalTargetStatus) entity.EvalTargetRunStatus {
+	switch status {
+	case spi.InvokeEvalTargetStatus_FAILED:
+		return entity.EvalTargetRunStatusFail
+	case spi.InvokeEvalTargetStatus_SUCCESS:
+		return entity.EvalTargetRunStatusSuccess
+	default:
+		return entity.EvalTargetRunStatusUnknown
+	}
+}
+
+func ToInvokeOutputDataDO(req *openapi.ReportEvalTargetInvokeResultRequest) *entity.EvalTargetOutputData {
+	output := req.GetOutput()
+	usage := req.GetUsage()
+
+	outputFields := make(map[string]*entity.Content)
+	if output != nil {
+		if output.ActualOutput != nil {
+			outputFields[consts.OutputSchemaKey] = ToSPIContentDO(output.ActualOutput)
+		}
+		for k, v := range output.ExtOutput {
+			outputFields[k] = ToSPIContentDO(v)
+		}
+	}
+
+	var evalTargetUsage *entity.EvalTargetUsage
+	if usage != nil && (usage.InputTokens != nil || usage.OutputTokens != nil) {
+		evalTargetUsage = &entity.EvalTargetUsage{
+			InputTokens:  getInt64Value(usage.InputTokens),
+			OutputTokens: getInt64Value(usage.OutputTokens),
+		}
+		evalTargetUsage.TotalTokens = evalTargetUsage.InputTokens + evalTargetUsage.OutputTokens
+	}
+
+	switch req.GetStatus() {
+	case spi.InvokeEvalTargetStatus_SUCCESS:
+		return &entity.EvalTargetOutputData{
+			OutputFields:       outputFields,
+			Ext:                output.Ext,
+			EvalTargetUsage:    evalTargetUsage,
+			EvalTargetRunError: nil,
+		}
+
+	case spi.InvokeEvalTargetStatus_FAILED:
+		errorMessage := req.GetErrorMessage()
+		var evalTargetRunError *entity.EvalTargetRunError
+		if errorMessage != "" {
+			evalTargetRunError = &entity.EvalTargetRunError{
+				Code:    errno.CustomEvalTargetInvokeFailCode,
+				Message: errorMessage,
+			}
+		}
+		var ext map[string]string
+		if output := req.GetOutput(); output != nil {
+			ext = output.Ext
+		}
+		return &entity.EvalTargetOutputData{
+			Ext:                ext,
+			OutputFields:       outputFields,
+			EvalTargetUsage:    evalTargetUsage,
+			EvalTargetRunError: evalTargetRunError,
+		}
+
+	default:
+		return nil
+	}
 }

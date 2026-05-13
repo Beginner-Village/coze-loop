@@ -158,6 +158,54 @@ func TestEvalTargetVersionDO2PO(t *testing.T) {
 				assert.NotNil(t, po.TargetMeta)
 			},
 		},
+		{
+			name: "自定义对象版本转换",
+			do: &entity.EvalTargetVersion{
+				ID:                  1,
+				SpaceID:             2,
+				TargetID:            3,
+				SourceTargetVersion: "v2.0",
+				EvalTargetType:      entity.EvalTargetTypeCustomRPCServer,
+				CustomRPCServer: &entity.CustomRPCServer{
+					Name:        "Test Prompt",
+					Description: "Test prompt description",
+				},
+			},
+			expectError: false,
+			checkResult: func(t *testing.T, po *model.TargetVersion) {
+				assert.Equal(t, int64(1), po.ID)
+				assert.Equal(t, "v2.0", po.SourceTargetVersion)
+				assert.NotNil(t, po.TargetMeta)
+			},
+		},
+		{
+			name: "CozeWorkflow类型的版本转换",
+			do: &entity.EvalTargetVersion{
+				ID:             1,
+				EvalTargetType: entity.EvalTargetTypeCozeWorkflow,
+				CozeWorkflow:   &entity.CozeWorkflow{ID: "wf1"},
+				InputSchema:    []*entity.ArgsSchema{{Key: gptr.Of("in")}},
+				OutputSchema:   []*entity.ArgsSchema{{Key: gptr.Of("out")}},
+			},
+			expectError: false,
+			checkResult: func(t *testing.T, po *model.TargetVersion) {
+				assert.NotNil(t, po.TargetMeta)
+				assert.NotNil(t, po.InputSchema)
+				assert.NotNil(t, po.OutputSchema)
+			},
+		},
+		{
+			name: "VolcengineAgentAgentkit类型的版本转换",
+			do: &entity.EvalTargetVersion{
+				ID:              1,
+				EvalTargetType:  entity.EvalTargetTypeVolcengineAgentAgentkit,
+				VolcengineAgent: &entity.VolcengineAgent{Name: "agent"},
+			},
+			expectError: false,
+			checkResult: func(t *testing.T, po *model.TargetVersion) {
+				assert.NotNil(t, po.TargetMeta)
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -340,6 +388,26 @@ func TestEvalTargetVersionPO2DO(t *testing.T) {
 			},
 		},
 		{
+			name: "CozeLoopPromptOnline 经 ToOperatorBaseType 走 LoopPrompt 分支反序列化 TargetMeta",
+			targetVersionPO: &model.TargetVersion{
+				ID:                  1,
+				SpaceID:             2,
+				TargetID:            3,
+				SourceTargetVersion: "v2.0",
+				// LoopPrompt 字段无 snake_case 标签，与 DO2PO Marshal 输出一致（PromptID、Version）
+				TargetMeta: gptr.Of([]byte(`{"PromptID":456,"Version":"v2.0"}`)),
+				CreatedAt:  time.Now(),
+				UpdatedAt:  time.Now(),
+			},
+			targetType: entity.EvalTargetTypeCozeLoopPromptOnline,
+			checkResult: func(t *testing.T, do *entity.EvalTargetVersion) {
+				assert.NotNil(t, do)
+				assert.NotNil(t, do.Prompt)
+				assert.Equal(t, int64(456), do.Prompt.PromptID)
+				assert.Equal(t, "v2.0", do.Prompt.Version)
+			},
+		},
+		{
 			name: "火山智能体类型的版本转换",
 			targetVersionPO: &model.TargetVersion{
 				ID:                  1,
@@ -354,6 +422,60 @@ func TestEvalTargetVersionPO2DO(t *testing.T) {
 			checkResult: func(t *testing.T, do *entity.EvalTargetVersion) {
 				assert.NotNil(t, do)
 				assert.Equal(t, int64(1), do.ID)
+			},
+		},
+		{
+			name: "自定义对象的版本转换",
+			targetVersionPO: &model.TargetVersion{
+				ID:                  1,
+				SpaceID:             2,
+				TargetID:            3,
+				SourceTargetVersion: "v2.0",
+				TargetMeta:          gptr.Of([]byte(`{"id":1}`)),
+				CreatedAt:           time.Now(),
+				UpdatedAt:           time.Now(),
+			},
+			targetType: entity.EvalTargetTypeCustomRPCServer,
+			checkResult: func(t *testing.T, do *entity.EvalTargetVersion) {
+				assert.NotNil(t, do)
+				assert.Equal(t, int64(1), do.ID)
+			},
+		},
+		{
+			name: "CozeWorkflow类型的版本转换",
+			targetVersionPO: &model.TargetVersion{
+				ID:         1,
+				TargetMeta: gptr.Of([]byte(`{"id":"wf1"}`)),
+			},
+			targetType: entity.EvalTargetTypeCozeWorkflow,
+			checkResult: func(t *testing.T, do *entity.EvalTargetVersion) {
+				assert.NotNil(t, do)
+				assert.Equal(t, "wf1", do.CozeWorkflow.ID)
+			},
+		},
+		{
+			name: "VolcengineAgentAgentkit类型的版本转换",
+			targetVersionPO: &model.TargetVersion{
+				ID:         1,
+				TargetMeta: gptr.Of([]byte(`{"RuntimeID":"agent"}`)),
+			},
+			targetType: entity.EvalTargetTypeVolcengineAgentAgentkit,
+			checkResult: func(t *testing.T, do *entity.EvalTargetVersion) {
+				assert.NotNil(t, do)
+				assert.Equal(t, "agent", *do.VolcengineAgent.RuntimeID)
+			},
+		},
+		{
+			name: "Schema转换测试",
+			targetVersionPO: &model.TargetVersion{
+				ID:           1,
+				InputSchema:  gptr.Of([]byte(`[{"key":"in"}]`)),
+				OutputSchema: gptr.Of([]byte(`[{"key":"out"}]`)),
+			},
+			targetType: entity.EvalTargetTypeCozeBot,
+			checkResult: func(t *testing.T, do *entity.EvalTargetVersion) {
+				assert.Len(t, do.InputSchema, 1)
+				assert.Len(t, do.OutputSchema, 1)
 			},
 		},
 	}

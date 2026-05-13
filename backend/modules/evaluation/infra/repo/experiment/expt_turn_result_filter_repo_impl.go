@@ -6,6 +6,7 @@ package experiment
 import (
 	"context"
 	"strconv"
+	"time"
 
 	"github.com/coze-dev/coze-loop/backend/infra/db"
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/domain/entity"
@@ -40,6 +41,7 @@ func (e *ExptTurnResultFilterRepoImpl) Save(ctx context.Context, filter []*entit
 	// 转换为 model.ExptTurnResultFilterAccelerator
 	models := make([]*model.ExptTurnResultFilter, 0, len(filter))
 	for _, filterEntity := range filter {
+		filterEntity.UpdatedAt = time.Now()
 		models = append(models, convertor.ExptTurnResultFilterEntity2PO(filterEntity))
 	}
 	logs.CtxInfo(ctx, "ExptTurnResultFilterRepoImpl.Save: %v", json.Jsonify(models))
@@ -47,6 +49,9 @@ func (e *ExptTurnResultFilterRepoImpl) Save(ctx context.Context, filter []*entit
 }
 
 func fieldFilterEntityToCK(src *entity.FieldFilter) *ck.FieldFilter {
+	if src == nil {
+		return nil
+	}
 	return &ck.FieldFilter{
 		Key:    src.Key,
 		Op:     src.Op,
@@ -55,8 +60,14 @@ func fieldFilterEntityToCK(src *entity.FieldFilter) *ck.FieldFilter {
 }
 
 func fieldFiltersEntityToCK(src []*entity.FieldFilter) []*ck.FieldFilter {
+	if len(src) == 0 {
+		return nil
+	}
 	res := make([]*ck.FieldFilter, 0, len(src))
 	for _, f := range src {
+		if f == nil {
+			continue
+		}
 		res = append(res, &ck.FieldFilter{
 			Key:    f.Key,
 			Op:     f.Op,
@@ -99,8 +110,11 @@ func (e *ExptTurnResultFilterRepoImpl) QueryItemIDStates(ctx context.Context, fi
 			AnnotationStringFilters: fieldFiltersEntityToCK(filter.MapCond.AnnotationStringFilters),
 		}
 	}
-	// ItemSnapshotCond
-	cond.EvalSetSyncCkDate = filter.EvalSetSyncCkDate
+	// ItemSnapshotCond；join dataset_item_draft 时不需要 sync_ck_date
+	cond.IsOnlineExpt = filter.IsOnlineExpt
+	if !filter.IsOnlineExpt {
+		cond.EvalSetSyncCkDate = filter.EvalSetSyncCkDate
+	}
 	if filter.ItemSnapshotCond != nil {
 		cond.ItemSnapshotCond = &ck.ItemSnapshotFilter{
 			BoolMapFilters:   fieldFiltersEntityToCK(filter.ItemSnapshotCond.BoolMapFilters),

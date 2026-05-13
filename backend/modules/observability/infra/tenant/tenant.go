@@ -33,7 +33,7 @@ func (t *TenantProviderImpl) GetOAPIQueryTenants(ctx context.Context, platformTy
 	return tenants
 }
 
-func (t *TenantProviderImpl) GetTenantsByPlatformType(ctx context.Context, platform loop_span.PlatformType) ([]string, error) {
+func (t *TenantProviderImpl) GetTenantsByPlatformType(ctx context.Context, platform loop_span.PlatformType, opts ...tenant.OptFn) ([]string, error) {
 	cfg, err := t.traceConfig.GetPlatformTenants(ctx)
 	if err != nil {
 		logs.CtxError(ctx, "fail to get platform tenants, %v", err)
@@ -42,7 +42,24 @@ func (t *TenantProviderImpl) GetTenantsByPlatformType(ctx context.Context, platf
 	if tenants, ok := cfg.Config[string(platform)]; ok {
 		return tenants, nil
 	} else {
-		logs.CtxError(ctx, "tenant not found for platform %s", platform)
-		return nil, errorx.NewByCode(obErrorx.CommercialCommonInvalidParamCodeCode, errorx.WithExtraMsg("tenant not found for the platform"))
+		if tenants, ok = cfg.Config[string(loop_span.PlatformDefault)]; ok {
+			return tenants, nil
+		}
+		defaultTenant := t.traceConfig.GetDefaultTraceTenant(ctx)
+		logs.CtxInfo(ctx, "tenant not found for platform [%s], use default tenant [%s]", platform, defaultTenant)
+		return []string{defaultTenant}, nil
 	}
+}
+
+func (t *TenantProviderImpl) GetMetricTenantsByPlatformType(ctx context.Context, platform loop_span.PlatformType) ([]string, error) {
+	cfg, err := t.traceConfig.GetMetricPlatformTenants(ctx)
+	if err != nil {
+		logs.CtxError(ctx, "fail to get platform tenants, %v", err)
+		return nil, errorx.WrapByCode(err, obErrorx.CommercialCommonInternalErrorCodeCode)
+	}
+	tenants, ok := cfg.Config[string(platform)]
+	if !ok {
+		return nil, errorx.WrapByCode(err, obErrorx.CommercialCommonInternalErrorCodeCode)
+	}
+	return tenants, nil
 }

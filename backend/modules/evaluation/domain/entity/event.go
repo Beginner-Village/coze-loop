@@ -3,6 +3,12 @@
 
 package entity
 
+import (
+	"context"
+
+	"github.com/coze-dev/coze-loop/backend/pkg/ctxcache"
+)
+
 type ExptScheduleEvent struct {
 	SpaceID     int64
 	ExptID      int64
@@ -14,8 +20,13 @@ type ExptScheduleEvent struct {
 	Ext       map[string]string
 	Session   *Session
 
-	RetryTimes int
+	ItemRetryTimes     int
+	ExecEvalSetItemIDs []int64
 }
+
+type ctxTargetCalledCacheKey struct{}
+
+type ctxForceNoRetryKey struct{}
 
 type ExptItemEvalEvent struct {
 	SpaceID     int64
@@ -23,12 +34,69 @@ type ExptItemEvalEvent struct {
 	ExptRunID   int64
 	ExptRunMode ExptRunMode
 
-	EvalSetItemID int64
+	EvalSetItemID               int64
+	AsyncReportTrigger          bool
+	AsyncEvaluatorReportTrigger bool
 
-	CreateAt   int64
-	RetryTimes int
-	Ext        map[string]string
-	Session    *Session
+	CreateAt      int64
+	RetryTimes    int
+	MaxRetryTimes int
+	Ext           map[string]string
+	Session       *Session
+}
+
+func (e *ExptItemEvalEvent) WithCtxForceNoRetry(ctx context.Context) {
+	ctxcache.Store(ctx, ctxForceNoRetryKey{}, struct{}{})
+}
+
+func (e *ExptItemEvalEvent) CtxForceNoRetry(ctx context.Context) bool {
+	_, ok := ctxcache.Get[struct{}](ctx, ctxForceNoRetryKey{})
+	return ok
+}
+
+func (e *ExptItemEvalEvent) IgnoreExistedTargetResult() bool {
+	return e.ignoreExistedResult()
+}
+
+func (e *ExptItemEvalEvent) WithCtxTargetCalled(ctx context.Context) {
+	ctxcache.Store(ctx, ctxTargetCalledCacheKey{}, struct{}{})
+}
+
+func (e *ExptItemEvalEvent) CtxTargetCalled(ctx context.Context) bool {
+	_, ok := ctxcache.Get[struct{}](ctx, ctxTargetCalledCacheKey{})
+	return ok
+}
+
+func (e *ExptItemEvalEvent) IgnoreExistedEvaluatorResult(ctx context.Context) bool {
+	if e.CtxTargetCalled(ctx) {
+		return false
+	}
+	return e.ignoreExistedResult()
+}
+
+func (e *ExptItemEvalEvent) ignoreExistedResult() bool {
+	return (e.ExptRunMode == EvaluationModeRetryItems || e.ExptRunMode == EvaluationModeRetryAll) && e.RetryTimes == 0
+}
+
+func (e *ExptItemEvalEvent) GetExptID() int64 {
+	if e == nil {
+		return 0
+	}
+	return e.ExptID
+}
+
+func (e *ExptItemEvalEvent) GetExptRunID() int64 {
+	if e == nil {
+		return 0
+	}
+	return e.ExptRunID
+}
+
+func (e *ExptItemEvalEvent) GetEvalSetItemID() int64 {
+	if e == nil {
+		return 0
+	}
+	return e.EvalSetItemID
 }
 
 type CalculateMode int
@@ -123,6 +191,18 @@ type ExportCSVEvent struct {
 	Session     *Session
 	ExportScene ExportScene
 	CreatedAt   int64
+	// ExportColumns 与 ExportExptResultRequest.export_columns 一致；nil 表示全量列；非 nil 为白名单（子字段 nil/[] 均不导出该组）
+	ExportColumns *ExptResultExportColumnSpec `json:"export_columns,omitempty"`
+}
+
+type ExptLifecycleEvent struct {
+	ExptID     int64      `json:"expt_id"`
+	ExptRunID  *int64     `json:"expt_run_id"`
+	SpaceID    int64      `json:"space_id"`
+	FromStatus ExptStatus `json:"from_status"`
+	ToStatus   ExptStatus `json:"to_status"`
+	ExptType   ExptType   `json:"expt_type"`
+	SourceType SourceType `json:"source_type"`
 }
 
 type ExportScene int

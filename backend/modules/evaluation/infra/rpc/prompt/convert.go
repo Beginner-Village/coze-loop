@@ -61,7 +61,7 @@ func ConvertToLoopPrompt(p *prompt.Prompt) *rpc.LoopPrompt {
 
 func ConvertVariables2Prompt(fromVals []*entity.VariableVal) (toVals []*prompt.VariableVal) {
 	if len(fromVals) == 0 {
-		return
+		return toVals
 	}
 	toVals = make([]*prompt.VariableVal, 0)
 	for _, v := range fromVals {
@@ -72,28 +72,31 @@ func ConvertVariables2Prompt(fromVals []*entity.VariableVal) (toVals []*prompt.V
 			MultiPartValues:     ConvertContent(v.Content),
 		})
 	}
-	return
+	return toVals
 }
 
 func ConvertMessages2Prompt(fromMsg []*entity.Message) (toMsg []*prompt.Message) {
 	if len(fromMsg) == 0 {
-		return
+		return toMsg
 	}
 	toMsg = make([]*prompt.Message, 0)
 	for _, m := range fromMsg {
 		if m == nil || m.Content == nil {
 			continue
 		}
-		toMsg = append(toMsg, &prompt.Message{
-			Role:    gptr.Of(Role2PromptRole(m.Role)),
-			Content: m.Content.Text,
-			Parts:   ConvertContent(m.Content),
-			// Parts:      nil,
-			// ToolCallID: nil,
-			// ToolCalls:  nil,
-		})
+		if m.Content.GetContentType() == entity.ContentTypeText {
+			toMsg = append(toMsg, &prompt.Message{
+				Role:    gptr.Of(Role2PromptRole(m.Role)),
+				Content: m.Content.Text,
+			})
+		} else {
+			toMsg = append(toMsg, &prompt.Message{
+				Role:  gptr.Of(Role2PromptRole(m.Role)),
+				Parts: ConvertContent(m.Content),
+			})
+		}
 	}
-	return
+	return toMsg
 }
 
 func ConvertPromptToolCalls2Eval(promptToolCalls []*prompt.ToolCall) []*entity.ToolCall {
@@ -162,4 +165,34 @@ func ConvertContent(content *entity.Content) []*prompt.ContentPart {
 	default:
 		return []*prompt.ContentPart{}
 	}
+}
+
+func ConvertFromContent(parts []*prompt.ContentPart) *entity.Content {
+	if len(parts) == 0 {
+		return nil
+	}
+
+	content := &entity.Content{ContentType: gptr.Of(entity.ContentTypeMultipart)}
+	for _, part := range parts {
+		if part == nil {
+			continue
+		}
+		switch part.GetType() {
+		case prompt.ContentTypeText:
+			content.MultiPart = append(content.MultiPart, &entity.Content{
+				ContentType: gptr.Of(entity.ContentTypeText),
+				Text:        part.Text,
+			})
+		case prompt.ContentTypeImageURL:
+			content.MultiPart = append(content.MultiPart, &entity.Content{
+				ContentType: gptr.Of(entity.ContentTypeImage),
+				Image: &entity.Image{
+					URL: part.ImageURL.URL,
+					URI: part.ImageURL.URI,
+				},
+			})
+		default:
+		}
+	}
+	return content
 }

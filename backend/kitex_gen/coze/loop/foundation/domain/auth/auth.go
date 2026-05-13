@@ -17,6 +17,8 @@ const (
 
 	AuthEntityTypeEvaluationExperiment = "EvaluationExperiment"
 
+	AuthEntityTypeEvaluationExptTemplate = "EvaluationExptTemplate"
+
 	AuthEntityTypeEvaluationSet = "EvaluationSet"
 
 	AuthEntityTypeEvaluator = "Evaluator"
@@ -28,6 +30,8 @@ const (
 	AuthEntityTypeModel = "Model"
 
 	AuthEntityTypeAnnotation = "Annotation"
+
+	AuthEntityTypeTraceTask = "Task"
 )
 
 // 主体类型

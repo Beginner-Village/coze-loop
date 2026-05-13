@@ -38,11 +38,12 @@ func EvalTargetDO2PO(do *entity.EvalTarget) (po *model.Target) {
 }
 
 func EvalTargetVersionDO2PO(do *entity.EvalTargetVersion) (po *model.TargetVersion, err error) {
-	// 序列化Metainfo（整个DO）
+	// 序列化Metainfo（整个DO）；仅记录型（*Online）与基础类型共用同一套 meta 结构
+	packType := do.EvalTargetType.ToOperatorBaseType()
 	var meta []byte
 	var inputSchema []byte
 	var outputSchema []byte
-	switch do.EvalTargetType {
+	switch packType {
 	case entity.EvalTargetTypeCozeBot:
 		meta, err = json.Marshal(do.CozeBot)
 		if err != nil {
@@ -58,11 +59,22 @@ func EvalTargetVersionDO2PO(do *entity.EvalTargetVersion) (po *model.TargetVersi
 		if err != nil {
 			return nil, err
 		}
-	case entity.EvalTargetTypeVolcengineAgent:
+	case entity.EvalTargetTypeVolcengineAgent, entity.EvalTargetTypeVolcengineAgentAgentkit:
 		meta, err = json.Marshal(do.VolcengineAgent)
 		if err != nil {
 			return nil, err
 		}
+	case entity.EvalTargetTypeCustomRPCServer:
+		meta, err = json.Marshal(do.CustomRPCServer)
+		if err != nil {
+			return nil, err
+		}
+	case entity.EvalTargetTypeWebAgent:
+		meta, err = json.Marshal(do.WebAgent)
+		if err != nil {
+			return nil, err
+		}
+	default:
 	}
 	if do.InputSchema != nil {
 		inputSchema, err = json.Marshal(do.InputSchema)
@@ -115,7 +127,7 @@ func EvalTargetPO2DOs(targetPOs []*model.Target) (targetDOs []*entity.EvalTarget
 
 func EvalTargetPO2DO(targetPO *model.Target) (targetDO *entity.EvalTarget) {
 	if targetPO == nil {
-		return
+		return targetDO
 	}
 	targetDO = &entity.EvalTarget{}
 	targetDO.ID = targetPO.ID
@@ -137,12 +149,12 @@ func EvalTargetPO2DO(targetPO *model.Target) (targetDO *entity.EvalTarget) {
 		targetDO.BaseInfo.DeletedAt = gptr.Of(targetPO.DeletedAt.Time.UnixMilli())
 	}
 
-	return
+	return targetDO
 }
 
 func EvalTargetVersionPO2DO(targetVersionPO *model.TargetVersion, targetType entity.EvalTargetType) (targetVersionDO *entity.EvalTargetVersion) {
 	if targetVersionPO == nil {
-		return
+		return targetVersionDO
 	}
 	targetVersionDO = &entity.EvalTargetVersion{}
 	targetVersionDO.ID = targetVersionPO.ID
@@ -168,7 +180,7 @@ func EvalTargetVersionPO2DO(targetVersionPO *model.TargetVersion, targetType ent
 	if targetVersionPO.InputSchema != nil {
 		schema := make([]*entity.ArgsSchema, 0)
 		if err := json.Unmarshal(*targetVersionPO.InputSchema, &schema); err != nil {
-			return
+			return targetVersionDO
 		}
 		targetVersionDO.InputSchema = schema
 	}
@@ -179,7 +191,8 @@ func EvalTargetVersionPO2DO(targetVersionPO *model.TargetVersion, targetType ent
 		}
 	}
 	if targetVersionPO.TargetMeta != nil {
-		switch targetType {
+		packType := targetType.ToOperatorBaseType()
+		switch packType {
 		case entity.EvalTargetTypeCozeBot:
 			meta := &entity.CozeBot{}
 			if err := json.Unmarshal(*targetVersionPO.TargetMeta, meta); err == nil {
@@ -195,10 +208,20 @@ func EvalTargetVersionPO2DO(targetVersionPO *model.TargetVersion, targetType ent
 			if err := json.Unmarshal(*targetVersionPO.TargetMeta, meta); err == nil {
 				targetVersionDO.CozeWorkflow = meta
 			}
-		case entity.EvalTargetTypeVolcengineAgent:
+		case entity.EvalTargetTypeVolcengineAgent, entity.EvalTargetTypeVolcengineAgentAgentkit:
 			meta := &entity.VolcengineAgent{}
 			if err := json.Unmarshal(*targetVersionPO.TargetMeta, meta); err == nil {
 				targetVersionDO.VolcengineAgent = meta
+			}
+		case entity.EvalTargetTypeCustomRPCServer:
+			meta := &entity.CustomRPCServer{}
+			if err := json.Unmarshal(*targetVersionPO.TargetMeta, meta); err == nil {
+				targetVersionDO.CustomRPCServer = meta
+			}
+		case entity.EvalTargetTypeWebAgent:
+			meta := &entity.WebAgent{}
+			if err := json.Unmarshal(*targetVersionPO.TargetMeta, meta); err == nil {
+				targetVersionDO.WebAgent = meta
 			}
 		default:
 			// todo

@@ -90,10 +90,22 @@ func (mr *MockIExptManagerMockRecorder) Clone(ctx, exptID, spaceID, session any)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Clone", reflect.TypeOf((*MockIExptManager)(nil).Clone), ctx, exptID, spaceID, session)
 }
 
-// CompleteExpt mocks base method.
-func (m *MockIExptManager) CompleteExpt(ctx context.Context, exptID, spaceID int64, session *entity.Session, opts ...entity.CompleteExptOptionFn) error {
+// InjectExptConfTimeRange mocks base method.
+func (m *MockIExptManager) InjectExptConfTimeRange(ctx context.Context, exptID int64, timeRange *entity.TaskTimeRangeDO) {
 	m.ctrl.T.Helper()
-	varargs := []any{ctx, exptID, spaceID, session}
+	m.ctrl.Call(m, "InjectExptConfTimeRange", ctx, exptID, timeRange)
+}
+
+// InjectExptConfTimeRange indicates an expected call of InjectExptConfTimeRange.
+func (mr *MockIExptManagerMockRecorder) InjectExptConfTimeRange(ctx, exptID, timeRange any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InjectExptConfTimeRange", reflect.TypeOf((*MockIExptManager)(nil).InjectExptConfTimeRange), ctx, exptID, timeRange)
+}
+
+// CompleteExpt mocks base method.
+func (m *MockIExptManager) CompleteExpt(ctx context.Context, exptID int64, exptRunID *int64, spaceID int64, session *entity.Session, opts ...entity.CompleteExptOptionFn) error {
+	m.ctrl.T.Helper()
+	varargs := []any{ctx, exptID, exptRunID, spaceID, session}
 	for _, a := range opts {
 		varargs = append(varargs, a)
 	}
@@ -103,16 +115,16 @@ func (m *MockIExptManager) CompleteExpt(ctx context.Context, exptID, spaceID int
 }
 
 // CompleteExpt indicates an expected call of CompleteExpt.
-func (mr *MockIExptManagerMockRecorder) CompleteExpt(ctx, exptID, spaceID, session any, opts ...any) *gomock.Call {
+func (mr *MockIExptManagerMockRecorder) CompleteExpt(ctx, exptID, exptRunID, spaceID, session any, opts ...any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	varargs := append([]any{ctx, exptID, spaceID, session}, opts...)
+	varargs := append([]any{ctx, exptID, exptRunID, spaceID, session}, opts...)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CompleteExpt", reflect.TypeOf((*MockIExptManager)(nil).CompleteExpt), varargs...)
 }
 
 // CompleteRun mocks base method.
-func (m *MockIExptManager) CompleteRun(ctx context.Context, exptID, exptRunID int64, mode entity.ExptRunMode, spaceID int64, session *entity.Session, opts ...entity.CompleteExptOptionFn) error {
+func (m *MockIExptManager) CompleteRun(ctx context.Context, exptID, exptRunID, spaceID int64, session *entity.Session, opts ...entity.CompleteExptOptionFn) error {
 	m.ctrl.T.Helper()
-	varargs := []any{ctx, exptID, exptRunID, mode, spaceID, session}
+	varargs := []any{ctx, exptID, exptRunID, spaceID, session}
 	for _, a := range opts {
 		varargs = append(varargs, a)
 	}
@@ -122,9 +134,9 @@ func (m *MockIExptManager) CompleteRun(ctx context.Context, exptID, exptRunID in
 }
 
 // CompleteRun indicates an expected call of CompleteRun.
-func (mr *MockIExptManagerMockRecorder) CompleteRun(ctx, exptID, exptRunID, mode, spaceID, session any, opts ...any) *gomock.Call {
+func (mr *MockIExptManagerMockRecorder) CompleteRun(ctx, exptID, exptRunID, spaceID, session any, opts ...any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	varargs := append([]any{ctx, exptID, exptRunID, mode, spaceID, session}, opts...)
+	varargs := append([]any{ctx, exptID, exptRunID, spaceID, session}, opts...)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CompleteRun", reflect.TypeOf((*MockIExptManager)(nil).CompleteRun), varargs...)
 }
 
@@ -155,6 +167,21 @@ func (m *MockIExptManager) Delete(ctx context.Context, exptID, spaceID int64, se
 func (mr *MockIExptManagerMockRecorder) Delete(ctx, exptID, spaceID, session any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Delete", reflect.TypeOf((*MockIExptManager)(nil).Delete), ctx, exptID, spaceID, session)
+}
+
+// ExistCompletingRunLock mocks base method.
+func (m *MockIExptManager) ExistCompletingRunLock(ctx context.Context, exptID, exptRunID, spaceID int64) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ExistCompletingRunLock", ctx, exptID, exptRunID, spaceID)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ExistCompletingRunLock indicates an expected call of ExistCompletingRunLock.
+func (mr *MockIExptManagerMockRecorder) ExistCompletingRunLock(ctx, exptID, exptRunID, spaceID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExistCompletingRunLock", reflect.TypeOf((*MockIExptManager)(nil).ExistCompletingRunLock), ctx, exptID, exptRunID, spaceID)
 }
 
 // Finish mocks base method.
@@ -267,18 +294,48 @@ func (mr *MockIExptManagerMockRecorder) ListExptRaw(ctx, page, pageSize, spaceID
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListExptRaw", reflect.TypeOf((*MockIExptManager)(nil).ListExptRaw), ctx, page, pageSize, spaceID, filter)
 }
 
-// LogRun mocks base method.
-func (m *MockIExptManager) LogRun(ctx context.Context, exptID, exptRunID int64, mode entity.ExptRunMode, spaceID int64, session *entity.Session) error {
+// LockCompletingRun mocks base method.
+func (m *MockIExptManager) LockCompletingRun(ctx context.Context, exptID, exptRunID, spaceID int64, session *entity.Session) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "LogRun", ctx, exptID, exptRunID, mode, spaceID, session)
+	ret := m.ctrl.Call(m, "LockCompletingRun", ctx, exptID, exptRunID, spaceID, session)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// LockCompletingRun indicates an expected call of LockCompletingRun.
+func (mr *MockIExptManagerMockRecorder) LockCompletingRun(ctx, exptID, exptRunID, spaceID, session any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LockCompletingRun", reflect.TypeOf((*MockIExptManager)(nil).LockCompletingRun), ctx, exptID, exptRunID, spaceID, session)
+}
+
+// LogRetryItemsRun mocks base method.
+func (m *MockIExptManager) LogRetryItemsRun(ctx context.Context, exptID int64, mode entity.ExptRunMode, spaceID int64, itemIDs []int64, session *entity.Session) (int64, bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "LogRetryItemsRun", ctx, exptID, mode, spaceID, itemIDs, session)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(bool)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// LogRetryItemsRun indicates an expected call of LogRetryItemsRun.
+func (mr *MockIExptManagerMockRecorder) LogRetryItemsRun(ctx, exptID, mode, spaceID, itemIDs, session any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LogRetryItemsRun", reflect.TypeOf((*MockIExptManager)(nil).LogRetryItemsRun), ctx, exptID, mode, spaceID, itemIDs, session)
+}
+
+// LogRun mocks base method.
+func (m *MockIExptManager) LogRun(ctx context.Context, exptID, exptRunID int64, mode entity.ExptRunMode, spaceID int64, itemIDs []int64, session *entity.Session) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "LogRun", ctx, exptID, exptRunID, mode, spaceID, itemIDs, session)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // LogRun indicates an expected call of LogRun.
-func (mr *MockIExptManagerMockRecorder) LogRun(ctx, exptID, exptRunID, mode, spaceID, session any) *gomock.Call {
+func (mr *MockIExptManagerMockRecorder) LogRun(ctx, exptID, exptRunID, mode, spaceID, itemIDs, session any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LogRun", reflect.TypeOf((*MockIExptManager)(nil).LogRun), ctx, exptID, exptRunID, mode, spaceID, session)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LogRun", reflect.TypeOf((*MockIExptManager)(nil).LogRun), ctx, exptID, exptRunID, mode, spaceID, itemIDs, session)
 }
 
 // MDelete mocks base method.
@@ -325,65 +382,74 @@ func (mr *MockIExptManagerMockRecorder) MGetDetail(ctx, exptIDs, spaceID, sessio
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MGetDetail", reflect.TypeOf((*MockIExptManager)(nil).MGetDetail), ctx, exptIDs, spaceID, session)
 }
 
-// PendExpt mocks base method.
-func (m *MockIExptManager) PendExpt(ctx context.Context, exptID, spaceID int64, session *entity.Session, opts ...entity.CompleteExptOptionFn) error {
+// RecordExptData mocks base method.
+func (m *MockIExptManager) RecordExptData(ctx context.Context, exptID, exptRunID, spaceID int64, session *entity.Session) error {
 	m.ctrl.T.Helper()
-	varargs := []any{ctx, exptID, spaceID, session}
-	for _, a := range opts {
-		varargs = append(varargs, a)
-	}
-	ret := m.ctrl.Call(m, "PendExpt", varargs...)
+	ret := m.ctrl.Call(m, "RecordExptData", ctx, exptID, exptRunID, spaceID, session)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-// PendExpt indicates an expected call of PendExpt.
-func (mr *MockIExptManagerMockRecorder) PendExpt(ctx, exptID, spaceID, session any, opts ...any) *gomock.Call {
+// RecordExptData indicates an expected call of RecordExptData.
+func (mr *MockIExptManagerMockRecorder) RecordExptData(ctx, exptID, exptRunID, spaceID, session any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	varargs := append([]any{ctx, exptID, spaceID, session}, opts...)
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PendExpt", reflect.TypeOf((*MockIExptManager)(nil).PendExpt), varargs...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordExptData", reflect.TypeOf((*MockIExptManager)(nil).RecordExptData), ctx, exptID, exptRunID, spaceID, session)
 }
 
-// PendRun mocks base method.
-func (m *MockIExptManager) PendRun(ctx context.Context, exptID, exptRunID, spaceID int64, session *entity.Session) error {
+// RetryItems mocks base method.
+func (m *MockIExptManager) RetryItems(ctx context.Context, exptID, runID, spaceID int64, itemRetryNum int, itemIDs []int64, session *entity.Session, ext map[string]string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "PendRun", ctx, exptID, exptRunID, spaceID, session)
+	ret := m.ctrl.Call(m, "RetryItems", ctx, exptID, runID, spaceID, itemRetryNum, itemIDs, session, ext)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-// PendRun indicates an expected call of PendRun.
-func (mr *MockIExptManagerMockRecorder) PendRun(ctx, exptID, exptRunID, spaceID, session any) *gomock.Call {
+// RetryItems indicates an expected call of RetryItems.
+func (mr *MockIExptManagerMockRecorder) RetryItems(ctx, exptID, runID, spaceID, itemRetryNum, itemIDs, session, ext any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PendRun", reflect.TypeOf((*MockIExptManager)(nil).PendRun), ctx, exptID, exptRunID, spaceID, session)
-}
-
-// RetryUnSuccess mocks base method.
-func (m *MockIExptManager) RetryUnSuccess(ctx context.Context, exptID, runID, spaceID int64, session *entity.Session, ext map[string]string) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RetryUnSuccess", ctx, exptID, runID, spaceID, session, ext)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// RetryUnSuccess indicates an expected call of RetryUnSuccess.
-func (mr *MockIExptManagerMockRecorder) RetryUnSuccess(ctx, exptID, runID, spaceID, session, ext any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RetryUnSuccess", reflect.TypeOf((*MockIExptManager)(nil).RetryUnSuccess), ctx, exptID, runID, spaceID, session, ext)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RetryItems", reflect.TypeOf((*MockIExptManager)(nil).RetryItems), ctx, exptID, runID, spaceID, itemRetryNum, itemIDs, session, ext)
 }
 
 // Run mocks base method.
-func (m *MockIExptManager) Run(ctx context.Context, exptID, runID, spaceID int64, session *entity.Session, runMode entity.ExptRunMode, ext map[string]string) error {
+func (m *MockIExptManager) Run(ctx context.Context, exptID, runID, spaceID int64, itemRetryNum int, session *entity.Session, runMode entity.ExptRunMode, ext map[string]string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Run", ctx, exptID, runID, spaceID, session, runMode, ext)
+	ret := m.ctrl.Call(m, "Run", ctx, exptID, runID, spaceID, itemRetryNum, session, runMode, ext)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Run indicates an expected call of Run.
-func (mr *MockIExptManagerMockRecorder) Run(ctx, exptID, runID, spaceID, session, runMode, ext any) *gomock.Call {
+func (mr *MockIExptManagerMockRecorder) Run(ctx, exptID, runID, spaceID, itemRetryNum, session, runMode, ext any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Run", reflect.TypeOf((*MockIExptManager)(nil).Run), ctx, exptID, runID, spaceID, session, runMode, ext)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Run", reflect.TypeOf((*MockIExptManager)(nil).Run), ctx, exptID, runID, spaceID, itemRetryNum, session, runMode, ext)
+}
+
+// SetExptTerminating mocks base method.
+func (m *MockIExptManager) SetExptTerminating(ctx context.Context, exptID, exptRunID, spaceID int64, session *entity.Session) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SetExptTerminating", ctx, exptID, exptRunID, spaceID, session)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SetExptTerminating indicates an expected call of SetExptTerminating.
+func (mr *MockIExptManagerMockRecorder) SetExptTerminating(ctx, exptID, exptRunID, spaceID, session any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetExptTerminating", reflect.TypeOf((*MockIExptManager)(nil).SetExptTerminating), ctx, exptID, exptRunID, spaceID, session)
+}
+
+// UnlockCompletingRun mocks base method.
+func (m *MockIExptManager) UnlockCompletingRun(ctx context.Context, exptID, exptRunID, spaceID int64, session *entity.Session) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UnlockCompletingRun", ctx, exptID, exptRunID, spaceID, session)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UnlockCompletingRun indicates an expected call of UnlockCompletingRun.
+func (mr *MockIExptManagerMockRecorder) UnlockCompletingRun(ctx, exptID, exptRunID, spaceID, session any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UnlockCompletingRun", reflect.TypeOf((*MockIExptManager)(nil).UnlockCompletingRun), ctx, exptID, exptRunID, spaceID, session)
 }
 
 // Update mocks base method.

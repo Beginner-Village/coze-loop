@@ -5,6 +5,8 @@ package trace
 import (
 	"testing"
 
+	"github.com/coze-dev/coze-loop/backend/modules/observability/infra/rpc/evaluationset"
+
 	"github.com/bytedance/gg/gptr"
 	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/data/domain/dataset"
 	eval_common "github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/evaluation/domain/common"
@@ -13,6 +15,7 @@ import (
 	"github.com/coze-dev/coze-loop/backend/modules/observability/domain/trace/entity"
 	"github.com/coze-dev/coze-loop/backend/modules/observability/domain/trace/entity/loop_span"
 	"github.com/coze-dev/coze-loop/backend/modules/observability/domain/trace/service"
+	"github.com/coze-dev/coze-loop/backend/pkg/lang/ptr"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -298,6 +301,10 @@ func TestPreviewResponseDO2DTO(t *testing.T) {
 								},
 							},
 						},
+						SpanInfo: &dataset0.ExportSpanInfo{
+							TraceID: gptr.Of(""),
+							SpanID:  gptr.Of(""),
+						},
 					},
 				},
 			},
@@ -332,6 +339,10 @@ func TestPreviewResponseDO2DTO(t *testing.T) {
 								Type:       gptr.Of(dataset.ItemErrorType_MismatchSchema),
 								FieldNames: []string{"field1"},
 							},
+						},
+						SpanInfo: &dataset0.ExportSpanInfo{
+							TraceID: gptr.Of(""),
+							SpanID:  gptr.Of(""),
 						},
 					},
 				},
@@ -489,7 +500,7 @@ func TestConvertDatasetSchemaDTO2DO(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := convertDatasetSchemaDTO2DO(tt.schema)
+			got := ConvertDatasetSchemaDTO2DO(tt.schema)
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -589,7 +600,7 @@ func TestConvertFieldMappingsDTO2DO(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := convertFieldMappingsDTO2DO(tt.mappings)
+			got := ConvertFieldMappingsDTO2DO(tt.mappings)
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -726,6 +737,10 @@ func TestConvertDatasetItemsDO2DTO(t *testing.T) {
 							},
 						},
 					},
+					SpanInfo: &dataset0.ExportSpanInfo{
+						SpanID:  gptr.Of(""),
+						TraceID: gptr.Of(""),
+					},
 				},
 			},
 		},
@@ -749,6 +764,10 @@ func TestConvertDatasetItemsDO2DTO(t *testing.T) {
 							Type:       gptr.Of(dataset.ItemErrorType_MismatchSchema),
 							FieldNames: []string{"field1", "field2"},
 						},
+					},
+					SpanInfo: &dataset0.ExportSpanInfo{
+						SpanID:  gptr.Of(""),
+						TraceID: gptr.Of(""),
 					},
 				},
 			},
@@ -815,6 +834,10 @@ func TestConvertDatasetItemsDO2DTO(t *testing.T) {
 								},
 							},
 						},
+					},
+					SpanInfo: &dataset0.ExportSpanInfo{
+						TraceID: ptr.Of(""),
+						SpanID:  ptr.Of(""),
 					},
 				},
 			},
@@ -959,7 +982,7 @@ func TestConvertContentTypeDTO2DO(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := convertContentTypeDTO2DO(tt.contentType)
+			got := evaluationset.ConvertContentTypeDTO2DO(tt.contentType)
 			assert.Equal(t, tt.want, got)
 		})
 	}

@@ -104,6 +104,34 @@ const (
 	exportRunningCountLimitMessage           = "number of export in running has reached the maximum limit"
 	exportRunningCountLimitNoAffectStability = true
 
+	CustomEvalTargetInvokeFailCode              = 601204010 // custom eval target invoke fail
+	customEvalTargetInvokeFailMessage           = "custom eval target invoke fail"
+	customEvalTargetInvokeFailNoAffectStability = true
+
+	TerminateNonRunningExperimentErrorCode              = 601204011 // cannot terminate an non-running experiment, please try again later
+	terminateNonRunningExperimentErrorMessage           = "cannot terminate an non-running experiment, please try again later"
+	terminateNonRunningExperimentErrorNoAffectStability = true
+
+	ExperimentStatusNotAllowedToInvokeCode              = 601204012 // experiment status is not allowed to invoke, only Processing or Pending status can invoke
+	experimentStatusNotAllowedToInvokeMessage           = "experiment status is not allowed to invoke"
+	experimentStatusNotAllowedToInvokeNoAffectStability = true
+
+	IncompleteExptCalcAggrResultErrorCode              = 601204013 // aggregated result cannot be generated for incomplete experiments
+	incompleteExptCalcAggrResultErrorMessage           = "aggregated result cannot be generated for incomplete experiments"
+	incompleteExptCalcAggrResultErrorNoAffectStability = true
+
+	DuplicateCalcExptAggrResultErrorCode              = 601204014 // aggregated result calculation is already in progress
+	duplicateCalcExptAggrResultErrorMessage           = "aggregated result calculation is already in progress"
+	duplicateCalcExptAggrResultErrorNoAffectStability = true
+
+	EvalItemAlreadyRetryingCode              = 601204015 // item already has been retrying
+	evalItemAlreadyRetryingMessage           = "item already has been retrying"
+	evalItemAlreadyRetryingNoAffectStability = true
+
+	ExperimentIsCompletingCode              = 601204016 // experiment is completing, please try later
+	experimentIsCompletingMessage           = "experiment is completing, please try later"
+	experimentIsCompletingNoAffectStability = true
+
 	ContentTypeNotSupportedCode              = 601205000 // content type is not supported
 	contentTypeNotSupportedMessage           = "content type is not supported"
 	contentTypeNotSupportedNoAffectStability = true
@@ -211,6 +239,138 @@ const (
 	AccessingEndpointErrorCode              = 601205027 // Accessing endpoint error
 	accessingEndpointErrorMessage           = "accessing endpoint error"
 	accessingEndpointErrorNoAffectStability = true
+
+	InvalidInputDataCode              = 601205029 // invalid input data
+	invalidInputDataMessage           = "invalid input data"
+	invalidInputDataNoAffectStability = true
+
+	InvalidCodeContentCode              = 601205030 // invalid code content
+	invalidCodeContentMessage           = "invalid code content"
+	invalidCodeContentNoAffectStability = true
+
+	InvalidLanguageTypeCode              = 601205031 // invalid language type
+	invalidLanguageTypeMessage           = "invalid language type"
+	invalidLanguageTypeNoAffectStability = true
+
+	CodeExecutionFailedCode              = 601205032 // code execution failed
+	codeExecutionFailedMessage           = "code execution failed"
+	codeExecutionFailedNoAffectStability = true
+
+	CodeValidationFailedCode              = 601205033 // code validation failed
+	codeValidationFailedMessage           = "code validation failed"
+	codeValidationFailedNoAffectStability = true
+
+	ResultParseFailedCode              = 601205034 // result parse failed
+	resultParseFailedMessage           = "result parse failed"
+	resultParseFailedNoAffectStability = true
+
+	InvalidEvaluatorTypeCode              = 601205028 // invalid evaluator type
+	invalidEvaluatorTypeMessage           = "invalid evaluator type"
+	invalidEvaluatorTypeNoAffectStability = true
+
+	MaliciousCodePatternDetectedCode              = 601205035 // detected specific malicious code pattern with detailed information
+	maliciousCodePatternDetectedMessage           = "malicious code pattern detected"
+	maliciousCodePatternDetectedNoAffectStability = true
+
+	FileURLRetrieveFailedCode              = 601205036 // failed to retrieve file URLs from file provider
+	fileURLRetrieveFailedMessage           = "failed to retrieve file URLs"
+	fileURLRetrieveFailedNoAffectStability = false
+
+	GoroutinePoolCreateFailedCode              = 601205037 // failed to create goroutine pool for concurrent execution
+	goroutinePoolCreateFailedMessage           = "failed to create goroutine pool"
+	goroutinePoolCreateFailedNoAffectStability = false
+
+	BatchTaskExecutionFailedCode              = 601205038 // failed to execute batch debug tasks in goroutine pool
+	batchTaskExecutionFailedMessage           = "failed to execute batch tasks"
+	batchTaskExecutionFailedNoAffectStability = false
+
+	CodeBuilderGetFailedCode              = 601205041 // failed to get code builder for specified language
+	codeBuilderGetFailedMessage           = "failed to get code builder"
+	codeBuilderGetFailedNoAffectStability = true
+
+	CodeBuildFailedCode              = 601205042 // failed to build user code with template
+	codeBuildFailedMessage           = "failed to build code"
+	codeBuildFailedNoAffectStability = true
+
+	RuntimeGetFailedCode              = 601205043 // failed to get runtime for specified language
+	runtimeGetFailedMessage           = "failed to get runtime"
+	runtimeGetFailedNoAffectStability = true
+
+	EmptyCodeContentCode              = 601205046 // user provided code content is empty
+	emptyCodeContentMessage           = "code content is empty"
+	emptyCodeContentNoAffectStability = true
+
+	SyntaxValidationFailedCode              = 601205047 // code syntax validation failed during execution
+	syntaxValidationFailedMessage           = "syntax validation failed"
+	syntaxValidationFailedNoAffectStability = true
+
+	SyntaxValidationResultParseFailedCode              = 601205048 // failed to parse syntax validation execution result
+	syntaxValidationResultParseFailedMessage           = "failed to parse syntax validation result"
+	syntaxValidationResultParseFailedNoAffectStability = true
+
+	DangerousFunctionDetectedCode              = 601205051 // detected dangerous function call in user code
+	dangerousFunctionDetectedMessage           = "dangerous function detected"
+	dangerousFunctionDetectedNoAffectStability = true
+
+	DangerousImportDetectedCode              = 601205052 // detected dangerous module import in user code
+	dangerousImportDetectedMessage           = "dangerous import detected"
+	dangerousImportDetectedNoAffectStability = true
+
+	RequiredFunctionNotFoundCode              = 601205053 // required function definition not found in user code
+	requiredFunctionNotFoundMessage           = "required function not found"
+	requiredFunctionNotFoundNoAffectStability = true
+
+	ExecutionResultEmptyCode              = 601205056 // execution result stdout or ret_val is empty
+	executionResultEmptyMessage           = "execution result is empty"
+	executionResultEmptyNoAffectStability = true
+
+	ExecutionResultParseFailedCode              = 601205057 // failed to parse execution result JSON format
+	executionResultParseFailedMessage           = "failed to parse execution result"
+	executionResultParseFailedNoAffectStability = true
+
+	UnsupportedLanguageTypeCode              = 601205058 // the specified language type is not supported
+	unsupportedLanguageTypeMessage           = "unsupported language type"
+	unsupportedLanguageTypeNoAffectStability = true
+
+	InvalidEvaluatorConfigurationCode              = 601205059 // evaluator configuration is invalid or incomplete
+	invalidEvaluatorConfigurationMessage           = "invalid evaluator configuration"
+	invalidEvaluatorConfigurationNoAffectStability = true
+
+	ExecutionResultNilCode              = 601205060 // execution result object is nil
+	executionResultNilMessage           = "execution result is nil"
+	executionResultNilNoAffectStability = true
+
+	InvalidProviderEvaluatorCodeCode              = 601205061 // the provider evaluator code is invalid, check if it is empty or invalid
+	invalidProviderEvaluatorCodeMessage           = "invalid provider evaluator code"
+	invalidProviderEvaluatorCodeNoAffectStability = true
+
+	InvalidAccessProtocolCode              = 601205062 // the access protocol is invalid, check if it is empty or invalid
+	invalidAccessProtocolMessage           = "invalid access protocol"
+	invalidAccessProtocolNoAffectStability = true
+
+	InvalidServiceNameCode              = 601205063 // the service name is invalid, check if it is empty or invalid
+	invalidServiceNameMessage           = "invalid service name"
+	invalidServiceNameNoAffectStability = true
+
+	InvalidClusterCode              = 601205064 // the cluster is invalid, check if it is empty or invalid
+	invalidClusterMessage           = "invalid cluster"
+	invalidClusterNoAffectStability = true
+
+	CustomRPCEvaluatorRunFailedCode              = 601205065 // the custom rpc evaluator run failed, check if the configuration is correct
+	customRPCEvaluatorRunFailedMessage           = "custom rpc evaluator run failed"
+	customRPCEvaluatorRunFailedNoAffectStability = true
+
+	UnsupportedCustomRPCEvaluatorCode              = 601205066 // the custom rpc evaluator is not supported, check if the configuration is correct
+	unsupportedCustomRPCEvaluatorMessage           = "unsupported custom rpc evaluator"
+	unsupportedCustomRPCEvaluatorNoAffectStability = true
+
+	CustomEvalTargetRunFailedCode              = 601205067 // the custom eval target run failed, check if the configuration is correct
+	customEvalTargetRunFailedMessage           = "custom eval target run failed"
+	customEvalTargetRunFailedNoAffectStability = true
+
+	AgentEvaluatorRunFailedCode              = 601205068 // the agent evaluator run failed, check if the configuration is correct
+	agentEvaluatorRunFailedMessage           = "agent evaluator run failed"
+	agentEvaluatorRunFailedNoAffectStability = true
 )
 
 func init() {
@@ -357,6 +517,48 @@ func init() {
 		ExportRunningCountLimitCode,
 		exportRunningCountLimitMessage,
 		code.WithAffectStability(!exportRunningCountLimitNoAffectStability),
+	)
+
+	code.Register(
+		CustomEvalTargetInvokeFailCode,
+		customEvalTargetInvokeFailMessage,
+		code.WithAffectStability(!customEvalTargetInvokeFailNoAffectStability),
+	)
+
+	code.Register(
+		TerminateNonRunningExperimentErrorCode,
+		terminateNonRunningExperimentErrorMessage,
+		code.WithAffectStability(!terminateNonRunningExperimentErrorNoAffectStability),
+	)
+
+	code.Register(
+		ExperimentStatusNotAllowedToInvokeCode,
+		experimentStatusNotAllowedToInvokeMessage,
+		code.WithAffectStability(!experimentStatusNotAllowedToInvokeNoAffectStability),
+	)
+
+	code.Register(
+		IncompleteExptCalcAggrResultErrorCode,
+		incompleteExptCalcAggrResultErrorMessage,
+		code.WithAffectStability(!incompleteExptCalcAggrResultErrorNoAffectStability),
+	)
+
+	code.Register(
+		DuplicateCalcExptAggrResultErrorCode,
+		duplicateCalcExptAggrResultErrorMessage,
+		code.WithAffectStability(!duplicateCalcExptAggrResultErrorNoAffectStability),
+	)
+
+	code.Register(
+		EvalItemAlreadyRetryingCode,
+		evalItemAlreadyRetryingMessage,
+		code.WithAffectStability(!evalItemAlreadyRetryingNoAffectStability),
+	)
+
+	code.Register(
+		ExperimentIsCompletingCode,
+		experimentIsCompletingMessage,
+		code.WithAffectStability(!experimentIsCompletingNoAffectStability),
 	)
 
 	code.Register(
@@ -519,6 +721,204 @@ func init() {
 		AccessingEndpointErrorCode,
 		accessingEndpointErrorMessage,
 		code.WithAffectStability(!accessingEndpointErrorNoAffectStability),
+	)
+
+	code.Register(
+		InvalidInputDataCode,
+		invalidInputDataMessage,
+		code.WithAffectStability(!invalidInputDataNoAffectStability),
+	)
+
+	code.Register(
+		InvalidCodeContentCode,
+		invalidCodeContentMessage,
+		code.WithAffectStability(!invalidCodeContentNoAffectStability),
+	)
+
+	code.Register(
+		InvalidLanguageTypeCode,
+		invalidLanguageTypeMessage,
+		code.WithAffectStability(!invalidLanguageTypeNoAffectStability),
+	)
+
+	code.Register(
+		CodeExecutionFailedCode,
+		codeExecutionFailedMessage,
+		code.WithAffectStability(!codeExecutionFailedNoAffectStability),
+	)
+
+	code.Register(
+		CodeValidationFailedCode,
+		codeValidationFailedMessage,
+		code.WithAffectStability(!codeValidationFailedNoAffectStability),
+	)
+
+	code.Register(
+		ResultParseFailedCode,
+		resultParseFailedMessage,
+		code.WithAffectStability(!resultParseFailedNoAffectStability),
+	)
+
+	code.Register(
+		InvalidEvaluatorTypeCode,
+		invalidEvaluatorTypeMessage,
+		code.WithAffectStability(!invalidEvaluatorTypeNoAffectStability),
+	)
+
+	code.Register(
+		MaliciousCodePatternDetectedCode,
+		maliciousCodePatternDetectedMessage,
+		code.WithAffectStability(!maliciousCodePatternDetectedNoAffectStability),
+	)
+
+	code.Register(
+		FileURLRetrieveFailedCode,
+		fileURLRetrieveFailedMessage,
+		code.WithAffectStability(!fileURLRetrieveFailedNoAffectStability),
+	)
+
+	code.Register(
+		GoroutinePoolCreateFailedCode,
+		goroutinePoolCreateFailedMessage,
+		code.WithAffectStability(!goroutinePoolCreateFailedNoAffectStability),
+	)
+
+	code.Register(
+		BatchTaskExecutionFailedCode,
+		batchTaskExecutionFailedMessage,
+		code.WithAffectStability(!batchTaskExecutionFailedNoAffectStability),
+	)
+
+	code.Register(
+		CodeBuilderGetFailedCode,
+		codeBuilderGetFailedMessage,
+		code.WithAffectStability(!codeBuilderGetFailedNoAffectStability),
+	)
+
+	code.Register(
+		CodeBuildFailedCode,
+		codeBuildFailedMessage,
+		code.WithAffectStability(!codeBuildFailedNoAffectStability),
+	)
+
+	code.Register(
+		RuntimeGetFailedCode,
+		runtimeGetFailedMessage,
+		code.WithAffectStability(!runtimeGetFailedNoAffectStability),
+	)
+
+	code.Register(
+		EmptyCodeContentCode,
+		emptyCodeContentMessage,
+		code.WithAffectStability(!emptyCodeContentNoAffectStability),
+	)
+
+	code.Register(
+		SyntaxValidationFailedCode,
+		syntaxValidationFailedMessage,
+		code.WithAffectStability(!syntaxValidationFailedNoAffectStability),
+	)
+
+	code.Register(
+		SyntaxValidationResultParseFailedCode,
+		syntaxValidationResultParseFailedMessage,
+		code.WithAffectStability(!syntaxValidationResultParseFailedNoAffectStability),
+	)
+
+	code.Register(
+		DangerousFunctionDetectedCode,
+		dangerousFunctionDetectedMessage,
+		code.WithAffectStability(!dangerousFunctionDetectedNoAffectStability),
+	)
+
+	code.Register(
+		DangerousImportDetectedCode,
+		dangerousImportDetectedMessage,
+		code.WithAffectStability(!dangerousImportDetectedNoAffectStability),
+	)
+
+	code.Register(
+		RequiredFunctionNotFoundCode,
+		requiredFunctionNotFoundMessage,
+		code.WithAffectStability(!requiredFunctionNotFoundNoAffectStability),
+	)
+
+	code.Register(
+		ExecutionResultEmptyCode,
+		executionResultEmptyMessage,
+		code.WithAffectStability(!executionResultEmptyNoAffectStability),
+	)
+
+	code.Register(
+		ExecutionResultParseFailedCode,
+		executionResultParseFailedMessage,
+		code.WithAffectStability(!executionResultParseFailedNoAffectStability),
+	)
+
+	code.Register(
+		UnsupportedLanguageTypeCode,
+		unsupportedLanguageTypeMessage,
+		code.WithAffectStability(!unsupportedLanguageTypeNoAffectStability),
+	)
+
+	code.Register(
+		InvalidEvaluatorConfigurationCode,
+		invalidEvaluatorConfigurationMessage,
+		code.WithAffectStability(!invalidEvaluatorConfigurationNoAffectStability),
+	)
+
+	code.Register(
+		ExecutionResultNilCode,
+		executionResultNilMessage,
+		code.WithAffectStability(!executionResultNilNoAffectStability),
+	)
+
+	code.Register(
+		InvalidProviderEvaluatorCodeCode,
+		invalidProviderEvaluatorCodeMessage,
+		code.WithAffectStability(!invalidProviderEvaluatorCodeNoAffectStability),
+	)
+
+	code.Register(
+		InvalidAccessProtocolCode,
+		invalidAccessProtocolMessage,
+		code.WithAffectStability(!invalidAccessProtocolNoAffectStability),
+	)
+
+	code.Register(
+		InvalidServiceNameCode,
+		invalidServiceNameMessage,
+		code.WithAffectStability(!invalidServiceNameNoAffectStability),
+	)
+
+	code.Register(
+		InvalidClusterCode,
+		invalidClusterMessage,
+		code.WithAffectStability(!invalidClusterNoAffectStability),
+	)
+
+	code.Register(
+		CustomRPCEvaluatorRunFailedCode,
+		customRPCEvaluatorRunFailedMessage,
+		code.WithAffectStability(!customRPCEvaluatorRunFailedNoAffectStability),
+	)
+
+	code.Register(
+		UnsupportedCustomRPCEvaluatorCode,
+		unsupportedCustomRPCEvaluatorMessage,
+		code.WithAffectStability(!unsupportedCustomRPCEvaluatorNoAffectStability),
+	)
+
+	code.Register(
+		CustomEvalTargetRunFailedCode,
+		customEvalTargetRunFailedMessage,
+		code.WithAffectStability(!customEvalTargetRunFailedNoAffectStability),
+	)
+
+	code.Register(
+		AgentEvaluatorRunFailedCode,
+		agentEvaluatorRunFailedMessage,
+		code.WithAffectStability(!agentEvaluatorRunFailedNoAffectStability),
 	)
 
 }

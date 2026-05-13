@@ -22,6 +22,7 @@ import (
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/domain/component"
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/domain/component/idem"
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/domain/component/metrics"
+	"github.com/coze-dev/coze-loop/backend/modules/evaluation/domain/component/rpc"
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/domain/entity"
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/domain/events"
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/domain/repo"
@@ -36,7 +37,6 @@ import (
 )
 
 func NewExptManager(
-	// tupleSvc IExptTupleService,
 	exptResultService ExptResultService,
 	exptRepo repo.IExperimentRepo,
 	exptRunLogRepo repo.IExptRunLogRepo,
@@ -58,6 +58,11 @@ func NewExptManager(
 	evaluatorService EvaluatorService,
 	benefitService benefit.IBenefitService,
 	exptAggrResultService ExptAggrResultService,
+	templateRepo repo.IExptTemplateRepo,
+	templateManager IExptTemplateManager,
+	notifyRPCAdapter rpc.INotifyRPCAdapter,
+	userProvider rpc.IUserProvider,
+	pipelineListAdapter rpc.IPipelineListAdapter,
 ) IExptManager {
 	return &ExptMangerImpl{
 		// tupleSvc:       tupleSvc,
@@ -82,6 +87,11 @@ func NewExptManager(
 		evaluatorService:            evaluatorService,
 		benefitService:              benefitService,
 		exptAggrResultService:       exptAggrResultService,
+		templateRepo:                templateRepo,
+		templateManager:             templateManager,
+		notifyRPCAdapter:            notifyRPCAdapter,
+		userProvider:                userProvider,
+		pipelineListAdapter:         pipelineListAdapter,
 	}
 }
 
@@ -108,6 +118,11 @@ type ExptMangerImpl struct {
 	evalTargetService           IEvalTargetService
 	evaluatorService            EvaluatorService
 	benefitService              benefit.IBenefitService
+	templateRepo                repo.IExptTemplateRepo
+	templateManager             IExptTemplateManager
+	notifyRPCAdapter            rpc.INotifyRPCAdapter
+	userProvider                rpc.IUserProvider
+	pipelineListAdapter         rpc.IPipelineListAdapter
 }
 
 func (e *ExptMangerImpl) MGetDetail(ctx context.Context, exptIDs []int64, spaceID int64, session *entity.Session) ([]*entity.Experiment, error) {
@@ -138,6 +153,11 @@ func (e *ExptMangerImpl) MGetDetail(ctx context.Context, exptIDs []int64, spaceI
 func (e *ExptMangerImpl) GetDetail(ctx context.Context, exptID, spaceID int64, session *entity.Session, opts ...entity.GetExptTupleOptionFn) (*entity.Experiment, error) {
 	expt, err := e.Get(ctx, exptID, spaceID, session)
 	if err != nil {
+		return nil, err
+	}
+
+	// 填充 ExptTemplateMeta
+	if err := e.fillExptTemplates(ctx, []*entity.Experiment{expt}, spaceID); err != nil {
 		return nil, err
 	}
 
@@ -187,7 +207,160 @@ func (e *ExptMangerImpl) packExperimentResult(ctx context.Context, expts []*enti
 		}
 	}
 
+	// 填充关联的实验模板基础信息
+	if err := e.fillExptTemplates(ctx, expts, spaceID); err != nil {
+		return nil, err
+	}
+
+	// 查询接口：填充 ExptSource（含 Workflow 时从 Pipeline 拉取 span_filter / scheduler / sampler）
+	if err := e.fillExperimentExptSourceForQuery(ctx, expts, spaceID); err != nil {
+		return nil, err
+	}
+
 	return expts, nil
+}
+
+// fillExperimentExptSourceForQuery 为查询结果构造 ExptSource，并在 SourceType=Workflow 时从 Pipeline 填充 span_filter_fields、scheduler、sampler（与实验模板 enrichExptSourceFromPipeline 一致）
+func (e *ExptMangerImpl) fillExperimentExptSourceForQuery(ctx context.Context, expts []*entity.Experiment, spaceID int64) error {
+	for _, ex := range expts {
+		if ex == nil {
+			continue
+		}
+		var timeRange *entity.TaskTimeRangeDO
+		if ex.EvalConf != nil && ex.EvalConf.TimeRange != nil {
+			timeRange = ex.EvalConf.TimeRange
+		}
+		ex.ExptSource = &entity.ExptSource{
+			SourceType: ex.SourceType,
+			SourceID:   ex.SourceID,
+			TimeRange:  timeRange,
+		}
+	}
+	return e.enrichExperimentExptSourceFromPipeline(ctx, expts, spaceID)
+}
+
+// enrichExperimentExptSourceFromPipeline 当 ExptSource.SourceType 为 Workflow 时，根据 source_id 拉取 Pipeline Flow 并填充 SpanFilterFields、Scheduler、Sampler
+func (e *ExptMangerImpl) enrichExperimentExptSourceFromPipeline(ctx context.Context, experiments []*entity.Experiment, spaceID int64) error {
+	if e.pipelineListAdapter == nil {
+		return nil
+	}
+	pipelineIDs := make([]int64, 0)
+	experimentByPipelineID := make(map[int64][]*entity.Experiment)
+	for _, ex := range experiments {
+		if ex == nil || ex.ExptSource == nil {
+			continue
+		}
+		if ex.ExptSource.SourceType != entity.SourceType_Workflow || ex.ExptSource.SourceID == "" {
+			continue
+		}
+		pid, err := strconv.ParseInt(ex.ExptSource.SourceID, 10, 64)
+		if err != nil || pid <= 0 {
+			continue
+		}
+		pipelineIDs = append(pipelineIDs, pid)
+		experimentByPipelineID[pid] = append(experimentByPipelineID[pid], ex)
+	}
+	if len(pipelineIDs) == 0 {
+		return nil
+	}
+	pipelineIDs = gslice.Uniq(pipelineIDs)
+
+	resp, err := e.pipelineListAdapter.ListPipelineFlow(ctx, &rpc.ListPipelineFlowRequest{
+		SpaceID:    gptr.Of(spaceID),
+		IDList:     pipelineIDs,
+		WithDetail: true,
+	})
+	if err != nil {
+		return err
+	}
+	if resp == nil || len(resp.Items) == 0 {
+		return nil
+	}
+
+	for _, p := range resp.Items {
+		if p == nil || p.ID == nil {
+			continue
+		}
+		pid := *p.ID
+		targets := experimentByPipelineID[pid]
+		if len(targets) == 0 {
+			continue
+		}
+		dataReflow := extractDataReflowFieldsFromPipeline(p)
+		var spanFilterFields *entity.SpanFilterFieldsDO
+		var sampler *entity.ExptSamplerDO
+		if dataReflow != nil {
+			spanFilterFields = dataReflow.SpanFilterFields
+			sampler = dataReflow.Sampler
+		}
+		scheduler := extractSchedulerFromPipeline(p)
+		for _, ex := range targets {
+			if ex.ExptSource != nil {
+				ex.ExptSource.SpanFilterFields = spanFilterFields
+				ex.ExptSource.Sampler = sampler
+				ex.ExptSource.Scheduler = scheduler
+			}
+		}
+	}
+	return nil
+}
+
+// fillExptTemplates 为实验列表按需补充关联模板的基础信息（名称、描述等）
+func (e *ExptMangerImpl) fillExptTemplates(ctx context.Context, expts []*entity.Experiment, spaceID int64) error {
+	if len(expts) == 0 || e.templateRepo == nil {
+		return nil
+	}
+
+	idSet := make(map[int64]struct{})
+	for _, ex := range expts {
+		if ex == nil || ex.ExptTemplateMeta == nil || ex.ExptTemplateMeta.ID == 0 {
+			continue
+		}
+		idSet[ex.ExptTemplateMeta.ID] = struct{}{}
+	}
+	if len(idSet) == 0 {
+		return nil
+	}
+
+	templateIDs := make([]int64, 0, len(idSet))
+	for id := range idSet {
+		templateIDs = append(templateIDs, id)
+	}
+
+	templates, err := e.templateRepo.MGetByID(ctx, templateIDs, spaceID)
+	if err != nil {
+		return err
+	}
+	if len(templates) == 0 {
+		// 如果一个模板都查不到（例如都被软删除），将所有带模板 ID 的实验的 ExptTemplateMeta 置为 nil
+		for _, ex := range expts {
+			if ex == nil || ex.ExptTemplateMeta == nil || ex.ExptTemplateMeta.ID == 0 {
+				continue
+			}
+			ex.ExptTemplateMeta = nil
+		}
+		return nil
+	}
+
+	templateMap := gslice.ToMap(templates, func(t *entity.ExptTemplate) (int64, *entity.ExptTemplate) {
+		if t == nil {
+			return 0, nil
+		}
+		return t.GetID(), t
+	})
+
+	for _, ex := range expts {
+		if ex == nil || ex.ExptTemplateMeta == nil || ex.ExptTemplateMeta.ID == 0 {
+			continue
+		}
+		if tpl, ok := templateMap[ex.ExptTemplateMeta.ID]; ok {
+			ex.ExptTemplateMeta = tpl.Meta
+		} else {
+			ex.ExptTemplateMeta = nil
+		}
+	}
+
+	return nil
 }
 
 func (e *ExptMangerImpl) CheckName(ctx context.Context, name string, spaceID int64, session *entity.Session) (pass bool, err error) {
@@ -202,11 +375,63 @@ func (e *ExptMangerImpl) CheckName(ctx context.Context, name string, spaceID int
 }
 
 func (e *ExptMangerImpl) MDelete(ctx context.Context, exptIDs []int64, spaceID int64, session *entity.Session) error {
-	return e.exptRepo.MDelete(ctx, exptIDs, spaceID)
+	logs.CtxInfo(ctx, "batch delete expts, expt_ids: %v", exptIDs)
+
+	// 先获取实验信息，用于判断是否关联模板
+	expts, err := e.exptRepo.MGetByID(ctx, exptIDs, spaceID)
+	if err != nil {
+		return err
+	}
+
+	// 批量删除实验
+	if err := e.exptRepo.MDelete(ctx, exptIDs, spaceID); err != nil {
+		return err
+	}
+
+	// 针对每个实验，如果关联了模板，则更新模板的 ExptInfo（删除实验，数量 -1）
+	for _, expt := range expts {
+		if expt == nil || expt.ExptTemplateMeta == nil || expt.ExptTemplateMeta.ID <= 0 || e.templateManager == nil {
+			continue
+		}
+		if err := e.templateManager.UpdateExptInfo(ctx, expt.ExptTemplateMeta.ID, spaceID, expt.ID, expt.Status, -1, nil); err != nil {
+			// 记录错误但不影响主流程
+			logs.CtxError(ctx, "[ExptEval] UpdateExptInfo failed in MDelete, template_id: %v, expt_id: %v, err: %v",
+				expt.ExptTemplateMeta.ID, expt.ID, err)
+		}
+	}
+
+	return nil
 }
 
 func (e *ExptMangerImpl) makeExptMutexLockKey(exptID int64) string {
 	return fmt.Sprintf("expt_run_mutex_lock:%d", exptID)
+}
+
+func (e *ExptMangerImpl) makeExptCompletingLockKey(exptID, exptRunID int64) string {
+	return fmt.Sprintf("expt_completing_mutex_lock:%d:%d", exptID, exptRunID)
+}
+
+// makeOnlineExptDaemonLockKey 在线实验 MQ daemon 生命周期心跳锁，singleflight 防止重复发送
+func (e *ExptMangerImpl) makeOnlineExptDaemonLockKey(exptID, runID int64) string {
+	return fmt.Sprintf("expt_online_daemon_lock:%d:%d", exptID, runID)
+}
+
+// computeDaemonLockMaxHold 按实验 DDL 计算心跳锁最大持有时间：deadline = StartAt + MaxAliveTime，maxHold = 剩余到 deadline 的时间
+func (e *ExptMangerImpl) computeDaemonLockMaxHold(expt *entity.Experiment) time.Duration {
+	if expt == nil || expt.StartAt == nil || expt.MaxAliveTime <= 0 {
+		return time.Minute
+	}
+	deadline := expt.StartAt.Add(time.Duration(expt.MaxAliveTime) * time.Millisecond)
+	maxHold := time.Until(deadline)
+	if maxHold <= 0 {
+		return time.Minute
+	}
+	return maxHold
+}
+
+// makeOnlineExptDataLockKey 在线实验数据锁，数据驱动，协调 Invoke 追加与 schedule 检查
+func (e *ExptMangerImpl) makeOnlineExptDataLockKey(exptID, runID int64) string {
+	return fmt.Sprintf("expt_online_data_lock:%d:%d", exptID, runID)
 }
 
 func (e *ExptMangerImpl) getTupleByExpt(ctx context.Context, expt *entity.Experiment, spaceID int64, session *entity.Session, opts ...entity.GetExptTupleOptionFn) (*entity.ExptTuple, error) {
@@ -413,15 +638,15 @@ func (e *ExptMangerImpl) mgetExptTupleByID(ctx context.Context, tupleIDs []*enti
 		return t.EvaluationSetVersion.ID, t
 	})
 	evaluatorMap := gslice.ToMap(evaluators, func(t *entity.Evaluator) (int64, *entity.Evaluator) {
-		return t.GetEvaluatorVersion().GetID(), t
+		return t.GetEvaluatorVersionID(), t
 	})
 
 	res := make([]*entity.ExptTuple, 0, len(tupleIDs))
 	for _, tupleIDs := range tupleIDs {
-		//cevaluators := make([]*entity.Evaluator, 0, len(tupleIDs.EvaluatorVersionIDs))
-		//for _, evaluatorVersionID := range tupleIDs.EvaluatorVersionIDs {
+		// cevaluators := make([]*entity.Evaluator, 0, len(tupleIDs.EvaluatorVersionIDs))
+		// for _, evaluatorVersionID := range tupleIDs.EvaluatorVersionIDs {
 		//	cevaluators = append(cevaluators, evaluatorMap[evaluatorVersionID])
-		//}
+		// }
 		tuple := &entity.ExptTuple{
 			EvalSet: evalSetMap[tupleIDs.VersionedEvalSetID.VersionID],
 			// Evaluators: cevaluators,
@@ -443,10 +668,10 @@ func (e *ExptMangerImpl) mgetExptTupleByID(ctx context.Context, tupleIDs []*enti
 }
 
 func (e *ExptMangerImpl) packTupleID(ctx context.Context, expt *entity.Experiment) *entity.ExptTupleID {
-	//evaluatorVersionIDs := make([]int64, 0, len(expt.EvaluatorVersionRef))
-	//for _, ref := range expt.EvaluatorVersionRef {
+	// evaluatorVersionIDs := make([]int64, 0, len(expt.EvaluatorVersionRef))
+	// for _, ref := range expt.EvaluatorVersionRef {
 	//	evaluatorVersionIDs = append(evaluatorVersionIDs, ref.EvaluatorVersionID)
-	//}
+	// }
 
 	exptTupleID := &entity.ExptTupleID{
 		VersionedEvalSetID: &entity.VersionedEvalSetID{
@@ -476,14 +701,43 @@ func (e *ExptMangerImpl) packTupleID(ctx context.Context, expt *entity.Experimen
 
 func (e *ExptMangerImpl) CreateExpt(ctx context.Context, req *entity.CreateExptParam, session *entity.Session) (*entity.Experiment, error) {
 	if req.ExptType == entity.ExptType_Online && req.CreateEvalTargetParam != nil {
-		req.CreateEvalTargetParam.SourceTargetVersion = gptr.Of(consts.DefaultSourceTargetVersion)
+		et := gptr.Indirect(req.CreateEvalTargetParam.EvalTargetType)
+		srcID := ""
+		if req.CreateEvalTargetParam.SourceTargetID != nil {
+			srcID = strings.TrimSpace(*req.CreateEvalTargetParam.SourceTargetID)
+		}
+		srcVer := ""
+		if req.CreateEvalTargetParam.SourceTargetVersion != nil {
+			srcVer = strings.TrimSpace(*req.CreateEvalTargetParam.SourceTargetVersion)
+		}
+		// 仅记录型且无业务 source：不注入默认版本，与「双空占位」语义一致，由 CreateEvalTarget 统一落库占位
+		skipInjectDefaultSourceVersion := et.IsRecordOnlyType() && srcID == ""
+		// PromptOnline：允许仅传 source_target_id，版本由 Prompt 侧解析为最新提交；其它在线类型仍用占位默认版本
+		if et != entity.EvalTargetTypeCozeLoopPromptOnline || srcVer != "" {
+			if !skipInjectDefaultSourceVersion && (req.CreateEvalTargetParam.SourceTargetVersion == nil || srcVer == "") {
+				req.CreateEvalTargetParam.SourceTargetVersion = gptr.Of(consts.DefaultSourceTargetVersion)
+			}
+		}
 	}
 
 	var versionedTargetID *entity.VersionedTargetID
 	if !req.CreateEvalTargetParam.IsNull() {
+		opts := make([]entity.Option, 0)
+		opts = append(opts, entity.WithCozeBotPublishVersion(req.CreateEvalTargetParam.BotPublishVersion),
+			entity.WithCozeBotInfoType(gptr.Indirect(req.CreateEvalTargetParam.BotInfoType)),
+			entity.WithRegion(req.CreateEvalTargetParam.Region),
+			entity.WithEnv(req.CreateEvalTargetParam.Env),
+			entity.WithOperationInstruction(req.CreateEvalTargetParam.OperationInstruction))
+		if req.CreateEvalTargetParam.CustomEvalTarget != nil {
+			opts = append(opts, entity.WithCustomEvalTarget(&entity.CustomEvalTarget{
+				ID:        req.CreateEvalTargetParam.CustomEvalTarget.ID,
+				Name:      req.CreateEvalTargetParam.CustomEvalTarget.Name,
+				AvatarURL: req.CreateEvalTargetParam.CustomEvalTarget.AvatarURL,
+				Ext:       req.CreateEvalTargetParam.CustomEvalTarget.Ext,
+			}))
+		}
 		targetID, targetVersionID, err := e.evalTargetService.CreateEvalTarget(ctx, req.WorkspaceID, gptr.Indirect(req.CreateEvalTargetParam.SourceTargetID), gptr.Indirect(req.CreateEvalTargetParam.SourceTargetVersion), gptr.Indirect(req.CreateEvalTargetParam.EvalTargetType),
-			entity.WithCozeBotPublishVersion(req.CreateEvalTargetParam.BotPublishVersion),
-			entity.WithCozeBotInfoType(gptr.Indirect(req.CreateEvalTargetParam.BotInfoType)))
+			opts...)
 		if err != nil {
 			return nil, errorx.Wrapf(err, "CreateEvalTarget failed, param: %v", json.Jsonify(req.CreateEvalTargetParam))
 		}
@@ -491,6 +745,12 @@ func (e *ExptMangerImpl) CreateExpt(ctx context.Context, req *entity.CreateExptP
 		versionedTargetID = &entity.VersionedTargetID{
 			TargetID:  targetID,
 			VersionID: targetVersionID,
+		}
+	} else if req.TargetID != nil && *req.TargetID > 0 && req.TargetVersionID > 0 {
+		// 使用已有 target（如从模板提交实验时）
+		versionedTargetID = &entity.VersionedTargetID{
+			TargetID:  *req.TargetID,
+			VersionID: req.TargetVersionID,
 		}
 	}
 
@@ -516,17 +776,21 @@ func (e *ExptMangerImpl) CreateExpt(ctx context.Context, req *entity.CreateExptP
 	for i, es := range tuple.Evaluators {
 		evaluatorRefs = append(evaluatorRefs, &entity.ExptEvaluatorVersionRef{
 			EvaluatorID:        es.ID,
-			EvaluatorVersionID: es.GetEvaluatorVersion().GetID(),
+			EvaluatorVersionID: es.GetEvaluatorVersionID(),
 		})
 		exptTurnResultFilterKeyMappings = append(exptTurnResultFilterKeyMappings, &entity.ExptTurnResultFilterKeyMapping{
 			SpaceID:   req.WorkspaceID,
 			ExptID:    ids[0],
-			FromField: strconv.FormatInt(es.GetEvaluatorVersion().GetID(), 10),
+			FromField: strconv.FormatInt(es.GetEvaluatorVersionID(), 10),
 			ToKey:     "key" + strconv.Itoa(i+1),
 			FieldType: entity.FieldTypeEvaluator,
 		})
 	}
 
+	triggerType := req.TriggerType
+	if triggerType == "" {
+		triggerType = "manual"
+	}
 	do := &entity.Experiment{
 		ID:                  ids[0],
 		SpaceID:             req.WorkspaceID,
@@ -543,16 +807,50 @@ func (e *ExptMangerImpl) CreateExpt(ctx context.Context, req *entity.CreateExptP
 		MaxAliveTime:        req.MaxAliveTime,
 		SourceType:          req.SourceType,
 		SourceID:            req.SourceID,
+		TrialRunItemCount:   req.TrialRunItemCount,
+		TriggerType:         triggerType,
 
 		Target:     tuple.Target,
 		Evaluators: tuple.Evaluators,
 		EvalSet:    tuple.EvalSet,
 	}
+	if req.Visibility != nil {
+		do.Visibility = *req.Visibility
+	}
+	if req.ThreadID != nil {
+		do.ThreadID = req.ThreadID
+	}
 
-	if req.CreateEvalTargetParam != nil {
-		do.TargetType = gptr.Indirect(req.CreateEvalTargetParam.EvalTargetType)
+	// 如果提供了模板 ID，设置 ExptTemplateMeta
+	if req.ExptTemplateID > 0 {
+		do.ExptTemplateMeta = &entity.ExptTemplateMeta{
+			ID: req.ExptTemplateID,
+		}
+	}
+
+	// 根据 EvaluatorConf.ScoreWeight 设置实验是否启用分数权重（仅正数视为开启）
+	if do.EvalConf != nil && do.EvalConf.ConnectorConf.EvaluatorsConf != nil {
+		do.EvalConf.ConnectorConf.EvaluatorsConf.EnableScoreWeight = false
+		for _, ec := range do.EvalConf.ConnectorConf.EvaluatorsConf.EvaluatorConf {
+			if ec != nil && ec.ScoreWeight != nil && *ec.ScoreWeight > 0 {
+				do.EvalConf.ConnectorConf.EvaluatorsConf.EnableScoreWeight = true
+				break
+			}
+		}
+	}
+
+	if versionedTargetID != nil {
 		do.TargetID = versionedTargetID.TargetID
 		do.TargetVersionID = versionedTargetID.VersionID
+		if !req.CreateEvalTargetParam.IsNull() {
+			do.TargetType = gptr.Indirect(req.CreateEvalTargetParam.EvalTargetType)
+		} else if tuple.Target != nil {
+			if tuple.Target.EvalTargetVersion != nil {
+				do.TargetType = tuple.Target.EvalTargetVersion.EvalTargetType
+			} else {
+				do.TargetType = tuple.Target.EvalTargetType
+			}
+		}
 		if do.EvalConf != nil && do.EvalConf.ConnectorConf.TargetConf != nil {
 			do.EvalConf.ConnectorConf.TargetConf.TargetVersionID = do.TargetVersionID
 		}
@@ -603,7 +901,26 @@ func (e *ExptMangerImpl) Create(ctx context.Context, expt *entity.Experiment, se
 	return nil
 }
 
-func (e *ExptMangerImpl) Get(ctx context.Context, exptID int64, spaceID int64, session *entity.Session) (*entity.Experiment, error) {
+func (e *ExptMangerImpl) InjectExptConfTimeRange(ctx context.Context, exptID int64, timeRange *entity.TaskTimeRangeDO) {
+	if timeRange == nil {
+		return
+	}
+	expts, err := e.exptRepo.MGetBasicByID(ctx, []int64{exptID})
+	if err != nil || len(expts) == 0 {
+		logs.CtxError(ctx, "[InjectExptConfTimeRange] get expt fail, expt_id: %d, err: %v", exptID, err)
+		return
+	}
+	ex := expts[0]
+	if ex.EvalConf == nil {
+		ex.EvalConf = &entity.EvaluationConfiguration{}
+	}
+	ex.EvalConf.TimeRange = timeRange
+	if err := e.exptRepo.Update(ctx, ex); err != nil {
+		logs.CtxError(ctx, "[InjectExptConfTimeRange] update expt fail, expt_id: %d, err: %v", exptID, err)
+	}
+}
+
+func (e *ExptMangerImpl) Get(ctx context.Context, exptID, spaceID int64, session *entity.Session) (*entity.Experiment, error) {
 	expts, err := e.MGet(ctx, []int64{exptID}, spaceID, session)
 	if err != nil {
 		return nil, err
@@ -690,9 +1007,30 @@ func (e *ExptMangerImpl) Update(ctx context.Context, expt *entity.Experiment, se
 	return e.exptRepo.Update(ctx, expt)
 }
 
-func (e *ExptMangerImpl) Delete(ctx context.Context, exptID int64, spaceID int64, session *entity.Session) error {
+func (e *ExptMangerImpl) Delete(ctx context.Context, exptID, spaceID int64, session *entity.Session) error {
 	logs.CtxInfo(ctx, "delete expt, expt_id: %v", exptID)
-	return e.exptRepo.Delete(ctx, exptID, spaceID)
+
+	// 先获取实验信息，用于判断是否关联模板
+	expt, err := e.exptRepo.GetByID(ctx, exptID, spaceID)
+	if err != nil {
+		return err
+	}
+
+	// 删除实验
+	if err := e.exptRepo.Delete(ctx, exptID, spaceID); err != nil {
+		return err
+	}
+
+	// 如果实验关联了模板，更新模板的 ExptInfo（删除实验，数量 -1）
+	if expt != nil && expt.ExptTemplateMeta != nil && expt.ExptTemplateMeta.ID > 0 && e.templateManager != nil {
+		if err := e.templateManager.UpdateExptInfo(ctx, expt.ExptTemplateMeta.ID, spaceID, exptID, expt.Status, -1, nil); err != nil {
+			// 记录错误但不影响主流程
+			logs.CtxError(ctx, "[ExptEval] UpdateExptInfo failed in Delete, template_id: %v, expt_id: %v, err: %v",
+				expt.ExptTemplateMeta.ID, exptID, err)
+		}
+	}
+
+	return nil
 }
 
 func (e *ExptMangerImpl) Clone(ctx context.Context, exptID, spaceID int64, session *entity.Session) (*entity.Experiment, error) {

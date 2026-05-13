@@ -4,12 +4,19 @@
 package loop_span
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"strconv"
 	"time"
 
+	"github.com/bytedance/gg/gptr"
+	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/observability/domain/annotation"
+	domain_common "github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/observability/domain/common"
+	"github.com/coze-dev/coze-loop/backend/pkg/logs"
 	"github.com/samber/lo"
+	"github.com/spf13/cast"
 )
 
 type (
@@ -20,10 +27,12 @@ type (
 )
 
 const (
-	AnnotationValueTypeString AnnotationValueType = "string"
-	AnnotationValueTypeLong   AnnotationValueType = "long"
-	AnnotationValueTypeDouble AnnotationValueType = "double"
-	AnnotationValueTypeBool   AnnotationValueType = "bool"
+	AnnotationValueTypeCategory AnnotationValueType = "category" // 等于string
+	AnnotationValueTypeString   AnnotationValueType = "string"
+	AnnotationValueTypeLong     AnnotationValueType = "long"
+	AnnotationValueTypeNumber   AnnotationValueType = "number" // 等于float
+	AnnotationValueTypeDouble   AnnotationValueType = "double"
+	AnnotationValueTypeBool     AnnotationValueType = "bool"
 
 	AnnotationStatusNormal   AnnotationStatus = "normal"
 	AnnotationStatusInactive AnnotationStatus = "inactive"
@@ -37,6 +46,11 @@ const (
 	AnnotationTypeManualFeedback      AnnotationType = "manual_feedback"
 	AnnotationTypeCozeFeedback        AnnotationType = "coze_feedback"
 	AnnotationTypeManualDataset       AnnotationType = "manual_dataset"
+	AnnotationTypeOpenAPIFeedback     AnnotationType = "openapi_feedback"
+
+	AnnotationOpenAPIFeedbackFieldPrefix = "feedback_openapi_"
+	AnnotationManualFeedbackFieldPrefix  = "manual_feedback_"
+	AnnotationAutoEvaluateFieldPrefix    = "auto_evaluate_"
 )
 
 type AnnotationValue struct {
@@ -59,6 +73,8 @@ type AutoEvaluateMetadata struct {
 	TaskID             int64 `json:"task_id"`
 	EvaluatorRecordID  int64 `json:"evaluator_record_id"`
 	EvaluatorVersionID int64 `json:"evaluator_version_id"`
+	ExptID             int64 `json:"expt_id"`
+	ExptTemplateID     int64 `json:"expt_template_id"`
 }
 
 type AnnotationManualFeedback struct {
@@ -73,24 +89,24 @@ type ManualDatasetMetadata struct{}
 type AnnotationList []*Annotation
 
 type Annotation struct {
-	ID              string
-	SpanID          string
-	TraceID         string
-	StartTime       time.Time // start time of span
-	WorkspaceID     string
-	AnnotationType  AnnotationType
-	AnnotationIndex []string
-	Key             string
-	Value           AnnotationValue
-	Reasoning       string
-	Corrections     []AnnotationCorrection
-	Metadata        any
-	Status          AnnotationStatus
-	CreatedAt       time.Time
-	CreatedBy       string
-	UpdatedAt       time.Time
-	UpdatedBy       string
-	IsDeleted       bool
+	ID              string                 `json:"id,omitempty"`
+	SpanID          string                 `json:"span_id,omitempty"`
+	TraceID         string                 `json:"trace_id,omitempty"`
+	StartTime       time.Time              `json:"start_time,omitempty"` // start time of span
+	WorkspaceID     string                 `json:"workspace_id,omitempty"`
+	AnnotationType  AnnotationType         `json:"annotation_type,omitempty"`
+	AnnotationIndex []string               `json:"annotation_index,omitempty"`
+	Key             string                 `json:"key,omitempty"`
+	Value           AnnotationValue        `json:"value,omitempty"`
+	Reasoning       string                 `json:"reasoning,omitempty"`
+	Corrections     []AnnotationCorrection `json:"corrections,omitempty"`
+	Metadata        any                    `json:"metadata,omitempty"`
+	Status          AnnotationStatus       `json:"status,omitempty"`
+	CreatedAt       time.Time              `json:"created_at,omitempty"`
+	CreatedBy       string                 `json:"created_by,omitempty"`
+	UpdatedAt       time.Time              `json:"updated_at,omitempty"`
+	UpdatedBy       string                 `json:"updated_by,omitempty"`
+	IsDeleted       bool                   `json:"is_deleted,omitempty"`
 }
 
 func (a *Annotation) GenID() error {
@@ -135,6 +151,98 @@ func (a *Annotation) GetDatasetMetadata() *ManualDatasetMetadata {
 		return nil
 	}
 	return metadata
+}
+
+func (a *Annotation) CorrectAutoEvaluateScore(score float64, reasoning string, updateBy string) {
+	if a.Corrections == nil {
+		// 首次修改时，先记录一下LLM的原始值
+		a.Corrections = make([]AnnotationCorrection, 0)
+		a.Corrections = append(a.Corrections, AnnotationCorrection{
+			Reasoning: a.Reasoning,
+			Value:     a.Value,
+			Type:      AnnotationCorrectionTypeLLM,
+			UpdateAt:  a.UpdatedAt,
+			UpdatedBy: a.UpdatedBy,
+		})
+	}
+	// 增加人工修改的记录
+	a.Corrections = append(a.Corrections, AnnotationCorrection{
+		Reasoning: reasoning,
+		Value:     NewDoubleValue(score),
+		Type:      AnnotationCorrectionTypeManual,
+		UpdateAt:  time.Now(),
+		UpdatedBy: updateBy,
+	})
+	// 更新当前值
+	a.Reasoning = reasoning
+	a.Value = NewDoubleValue(score)
+	a.UpdatedBy = updateBy
+	a.UpdatedAt = time.Now()
+}
+
+func (a *Annotation) ToFornaxAnnotation(ctx context.Context) (fa *annotation.Annotation) {
+	fa = &annotation.Annotation{}
+	fa.ID = lo.ToPtr(a.ID)
+	fa.Type = lo.ToPtr(string(a.AnnotationType))
+	fa.Key = lo.ToPtr(a.Key)
+
+	fa.Value = lo.ToPtr(a.Value.StringValue)
+	switch a.Value.ValueType {
+	case annotation.ValueTypeString:
+		fa.ValueType = lo.ToPtr(annotation.ValueTypeString)
+		fa.Value = lo.ToPtr(a.Value.StringValue)
+	case annotation.ValueTypeLong:
+		fa.ValueType = lo.ToPtr(annotation.ValueTypeLong)
+		fa.Value = lo.ToPtr(cast.ToString(a.Value.LongValue))
+	case annotation.ValueTypeDouble:
+		fa.ValueType = lo.ToPtr(annotation.ValueTypeDouble)
+		fa.Value = lo.ToPtr(cast.ToString(a.Value.FloatValue))
+	case annotation.ValueTypeBool:
+		fa.ValueType = lo.ToPtr(annotation.ValueTypeBool)
+		fa.Value = lo.ToPtr(cast.ToString(a.Value.BoolValue))
+	default:
+		logs.CtxWarn(ctx, "toFornaxAnnotation invalid ValueType", "ValueType", a.Value.ValueType)
+	}
+	switch a.AnnotationType {
+	case annotation.AnnotationTypeAutoEvaluate:
+		fa.AutoEvaluate = a.toAutoEvaluate()
+	default:
+		logs.CtxWarn(ctx, "toFornaxAnnotation invalid AnnotationType", "AnnotationType", a.AnnotationType)
+	}
+	fa.SetBaseInfo(&domain_common.BaseInfo{
+		CreatedBy: &domain_common.UserInfo{UserID: gptr.Of(a.CreatedBy)},
+		UpdatedBy: &domain_common.UserInfo{UserID: gptr.Of(a.UpdatedBy)},
+		CreatedAt: gptr.Of(a.CreatedAt.UnixMilli()),
+		UpdatedAt: gptr.Of(a.UpdatedAt.UnixMilli()),
+	})
+	return fa
+}
+
+func (a *Annotation) toAutoEvaluate() *annotation.AutoEvaluate {
+	metadata := a.GetAutoEvaluateMetadata()
+	if metadata == nil {
+		return nil
+	}
+	res := annotation.NewAutoEvaluate()
+	res.EvaluatorVersionID = metadata.EvaluatorVersionID
+	res.TaskID = strconv.FormatInt(metadata.TaskID, 10)
+	res.RecordID = metadata.EvaluatorRecordID
+	res.EvaluatorResult_ = annotation.NewEvaluatorResult_()
+	res.EvaluatorResult_.Score = lo.ToPtr(a.Value.FloatValue)
+	res.EvaluatorResult_.Reasoning = lo.ToPtr(a.Reasoning)
+	if len(a.Corrections) > 0 {
+		// 取最后一个人工修改的记录
+		manualCorrections := lo.Filter(a.Corrections, func(item AnnotationCorrection, index int) bool {
+			return item.Type == AnnotationCorrectionTypeManual
+		})
+		if len(manualCorrections) > 0 {
+			manualCorrection := manualCorrections[len(manualCorrections)-1]
+			res.EvaluatorResult_.Correction = annotation.NewCorrection()
+			res.EvaluatorResult_.Correction.Score = lo.ToPtr(manualCorrection.Value.FloatValue)
+			res.EvaluatorResult_.Correction.Explain = lo.ToPtr(manualCorrection.Reasoning)
+		}
+	}
+	return res
 }
 
 func (a AnnotationList) GetUserIDs() []string {
@@ -208,6 +316,16 @@ func (a AnnotationList) Uniq() AnnotationList {
 	return lo.UniqBy(a, func(item *Annotation) string {
 		return item.ID
 	})
+}
+
+func (a AnnotationList) FindByEvaluatorRecordID(evaluatorRecordID int64) (*Annotation, bool) {
+	for _, annotation := range a {
+		meta := annotation.GetAutoEvaluateMetadata()
+		if meta != nil && meta.EvaluatorRecordID == evaluatorRecordID {
+			return annotation, true
+		}
+	}
+	return nil, false
 }
 
 func NewStringValue(v string) AnnotationValue {

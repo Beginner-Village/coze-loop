@@ -13,8 +13,8 @@ import (
 	context "context"
 	reflect "reflect"
 
-	file "github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/foundation/file"
 	callopt "github.com/cloudwego/kitex/client/callopt"
+	file "github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/foundation/file"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -80,6 +80,26 @@ func (mr *MockClientMockRecorder) SignUploadFile(ctx, req any, callOptions ...an
 	mr.mock.ctrl.T.Helper()
 	varargs := append([]any{ctx, req}, callOptions...)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SignUploadFile", reflect.TypeOf((*MockClient)(nil).SignUploadFile), varargs...)
+}
+
+// UploadFileForServer mocks base method.
+func (m *MockClient) UploadFileForServer(ctx context.Context, req *file.UploadFileForServerRequest, callOptions ...callopt.Option) (*file.UploadFileForServerResponse, error) {
+	m.ctrl.T.Helper()
+	varargs := []any{ctx, req}
+	for _, a := range callOptions {
+		varargs = append(varargs, a)
+	}
+	ret := m.ctrl.Call(m, "UploadFileForServer", varargs...)
+	ret0, _ := ret[0].(*file.UploadFileForServerResponse)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// UploadFileForServer indicates an expected call of UploadFileForServer.
+func (mr *MockClientMockRecorder) UploadFileForServer(ctx, req any, callOptions ...any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	varargs := append([]any{ctx, req}, callOptions...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UploadFileForServer", reflect.TypeOf((*MockClient)(nil).UploadFileForServer), varargs...)
 }
 
 // UploadLoopFileInner mocks base method.

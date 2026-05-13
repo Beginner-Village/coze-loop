@@ -6,16 +6,30 @@ package service
 import (
 	"context"
 	"fmt"
+	"math"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
 
+	"github.com/bytedance/gg/gslice"
+
+	"github.com/coze-dev/coze-loop/backend/infra/redis"
+	tconv "github.com/coze-dev/coze-loop/backend/modules/observability/application/convertor/task"
+	taskrepo "github.com/coze-dev/coze-loop/backend/modules/observability/domain/task/repo"
+	"github.com/coze-dev/coze-loop/backend/pkg/lang/slices"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/bytedance/gg/gptr"
 	"github.com/coze-dev/coze-loop/backend/infra/middleware/session"
+	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/observability/domain/annotation"
+	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/observability/domain/common"
+	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/observability/domain/dataset"
+	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/observability/trace"
 	"github.com/coze-dev/coze-loop/backend/modules/observability/domain/component/config"
 	"github.com/coze-dev/coze-loop/backend/modules/observability/domain/component/metrics"
 	"github.com/coze-dev/coze-loop/backend/modules/observability/domain/component/mq"
+	"github.com/coze-dev/coze-loop/backend/modules/observability/domain/component/rpc"
 	"github.com/coze-dev/coze-loop/backend/modules/observability/domain/component/tenant"
 	"github.com/coze-dev/coze-loop/backend/modules/observability/domain/trace/entity"
 	"github.com/coze-dev/coze-loop/backend/modules/observability/domain/trace/entity/loop_span"
@@ -24,10 +38,18 @@ import (
 	"github.com/coze-dev/coze-loop/backend/modules/observability/domain/trace/service/trace/span_processor"
 	obErrorx "github.com/coze-dev/coze-loop/backend/modules/observability/pkg/errno"
 	"github.com/coze-dev/coze-loop/backend/pkg/errorx"
+	"github.com/coze-dev/coze-loop/backend/pkg/json"
 	"github.com/coze-dev/coze-loop/backend/pkg/lang/goroutine"
 	"github.com/coze-dev/coze-loop/backend/pkg/lang/ptr"
 	"github.com/coze-dev/coze-loop/backend/pkg/logs"
-	time_util "github.com/coze-dev/coze-loop/backend/pkg/time"
+	timeutil "github.com/coze-dev/coze-loop/backend/pkg/time"
+	"github.com/samber/lo"
+)
+
+const (
+	defaultChatPageSize          int32 = 50
+	maxChatPageSize              int32 = 100
+	maxChatPageSizeWithoutDetail int32 = 5000
 )
 
 type ListSpansReq struct {
@@ -41,12 +63,59 @@ type ListSpansReq struct {
 	PageToken             string
 	PlatformType          loop_span.PlatformType
 	SpanListType          loop_span.SpanListType
+	Source                span_filter.SourceType
+	SelectColumns         []string
+	OmitColumns           []string
+	Scene                 entity.ProcessorScene
+	NotQueryAnnotation    bool
 }
 
 type ListSpansResp struct {
 	Spans         loop_span.SpanList
 	NextPageToken string
 	HasMore       bool
+}
+
+type ListPreSpanReq struct {
+	WorkspaceID           int64
+	ThirdPartyWorkspaceID string
+	StartTime             int64 // ms
+	TraceID               string
+	SpanID                string
+	PreviousResponseID    string
+	PlatformType          loop_span.PlatformType
+}
+
+type ListPreSpanResp struct {
+	Spans loop_span.SpanList
+}
+
+type ListPreSpanBatchReq struct {
+	WorkspaceID           int64
+	ThirdPartyWorkspaceID string
+	StartTime             int64 // ms
+	EndTime               int64
+	Items                 []*ListPreSpanItem
+	PlatformType          loop_span.PlatformType
+}
+
+type ListPreSpanItem struct {
+	TraceID            string
+	SpanID             string
+	PreviousResponseID string
+	CurrentSpan        *loop_span.Span
+}
+
+type ListPreSpanBatchResp struct {
+	Results []*ListPreSpanResult
+}
+
+type ListPreSpanResult struct {
+	TraceID            string
+	SpanID             string
+	PreviousResponseID string
+	Spans              loop_span.SpanList
+	Error              error
 }
 
 type GetTraceReq struct {
@@ -57,11 +126,25 @@ type GetTraceReq struct {
 	EndTime      int64 // ms
 	PlatformType loop_span.PlatformType
 	SpanIDs      []string
+	WithDetail   bool
+	Filters      *loop_span.FilterFields
 }
 
 type GetTraceResp struct {
 	TraceId string
 	Spans   loop_span.SpanList
+}
+
+type ListMetadataReq struct {
+	WorkspaceID  int64
+	StartTime    int64 // ms
+	EndTime      int64 // ms
+	SpanListType loop_span.SpanListType
+	PlatformType loop_span.PlatformType
+}
+
+type ListMetadataResp struct {
+	MetadataItemList []*trace.MetadataItemInfo
 }
 
 type SearchTraceOApiReq struct {
@@ -73,11 +156,17 @@ type SearchTraceOApiReq struct {
 	StartTime             int64 // ms
 	EndTime               int64 // ms
 	Limit                 int32
+	SpanIDs               []string
 	PlatformType          loop_span.PlatformType
+	WithDetail            bool
+	Filters               *loop_span.FilterFields
+	PageToken             string
 }
 
 type SearchTraceOApiResp struct {
-	Spans loop_span.SpanList
+	Spans         loop_span.SpanList
+	NextPageToken string
+	HasMore       bool
 }
 
 type ListSpansOApiReq struct {
@@ -98,6 +187,21 @@ type ListSpansOApiResp struct {
 	Spans         loop_span.SpanList
 	NextPageToken string
 	HasMore       bool
+}
+
+type ListPreSpanOApiReq struct {
+	WorkspaceID           int64
+	ThirdPartyWorkspaceID string
+	Tenants               []string
+	StartTime             int64 // ms
+	TraceID               string
+	SpanID                string
+	PreviousResponseID    string
+	PlatformType          loop_span.PlatformType
+}
+
+type ListPreSpanOApiResp struct {
+	Spans loop_span.SpanList
 }
 
 type TraceQueryParam struct {
@@ -135,7 +239,8 @@ type GetTracesMetaInfoReq struct {
 }
 
 type GetTracesMetaInfoResp struct {
-	FilesMetas map[string]*config.FieldMeta
+	FilesMetas      map[string]*config.FieldMeta
+	KeySpanTypeList []string
 }
 
 type CreateAnnotationReq struct {
@@ -195,6 +300,177 @@ type ListAnnotationsResp struct {
 	Annotations loop_span.AnnotationList
 }
 
+type ListWorkspaceAnnotationsReq struct {
+	WorkspaceID    int64
+	StartTime      int64
+	AnnotationType string
+	SpanListType   loop_span.SpanListType
+	PlatformType   loop_span.PlatformType
+}
+
+type ListWorkspaceAnnotationsResp struct {
+	Annotations loop_span.AnnotationList
+}
+
+type ChangeEvaluatorScoreRequest struct {
+	WorkspaceID  int64
+	AnnotationID string
+	SpanID       string
+	StartTime    int64
+	PlatformType loop_span.PlatformType
+	Correction   *annotation.Correction
+}
+type ChangeEvaluatorScoreResp struct {
+	Annotation *annotation.Annotation
+}
+type ListAnnotationEvaluatorsRequest struct {
+	WorkspaceID int64
+	Name        *string
+}
+type ListAnnotationEvaluatorsResp struct {
+	Evaluators []*annotation.AnnotationEvaluator
+}
+type ExtractSpanInfoRequest struct {
+	WorkspaceID   int64
+	TraceID       string
+	SpanIds       []string
+	StartTime     int64
+	EndTime       int64
+	PlatformType  loop_span.PlatformType
+	FieldMappings []entity.FieldMapping
+}
+type ExtractSpanInfoResp struct {
+	SpanInfos []*trace.SpanInfo
+}
+
+type UpsertTrajectoryConfigRequest struct {
+	WorkspaceID int64
+	Filters     *loop_span.FilterFields
+	UserID      string
+}
+
+type GetTrajectoryConfigRequest struct {
+	WorkspaceID int64
+}
+
+type GetTrajectoryConfigResponse struct {
+	Filters *loop_span.FilterFields
+}
+
+func (t *GetTrajectoryConfigResponse) GetFiltersWithDefaultFilter() *loop_span.FilterFields {
+	filters := &loop_span.FilterFields{ // 根节点必定保留
+		QueryAndOr: lo.ToPtr(loop_span.QueryAndOrEnumOr),
+		FilterFields: []*loop_span.FilterField{
+			{
+				FieldName:  loop_span.SpanFieldParentID,
+				FieldType:  loop_span.FieldTypeString,
+				Values:     []string{"", "0"},
+				QueryType:  lo.ToPtr(loop_span.QueryTypeEnumIn),
+				QueryAndOr: lo.ToPtr(loop_span.QueryAndOrEnumOr),
+			},
+		},
+	}
+	if t.Filters != nil {
+		filters.FilterFields = append(filters.FilterFields, &loop_span.FilterField{
+			SubFilter: t.Filters,
+		})
+	} else { // 空间从未设置轨迹规则，使用默认规则
+		filters.FilterFields = append(filters.FilterFields, &loop_span.FilterField{
+			SubFilter: &loop_span.FilterFields{
+				QueryAndOr: lo.ToPtr(loop_span.QueryAndOrEnumOr),
+				FilterFields: []*loop_span.FilterField{
+					{
+						FieldName: loop_span.SpanFieldSpanType,
+						FieldType: loop_span.FieldTypeString,
+						Values:    []string{"model", "agent", "tool", "graph"},
+						QueryType: lo.ToPtr(loop_span.QueryTypeEnumIn),
+					},
+				},
+			},
+		})
+	}
+
+	// EvalTarget特殊逻辑，需要排除EvalTarget
+	resFilter := &loop_span.FilterFields{
+		QueryAndOr: lo.ToPtr(loop_span.QueryAndOrEnumAnd),
+		FilterFields: []*loop_span.FilterField{
+			{
+				FieldName: loop_span.SpanFieldSpanName,
+				FieldType: loop_span.FieldTypeString,
+				Values:    []string{"EvalTarget"},
+				QueryType: lo.ToPtr(loop_span.QueryTypeEnumNotEq),
+			},
+			{
+				SubFilter: filters,
+			},
+		},
+	}
+
+	return resFilter
+}
+
+type ListTrajectoryRequest struct {
+	PlatformType loop_span.PlatformType
+	WorkspaceID  int64
+	TraceIds     []string
+	StartTime    *int64
+}
+
+type ListTrajectoryResponse struct {
+	Trajectories []*loop_span.Trajectory
+}
+
+type ListTraceChatRequest struct {
+	PlatformType  loop_span.PlatformType
+	WorkspaceID   int64
+	TraceID       string
+	StartTime     int64
+	EndTime       int64
+	PageSize      int32
+	PageToken     string
+	Filters       *loop_span.FilterFields
+	WithoutDetail bool
+}
+
+type ListTraceChatResponse struct {
+	Messages      []*entity.ChatMessage
+	NextPageToken string
+	HasMore       bool
+}
+
+type ListThreadChatRequest struct {
+	PlatformType loop_span.PlatformType
+	WorkspaceID  int64
+	ThreadID     string
+	StartTime    int64
+	EndTime      int64
+	PageSize     int32
+	PageToken    string
+}
+
+type ListThreadChatResponse struct {
+	Messages      []*entity.ChatMessage
+	NextPageToken string
+	HasMore       bool
+}
+
+type GetThreadStatRequest struct {
+	PlatformType loop_span.PlatformType
+	WorkspaceID  int64
+	ThreadID     string
+	StartTime    int64
+	EndTime      int64
+}
+
+type GetThreadStatResponse struct {
+	ThreadID    string
+	StartTime   int64
+	Duration    int64
+	UserID      string
+	TotalTokens int64
+	UsedModels  []string
+}
+
 type IAnnotationEvent interface {
 	Send(ctx context.Context, msg *entity.AnnotationEvent) error
 }
@@ -202,19 +478,36 @@ type IAnnotationEvent interface {
 //go:generate mockgen -destination=mocks/trace_service.go -package=mocks . ITraceService
 type ITraceService interface {
 	ListSpans(ctx context.Context, req *ListSpansReq) (*ListSpansResp, error)
+	ListPreSpan(ctx context.Context, req *ListPreSpanReq) (r *ListPreSpanResp, err error)
+	ListPreSpanBatch(ctx context.Context, req *ListPreSpanBatchReq) (*ListPreSpanBatchResp, error)
 	GetTrace(ctx context.Context, req *GetTraceReq) (*GetTraceResp, error)
 	SearchTraceOApi(ctx context.Context, req *SearchTraceOApiReq) (*SearchTraceOApiResp, error)
 	ListSpansOApi(ctx context.Context, req *ListSpansOApiReq) (*ListSpansOApiResp, error)
+	ListPreSpanOApi(ctx context.Context, req *ListPreSpanOApiReq) (*ListPreSpanOApiResp, error)
 	GetTracesAdvanceInfo(ctx context.Context, req *GetTracesAdvanceInfoReq) (*GetTracesAdvanceInfoResp, error)
 	IngestTraces(ctx context.Context, req *IngestTracesReq) error
 	GetTracesMetaInfo(ctx context.Context, req *GetTracesMetaInfoReq) (*GetTracesMetaInfoResp, error)
+	ListMetadata(ctx context.Context, req *ListMetadataReq) (*ListMetadataResp, error)
 	ListAnnotations(ctx context.Context, req *ListAnnotationsReq) (*ListAnnotationsResp, error)
+	ListWorkspaceAnnotations(ctx context.Context, req *ListWorkspaceAnnotationsReq) (*ListWorkspaceAnnotationsResp, error)
 	CreateAnnotation(ctx context.Context, req *CreateAnnotationReq) error
 	DeleteAnnotation(ctx context.Context, req *DeleteAnnotationReq) error
 	CreateManualAnnotation(ctx context.Context, req *CreateManualAnnotationReq) (*CreateManualAnnotationResp, error)
 	UpdateManualAnnotation(ctx context.Context, req *UpdateManualAnnotationReq) error
 	DeleteManualAnnotation(ctx context.Context, req *DeleteManualAnnotationReq) error
 	IAnnotationEvent
+	ChangeEvaluatorScore(ctx context.Context, req *ChangeEvaluatorScoreRequest) (*ChangeEvaluatorScoreResp, error)
+	ListAnnotationEvaluators(ctx context.Context, req *ListAnnotationEvaluatorsRequest) (*ListAnnotationEvaluatorsResp, error)
+	ExtractSpanInfo(ctx context.Context, req *ExtractSpanInfoRequest) (*ExtractSpanInfoResp, error)
+	UpsertTrajectoryConfig(ctx context.Context, req *UpsertTrajectoryConfigRequest) error
+	GetTrajectoryConfig(ctx context.Context, req *GetTrajectoryConfigRequest) (*GetTrajectoryConfigResponse, error)
+	ListTrajectory(ctx context.Context, req *ListTrajectoryRequest) (*ListTrajectoryResponse, error)
+	GetTrajectories(ctx context.Context, workspaceID int64, traceIDs []string, startTime, endTime int64,
+		platformType loop_span.PlatformType) (map[string]*loop_span.Trajectory, error)
+	MergeHistoryMessagesByRespIDBatch(ctx context.Context, spans []*loop_span.Span, platformType loop_span.PlatformType) error
+	ListTraceChat(ctx context.Context, req *ListTraceChatRequest) (*ListTraceChatResponse, error)
+	ListThreadChat(ctx context.Context, req *ListThreadChatRequest) (*ListThreadChatResponse, error)
+	GetThreadStat(ctx context.Context, req *GetThreadStatRequest) (*GetThreadStatResponse, error)
 }
 
 func NewTraceServiceImpl(
@@ -225,6 +518,9 @@ func NewTraceServiceImpl(
 	metrics metrics.ITraceMetrics,
 	buildHelper TraceFilterProcessorBuilder,
 	tenantProvider tenant.ITenantProvider,
+	evalSvc rpc.IEvaluatorRPCAdapter,
+	taskRepo taskrepo.ITaskRepo,
+	persistentRedis redis.PersistentCmdable,
 ) (ITraceService, error) {
 	return &TraceServiceImpl{
 		traceRepo:          tRepo,
@@ -234,6 +530,9 @@ func NewTraceServiceImpl(
 		buildHelper:        buildHelper,
 		tenantProvider:     tenantProvider,
 		metrics:            metrics,
+		evalSvc:            evalSvc,
+		taskRepo:           taskRepo,
+		persistentRedis:    persistentRedis,
 	}, nil
 }
 
@@ -245,32 +544,597 @@ type TraceServiceImpl struct {
 	metrics            metrics.ITraceMetrics
 	buildHelper        TraceFilterProcessorBuilder
 	tenantProvider     tenant.ITenantProvider
+	evalSvc            rpc.IEvaluatorRPCAdapter
+	taskRepo           taskrepo.ITaskRepo
+	persistentRedis    redis.PersistentCmdable
 }
 
-func (r *TraceServiceImpl) GetTrace(ctx context.Context, req *GetTraceReq) (*GetTraceResp, error) {
+const (
+	keyPreviousResponseID = "previous_response_id"
+	keyResponseID         = "response_id"
+)
+
+func (r *TraceServiceImpl) ListPreSpan(ctx context.Context, req *ListPreSpanReq) (resp *ListPreSpanResp, err error) {
 	tenants, err := r.getTenants(ctx, req.PlatformType)
 	if err != nil {
 		return nil, err
 	}
+
+	// get pre span ids from redis
+	preAndCurrentSpanIDs, respIDByOrder, err := r.traceRepo.GetPreSpanIDs(ctx, &repo.GetPreSpanIDsParam{
+		PreRespID: req.PreviousResponseID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	preAndCurrentSpanIDs = append(preAndCurrentSpanIDs, req.SpanID) // for select current span together
+
+	// batch select from ck
+	preAndCurrentSpans, err := r.batchGetPreSpan(ctx, preAndCurrentSpanIDs, tenants, req.StartTime-timeutil.Day2MillSec(30), req.StartTime+1)
+	if err != nil {
+		return nil, errorx.WrapByCode(err, obErrorx.CommercialCommonInternalErrorCodeCode)
+	}
+
+	// span processors
+	processors, err := r.buildHelper.BuildGetTraceProcessors(ctx, span_processor.Settings{
+		WorkspaceId:    req.WorkspaceID,
+		PlatformType:   req.PlatformType,
+		QueryStartTime: req.StartTime - timeutil.Day2MillSec(30), // past 30 days
+		QueryEndTime:   req.StartTime,
+		QueryTenants:   tenants,
+	})
+	if err != nil {
+		return nil, errorx.WrapByCode(err, obErrorx.CommercialCommonInternalErrorCodeCode)
+	}
+	for _, p := range processors {
+		preAndCurrentSpans, err = p.Transform(ctx, preAndCurrentSpans)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// auth check
+	if err := r.checkGetPreSpanAuth(ctx, req, tenants, preAndCurrentSpans); err != nil {
+		return nil, err
+	}
+
+	// order SpanList: remove duplicate span_id, and remove current span
+	orderSpans := r.orderPreSpans(ctx, preAndCurrentSpans, respIDByOrder)
+
+	return &ListPreSpanResp{Spans: orderSpans}, nil
+}
+
+func (r *TraceServiceImpl) batchGetPreSpan(ctx context.Context, spanIDs []string, tenants []string, startTime int64, endTime int64) ([]*loop_span.Span, error) {
+	batchNum := 100
+	batchPreSpan := make([][]string, 0)
+	oneBatchPreSpan := make([]string, 0)
+	preAndCurrentSpans := make([]*loop_span.Span, 0)
+	for _, spanID := range spanIDs {
+		oneBatchPreSpan = append(oneBatchPreSpan, spanID)
+		if len(oneBatchPreSpan) == batchNum {
+			batchPreSpan = append(batchPreSpan, oneBatchPreSpan)
+			oneBatchPreSpan = make([]string, 0)
+		}
+	}
+	if len(oneBatchPreSpan) > 0 {
+		batchPreSpan = append(batchPreSpan, oneBatchPreSpan)
+	}
+	for _, oneBatchSpan := range batchPreSpan {
+		dbSpans, err := r.traceRepo.ListSpans(ctx, &repo.ListSpansParam{
+			Tenants: tenants,
+			Filters: &loop_span.FilterFields{
+				FilterFields: []*loop_span.FilterField{
+					{
+						FieldName: loop_span.SpanFieldSpanId,
+						FieldType: loop_span.FieldTypeString,
+						Values:    oneBatchSpan,
+						QueryType: ptr.Of(loop_span.QueryTypeEnumIn),
+					},
+				},
+			},
+			StartAt: startTime,
+			EndAt:   endTime,
+			Limit:   200,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if dbSpans != nil && len(dbSpans.Spans) > 0 {
+			preAndCurrentSpans = append(preAndCurrentSpans, dbSpans.Spans...)
+		}
+	}
+
+	return preAndCurrentSpans, nil
+}
+
+func (r *TraceServiceImpl) checkGetPreSpanAuth(ctx context.Context, req *ListPreSpanReq, tenants []string, preAndCurrentSpans []*loop_span.Span) error {
+	// 1. check current span: check previous_response_id is correct, and if it is in this workspace, pass
+	// 2. check pre span: if one span of preSpan in this workspace, pass
+	// 3. check span of current trace: if one span of trace in this workspace, pass
+
+	realSpaceID := strconv.FormatInt(req.WorkspaceID, 10)
+	if req.ThirdPartyWorkspaceID != "" {
+		realSpaceID = req.ThirdPartyWorkspaceID
+	}
+
+	isAuthPass := false
+	var currentSpan *loop_span.Span
+	for _, span := range preAndCurrentSpans {
+		if span.SpanID == req.SpanID && span.TraceID == req.TraceID {
+			currentSpan = span
+			break
+		}
+	}
+	if currentSpan == nil {
+		return errorx.NewByCode(obErrorx.CommercialCommonInvalidParamCodeCode, errorx.WithExtraMsg("current span not found"))
+	}
+	if preRespID, ok := currentSpan.SystemTagsString[keyPreviousResponseID]; !ok || preRespID != req.PreviousResponseID {
+		return errorx.NewByCode(obErrorx.CommercialCommonInvalidParamCodeCode, errorx.WithExtraMsg(fmt.Sprintf("req previous_response_id is not current span's[%s]", preRespID)))
+	}
+	if currentSpan.WorkspaceID == realSpaceID {
+		isAuthPass = true
+	}
+
+	if !isAuthPass {
+		for _, span := range preAndCurrentSpans {
+			if span.WorkspaceID == realSpaceID {
+				isAuthPass = true
+				break
+			}
+		}
+	}
+
+	if !isAuthPass {
+		dbSpans, err := r.traceRepo.ListSpans(ctx, &repo.ListSpansParam{
+			Tenants: tenants,
+			Filters: &loop_span.FilterFields{
+				QueryAndOr: ptr.Of(loop_span.QueryAndOrEnumAnd),
+				FilterFields: []*loop_span.FilterField{
+					{
+						FieldName: loop_span.SpanFieldTraceId,
+						FieldType: loop_span.FieldTypeString,
+						Values:    []string{req.TraceID},
+						QueryType: ptr.Of(loop_span.QueryTypeEnumEq),
+					},
+					{
+						FieldName: loop_span.SpanFieldSpaceId,
+						FieldType: loop_span.FieldTypeString,
+						Values:    []string{realSpaceID},
+						QueryType: ptr.Of(loop_span.QueryTypeEnumEq),
+					},
+				},
+			},
+			StartAt:       req.StartTime - timeutil.Day2MillSec(30), // past 30 days
+			EndAt:         req.StartTime,
+			SelectColumns: []string{loop_span.SpanFieldSpanId},
+			Limit:         1,
+		})
+		if err != nil {
+			return err
+		}
+		if dbSpans != nil && len(dbSpans.Spans) > 0 {
+			isAuthPass = true
+		}
+	}
+	if !isAuthPass {
+		return errorx.NewByCode(obErrorx.CommercialCommonInvalidParamCodeCode, errorx.WithExtraMsg("no span in this workspace"))
+	}
+
+	return nil
+}
+
+func (r *TraceServiceImpl) orderPreSpans(ctx context.Context, preAndCurrentSpans []*loop_span.Span, respIDByOrder []string) loop_span.SpanList {
+	respIDSpanMap := make(map[string]*loop_span.Span)
+	for _, span := range preAndCurrentSpans {
+		if respID, ok := span.SystemTagsString[keyResponseID]; ok {
+			respIDSpanMap[respID] = span
+		}
+	}
+	orderSpans := make(loop_span.SpanList, 0, len(respIDByOrder))
+	for i := range respIDByOrder {
+		if s, ok := respIDSpanMap[respIDByOrder[i]]; ok {
+			orderSpans = append(orderSpans, s)
+		}
+	}
+
+	return orderSpans
+}
+
+// ListPreSpanBatch batch version of ListPreSpan, processes multiple previous_response_id in one call.
+func (r *TraceServiceImpl) ListPreSpanBatch(ctx context.Context, req *ListPreSpanBatchReq) (*ListPreSpanBatchResp, error) {
+	if len(req.Items) == 0 {
+		return &ListPreSpanBatchResp{Results: []*ListPreSpanResult{}}, nil
+	}
+
+	// Step 1: Get tenants (shared across all items)
+	tenants, err := r.getTenants(ctx, req.PlatformType)
+	if err != nil {
+		return nil, err
+	}
+
+	// Step 2: Batch get all pre span IDs from redis
+	spanIDsInfo, err := r.batchGetPreSpanIDsFromRedis(ctx, req.Items)
+	if err != nil {
+		return nil, err
+	}
+	logs.CtxInfo(ctx, "Got span from redis info: %v", tconv.ToJSONString(ctx, spanIDsInfo))
+	// Step 3: Collect all unique span IDs to query
+	allSpanIDs := r.collectAllSpanIDs(spanIDsInfo, req.Items)
+	// Step 4: Batch query all spans from ClickHouse
+	allSpans, err := r.batchGetPreSpan(ctx, allSpanIDs, tenants, req.StartTime-timeutil.Day2MillSec(30), req.EndTime+1)
+	if err != nil {
+		return nil, errorx.WrapByCode(err, obErrorx.CommercialCommonInternalErrorCodeCode)
+	}
+
+	// Step 5: Apply span processors once for all spans
+	processedSpans, err := r.applyProcessors(ctx, allSpans, req)
+	if err != nil {
+		return nil, err
+	}
+	// Step 6: Build span map for quick lookup
+	allSpanMap := r.buildSpanMap(processedSpans)
+
+	// Step 6.1: Add current spans from request items (for New Data scenario where span is not yet in CK)
+	for _, item := range req.Items {
+		if item.CurrentSpan != nil {
+			allSpanMap[item.CurrentSpan.SpanID] = item.CurrentSpan
+		}
+	}
+
+	// Step 7: Process each item individually (auth check, ordering)
+	results := r.processEachItem(ctx, req, tenants, spanIDsInfo, allSpanMap)
+	return &ListPreSpanBatchResp{Results: results}, nil
+}
+
+// batchGetPreSpanIDsFromRedis fetches pre span IDs from Redis for all items
+// Returns a map keyed by SpanID (not PreviousResponseID) to handle multiple spans sharing the same PreviousResponseID
+func (r *TraceServiceImpl) batchGetPreSpanIDsFromRedis(
+	ctx context.Context,
+	items []*ListPreSpanItem,
+) (map[string]*preSpanIDsInfo, error) {
+	result := make(map[string]*preSpanIDsInfo, len(items))
+	preRespIDCache := make(map[string]*preSpanIDsInfo)
+
+	for _, item := range items {
+		if item.PreviousResponseID == "" {
+			continue
+		}
+
+		if cached, ok := preRespIDCache[item.PreviousResponseID]; ok {
+			result[item.SpanID] = &preSpanIDsInfo{
+				PreSpanIDs:    cached.PreSpanIDs,
+				RespIDByOrder: cached.RespIDByOrder,
+			}
+			continue
+		}
+
+		preSpanIDs, respIDByOrder, err := r.traceRepo.GetPreSpanIDs(ctx, &repo.GetPreSpanIDsParam{
+			PreRespID: item.PreviousResponseID,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		info := &preSpanIDsInfo{
+			PreSpanIDs:    preSpanIDs,
+			RespIDByOrder: respIDByOrder,
+		}
+		preRespIDCache[item.PreviousResponseID] = info
+		result[item.SpanID] = info
+	}
+
+	return result, nil
+}
+
+// collectAllSpanIDs collects all unique span IDs that need to be queried
+func (r *TraceServiceImpl) collectAllSpanIDs(
+	spanIDsInfo map[string]*preSpanIDsInfo,
+	items []*ListPreSpanItem,
+) []string {
+	spanIDSet := make(map[string]struct{})
+
+	// Add current span IDs from items
+	for _, item := range items {
+		spanIDSet[item.SpanID] = struct{}{}
+	}
+
+	// Add pre span IDs from Redis results
+	for _, info := range spanIDsInfo {
+		for _, spanID := range info.PreSpanIDs {
+			spanIDSet[spanID] = struct{}{}
+		}
+	}
+
+	allSpanIDs := make([]string, 0, len(spanIDSet))
+	for spanID := range spanIDSet {
+		allSpanIDs = append(allSpanIDs, spanID)
+	}
+
+	return allSpanIDs
+}
+
+// applyProcessors applies span processors to all spans at once
+func (r *TraceServiceImpl) applyProcessors(
+	ctx context.Context,
+	spans []*loop_span.Span,
+	req *ListPreSpanBatchReq,
+) ([]*loop_span.Span, error) {
+	processors, err := r.buildHelper.BuildGetTraceProcessors(ctx, span_processor.Settings{
+		WorkspaceId:    req.WorkspaceID,
+		PlatformType:   req.PlatformType,
+		QueryStartTime: req.StartTime - timeutil.Day2MillSec(30), // past 30 days
+		QueryEndTime:   req.EndTime,
+	})
+	if err != nil {
+		return nil, errorx.WrapByCode(err, obErrorx.CommercialCommonInternalErrorCodeCode)
+	}
+
+	processedSpans := spans
+	for _, p := range processors {
+		processedSpans, err = p.Transform(ctx, processedSpans)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return processedSpans, nil
+}
+
+// buildSpanMap creates a map for quick span lookup by span_id
+func (r *TraceServiceImpl) buildSpanMap(spans []*loop_span.Span) map[string]*loop_span.Span {
+	spanMap := make(map[string]*loop_span.Span, len(spans))
+	for _, span := range spans {
+		if span != nil {
+			spanMap[span.SpanID] = span
+		}
+	}
+	return spanMap
+}
+
+// processEachItem processes each request item individually
+func (r *TraceServiceImpl) processEachItem(
+	ctx context.Context,
+	req *ListPreSpanBatchReq,
+	tenants []string,
+	spanIDsInfo map[string]*preSpanIDsInfo,
+	spanMap map[string]*loop_span.Span,
+) []*ListPreSpanResult {
+	results := make([]*ListPreSpanResult, 0, len(req.Items))
+
+	for _, item := range req.Items {
+		result := &ListPreSpanResult{
+			TraceID:            item.TraceID,
+			SpanID:             item.SpanID,
+			PreviousResponseID: item.PreviousResponseID,
+		}
+
+		// Get span IDs info for this item (now keyed by SpanID)
+		info, exists := spanIDsInfo[item.SpanID]
+		if !exists {
+			result.Error = errorx.NewByCode(obErrorx.CommercialCommonInvalidParamCodeCode,
+				errorx.WithExtraMsg("span_id not found in redis lookup"))
+			logs.CtxWarn(ctx, "Span id not found in redis lookup: %v", item.SpanID)
+			results = append(results, result)
+			continue
+		}
+
+		// Collect pre spans + current span for this item
+		// Note: current span is needed for checkGetPreSpanAuth, but will be filtered out by orderPreSpans
+		preAndCurrentSpans := make([]*loop_span.Span, 0, len(info.PreSpanIDs)+1)
+		for _, spanID := range info.PreSpanIDs {
+			if span, ok := spanMap[spanID]; ok {
+				preAndCurrentSpans = append(preAndCurrentSpans, span)
+			}
+		}
+		if currentSpan, ok := spanMap[item.SpanID]; ok {
+			preAndCurrentSpans = append(preAndCurrentSpans, currentSpan)
+		}
+
+		// Auth check
+		itemReq := &ListPreSpanReq{
+			WorkspaceID:           req.WorkspaceID,
+			ThirdPartyWorkspaceID: req.ThirdPartyWorkspaceID,
+			StartTime:             req.StartTime,
+			TraceID:               item.TraceID,
+			SpanID:                item.SpanID,
+			PreviousResponseID:    item.PreviousResponseID,
+			PlatformType:          req.PlatformType,
+		}
+		if err := r.checkGetPreSpanAuth(ctx, itemReq, tenants, preAndCurrentSpans); err != nil {
+			result.Error = err
+			logs.CtxWarn(ctx, "CheckGetPreSpanAuth failed: %v", err)
+			results = append(results, result)
+			continue
+		}
+
+		// Order spans
+		orderSpans := r.orderPreSpans(ctx, preAndCurrentSpans, info.RespIDByOrder)
+		result.Spans = orderSpans
+
+		results = append(results, result)
+	}
+
+	return results
+}
+
+// preSpanIDsInfo holds the pre span IDs and their order for a single previous_response_id
+type preSpanIDsInfo struct {
+	PreSpanIDs    []string
+	RespIDByOrder []string
+}
+
+func (r *TraceServiceImpl) MergeHistoryMessagesByRespIDBatch(ctx context.Context, spans []*loop_span.Span, platformType loop_span.PlatformType) error {
+	spansWithRespID := gslice.Filter(spans, func(span *loop_span.Span) bool {
+		if !span.IsModelSpan() {
+			return false
+		}
+		if span.SystemTagsString == nil {
+			return false
+		}
+		v, ok := span.SystemTagsString[keyPreviousResponseID]
+		return ok && v != ""
+	})
+	if len(spansWithRespID) > 0 {
+		spanResp, err := r.ListPreSpanBatch(ctx, spanList2ListPreSpanBatchReq(spansWithRespID, platformType))
+		if err != nil {
+			logs.CtxError(ctx, "MergeHistoryMessagesByRespIDBatch ListPreSpanBatch fail, err:%v", err)
+			return err
+		}
+		spanIdMap := gslice.ToMap(spanResp.Results, func(t *ListPreSpanResult) (string, *ListPreSpanResult) {
+			return t.SpanID, t
+		})
+		for _, span := range spansWithRespID {
+			preResult, ok := spanIdMap[span.SpanID]
+			if !ok || preResult.Error != nil {
+				continue
+			}
+
+			span.MergeHistoryContext(ctx, preResult.Spans)
+		}
+	}
+	return nil
+}
+
+func spanList2ListPreSpanBatchReq(spanList []*loop_span.Span, platformType loop_span.PlatformType) *ListPreSpanBatchReq {
+	if len(spanList) == 0 {
+		return nil
+	}
+	workspaceId, _ := strconv.Atoi(spanList[0].WorkspaceID)
+	startTime := gslice.Min(gslice.Map(spanList, func(span *loop_span.Span) int64 {
+		return span.StartTime
+	}))
+	endTime := gslice.Max(gslice.Map(spanList, func(span *loop_span.Span) int64 {
+		return span.StartTime
+	}))
+	return &ListPreSpanBatchReq{
+		WorkspaceID:           int64(workspaceId),
+		ThirdPartyWorkspaceID: "",
+		StartTime:             startTime.Value() / 1000, // us to ms
+		EndTime:               endTime.Value() / 1000,
+		Items: gslice.Map(spanList, func(span *loop_span.Span) *ListPreSpanItem {
+			return &ListPreSpanItem{
+				TraceID:            span.TraceID,
+				SpanID:             span.SpanID,
+				PreviousResponseID: span.SystemTagsString[keyPreviousResponseID],
+				CurrentSpan:        span,
+			}
+		}),
+		PlatformType: platformType,
+	}
+}
+
+func (r *TraceServiceImpl) ListTrajectory(ctx context.Context, req *ListTrajectoryRequest) (*ListTrajectoryResponse, error) {
+	if req.StartTime == nil {
+		return nil, errorx.NewByCode(obErrorx.CommercialCommonInvalidParamCodeCode, errorx.WithExtraMsg("start_time is required"))
+	}
+	trajectoryMap, err := r.GetTrajectories(ctx, req.WorkspaceID, req.TraceIds, *req.StartTime, time.Now().UnixMilli(), req.PlatformType)
+	if err != nil {
+		return nil, err
+	}
+	return &ListTrajectoryResponse{
+		Trajectories: lo.MapToSlice(trajectoryMap, func(key string, value *loop_span.Trajectory) *loop_span.Trajectory {
+			return value
+		}),
+	}, nil
+}
+
+func (r *TraceServiceImpl) GetTrajectoryConfig(ctx context.Context, req *GetTrajectoryConfigRequest) (*GetTrajectoryConfigResponse, error) {
+	trajectoryConfig, err := r.traceRepo.GetTrajectoryConfig(ctx, repo.GetTrajectoryConfigParam{WorkspaceId: req.WorkspaceID})
+	if err != nil {
+		return nil, err
+	}
+	if trajectoryConfig == nil || trajectoryConfig.Filter == nil {
+		return &GetTrajectoryConfigResponse{}, nil
+	}
+	return &GetTrajectoryConfigResponse{
+		Filters: trajectoryConfig.Filter,
+	}, nil
+}
+
+func (r *TraceServiceImpl) UpsertTrajectoryConfig(ctx context.Context, req *UpsertTrajectoryConfigRequest) error {
+	marshalFilters, err := json.MarshalString(req.Filters)
+	if err != nil {
+		return err
+	}
+
+	if err := r.traceRepo.UpsertTrajectoryConfig(ctx, &repo.UpsertTrajectoryConfigParam{
+		WorkspaceId: req.WorkspaceID,
+		Filters:     marshalFilters,
+		UserID:      req.UserID,
+	}); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (r *TraceServiceImpl) GetTrace(ctx context.Context, req *GetTraceReq) (*GetTraceResp, error) {
+	if req != nil && req.Filters != nil {
+		if err := req.Filters.Traverse(processSpecificFilter); err != nil {
+			return nil, errorx.WrapByCode(err, obErrorx.CommercialCommonInvalidParamCodeCode, errorx.WithExtraMsg("invalid filter"))
+		}
+	}
+
+	tenants, err := r.getTenants(ctx, req.PlatformType, tenant.WithWorkspaceID(req.WorkspaceID))
+	if err != nil {
+		return nil, err
+	}
+	omitColumns := make([]string, 0)
+	if !req.WithDetail {
+		omitColumns = []string{"input", "output"}
+	}
 	st := time.Now()
-	spans, err := r.traceRepo.GetTrace(ctx, &repo.GetTraceParam{
-		Tenants: tenants,
-		LogID:   req.LogID,
-		TraceID: req.TraceID,
-		StartAt: req.StartTime,
-		EndAt:   req.EndTime,
-		Limit:   1000,
-		SpanIDs: req.SpanIDs,
+	limit := int32(1000)
+	if !req.WithDetail {
+		limit = 10000
+	}
+	traceResult, err := r.traceRepo.GetTrace(ctx, &repo.GetTraceParam{
+		WorkSpaceID: strconv.FormatInt(req.WorkspaceID, 10),
+		Tenants:     tenants,
+		LogID:       req.LogID,
+		TraceID:     req.TraceID,
+		StartAt:     req.StartTime,
+		EndAt:       req.EndTime,
+		Limit:       limit,
+		SpanIDs:     req.SpanIDs,
+		Filters:     req.Filters,
+		OmitColumns: omitColumns,
 	})
 	r.metrics.EmitGetTrace(req.WorkspaceID, st, err != nil)
 	if err != nil {
 		return nil, err
 	}
+	logTraceFilter := &loop_span.FilterFields{
+		QueryAndOr: ptr.Of(loop_span.QueryAndOrEnumAnd),
+	}
+	if req.TraceID != "" {
+		logTraceFilter.FilterFields = append(logTraceFilter.FilterFields, &loop_span.FilterField{
+			FieldName: loop_span.SpanFieldTraceId,
+			FieldType: loop_span.FieldTypeString,
+			Values:    []string{req.TraceID},
+			QueryType: ptr.Of(loop_span.QueryTypeEnumEq),
+		})
+	}
+	if req.LogID != "" {
+		logTraceFilter.FilterFields = append(logTraceFilter.FilterFields, &loop_span.FilterField{
+			FieldName: loop_span.SpanFieldLogID,
+			FieldType: loop_span.FieldTypeString,
+			Values:    []string{req.LogID},
+			QueryType: ptr.Of(loop_span.QueryTypeEnumEq),
+		})
+	}
+	queryFilter := CombineFilters(logTraceFilter, req.Filters)
+	spans := traceResult.Spans
 	processors, err := r.buildHelper.BuildGetTraceProcessors(ctx, span_processor.Settings{
-		WorkspaceId:    req.WorkspaceID,
-		PlatformType:   req.PlatformType,
-		QueryStartTime: req.StartTime,
-		QueryEndTime:   req.EndTime,
+		WorkspaceId:     req.WorkspaceID,
+		PlatformType:    req.PlatformType,
+		QueryStartTime:  req.StartTime,
+		QueryEndTime:    req.EndTime,
+		SpanDoubleCheck: len(req.SpanIDs) > 0 || (req.Filters != nil && len(req.Filters.FilterFields) > 0),
+		QueryTenants:    tenants,
+		QueryLogID:      req.LogID,
+		QueryTraceID:    req.TraceID,
+		QueryFilter:     queryFilter,
 	})
 	if err != nil {
 		return nil, errorx.WrapByCode(err, obErrorx.CommercialCommonInternalErrorCodeCode)
@@ -296,26 +1160,35 @@ func (r *TraceServiceImpl) ListSpans(ctx context.Context, req *ListSpansReq) (*L
 	if err != nil {
 		return nil, err
 	}
-	builtinFilter, err := r.buildBuiltinFilters(ctx, platformFilter, req)
+	env := &span_filter.SpanEnv{
+		WorkspaceID:           req.WorkspaceID,
+		ThirdPartyWorkspaceID: req.ThirdPartyWorkspaceID,
+		Source:                req.Source,
+	}
+	builtinFilter, err := BuildBuiltinFilters(ctx, platformFilter, env, req.SpanListType)
 	if err != nil {
 		return nil, err
 	} else if builtinFilter == nil {
 		return &ListSpansResp{Spans: loop_span.SpanList{}}, nil
 	}
-	filters := r.combineFilters(builtinFilter, req.Filters)
+	filters := CombineFilters(builtinFilter, req.Filters)
 	tenants, err := r.getTenants(ctx, req.PlatformType)
 	if err != nil {
 		return nil, err
 	}
 	st := time.Now()
 	tRes, err := r.traceRepo.ListSpans(ctx, &repo.ListSpansParam{
-		Tenants:         tenants,
-		Filters:         filters,
-		StartAt:         req.StartTime,
-		EndAt:           req.EndTime,
-		Limit:           req.Limit,
-		DescByStartTime: req.DescByStartTime,
-		PageToken:       req.PageToken,
+		WorkSpaceID:        strconv.FormatInt(req.WorkspaceID, 10),
+		Tenants:            tenants,
+		Filters:            filters,
+		StartAt:            req.StartTime,
+		EndAt:              req.EndTime,
+		Limit:              req.Limit,
+		DescByStartTime:    req.DescByStartTime,
+		PageToken:          req.PageToken,
+		SelectColumns:      req.SelectColumns,
+		OmitColumns:        req.OmitColumns,
+		NotQueryAnnotation: req.NotQueryAnnotation,
 	})
 	r.metrics.EmitListSpans(req.WorkspaceID, string(req.SpanListType), st, err != nil)
 	if err != nil {
@@ -327,6 +1200,9 @@ func (r *TraceServiceImpl) ListSpans(ctx context.Context, req *ListSpansReq) (*L
 		PlatformType:   req.PlatformType,
 		QueryStartTime: req.StartTime,
 		QueryEndTime:   req.EndTime,
+		QueryTenants:   tenants,
+		QueryFilter:    filters,
+		Scene:          req.Scene,
 	})
 	if err != nil {
 		return nil, errorx.WrapByCode(err, obErrorx.CommercialCommonInternalErrorCodeCode)
@@ -345,24 +1221,46 @@ func (r *TraceServiceImpl) ListSpans(ctx context.Context, req *ListSpansReq) (*L
 }
 
 func (r *TraceServiceImpl) SearchTraceOApi(ctx context.Context, req *SearchTraceOApiReq) (*SearchTraceOApiResp, error) {
-	spans, err := r.traceRepo.GetTrace(ctx, &repo.GetTraceParam{
+	if req != nil && req.Filters != nil {
+		if err := req.Filters.Traverse(processSpecificFilter); err != nil {
+			return nil, errorx.WrapByCode(err, obErrorx.CommercialCommonInvalidParamCodeCode, errorx.WithExtraMsg("invalid filter"))
+		}
+	}
+
+	omitColumns := make([]string, 0)
+	if !req.WithDetail {
+		omitColumns = []string{"input", "output"}
+	}
+
+	traceResult, err := r.traceRepo.GetTrace(ctx, &repo.GetTraceParam{
+		WorkSpaceID:        strconv.FormatInt(req.WorkspaceID, 10),
 		Tenants:            req.Tenants,
 		TraceID:            req.TraceID,
 		LogID:              req.LogID,
+		SpanIDs:            req.SpanIDs,
 		StartAt:            req.StartTime,
 		EndAt:              req.EndTime,
 		Limit:              req.Limit,
 		NotQueryAnnotation: false,
+		Filters:            req.Filters,
+		OmitColumns:        omitColumns,
+		PageToken:          req.PageToken,
+		DescByStartTime:    true,
 	})
 	if err != nil {
 		return nil, err
 	}
+	spans := traceResult.Spans
 	processors, err := r.buildHelper.BuildSearchTraceOApiProcessors(ctx, span_processor.Settings{
 		WorkspaceId:           req.WorkspaceID,
 		ThirdPartyWorkspaceID: req.ThirdPartyWorkspaceID,
 		QueryStartTime:        req.StartTime,
 		QueryEndTime:          req.EndTime,
 		PlatformType:          req.PlatformType,
+		SpanDoubleCheck:       true,
+		QueryTenants:          req.Tenants,
+		QueryTraceID:          req.TraceID,
+		QueryLogID:            req.LogID,
 	})
 	if err != nil {
 		return nil, errorx.WrapByCode(err, obErrorx.CommercialCommonInternalErrorCodeCode)
@@ -375,7 +1273,9 @@ func (r *TraceServiceImpl) SearchTraceOApi(ctx context.Context, req *SearchTrace
 	}
 	spans.SortByStartTime(false)
 	return &SearchTraceOApiResp{
-		Spans: spans,
+		Spans:         spans,
+		NextPageToken: traceResult.PageToken,
+		HasMore:       traceResult.HasMore,
 	}, nil
 }
 
@@ -387,18 +1287,19 @@ func (r *TraceServiceImpl) ListSpansOApi(ctx context.Context, req *ListSpansOApi
 	if err != nil {
 		return nil, err
 	}
-	builtinFilter, err := r.buildBuiltinFilters(ctx, platformFilter, &ListSpansReq{
+	env := &span_filter.SpanEnv{
 		WorkspaceID:           req.WorkspaceID,
 		ThirdPartyWorkspaceID: req.ThirdPartyWorkspaceID,
-		SpanListType:          req.SpanListType,
-	})
+	}
+	builtinFilter, err := BuildBuiltinFilters(ctx, platformFilter, env, req.SpanListType)
 	if err != nil {
 		return nil, err
 	} else if builtinFilter == nil {
 		return &ListSpansOApiResp{Spans: loop_span.SpanList{}}, nil
 	}
-	filters := r.combineFilters(builtinFilter, req.Filters)
+	filters := CombineFilters(builtinFilter, req.Filters)
 	tRes, err := r.traceRepo.ListSpans(ctx, &repo.ListSpansParam{
+		WorkSpaceID:     strconv.FormatInt(req.WorkspaceID, 10),
 		Tenants:         req.Tenants,
 		Filters:         filters,
 		StartAt:         req.StartTime,
@@ -416,6 +1317,7 @@ func (r *TraceServiceImpl) ListSpansOApi(ctx context.Context, req *ListSpansOApi
 		WorkspaceId:    req.WorkspaceID,
 		QueryStartTime: req.StartTime,
 		QueryEndTime:   req.EndTime,
+		QueryTenants:   req.Tenants,
 	})
 	if err != nil {
 		return nil, errorx.WrapByCode(err, obErrorx.CommercialCommonInternalErrorCodeCode)
@@ -433,10 +1335,64 @@ func (r *TraceServiceImpl) ListSpansOApi(ctx context.Context, req *ListSpansOApi
 	}, nil
 }
 
-func (r *TraceServiceImpl) IngestTraces(ctx context.Context, req *IngestTracesReq) error {
-	processors, err := r.buildHelper.BuildIngestTraceProcessors(ctx, span_processor.Settings{
-		Tenant: req.Tenant,
+func (r *TraceServiceImpl) ListPreSpanOApi(ctx context.Context, req *ListPreSpanOApiReq) (*ListPreSpanOApiResp, error) {
+	// get pre span ids from redis
+	preAndCurrentSpanIDs, respIDByOrder, err := r.traceRepo.GetPreSpanIDs(ctx, &repo.GetPreSpanIDsParam{
+		PreRespID: req.PreviousResponseID,
 	})
+	if err != nil {
+		return nil, err
+	}
+	preAndCurrentSpanIDs = append(preAndCurrentSpanIDs, req.SpanID) // for select current span together
+
+	// batch select from ck
+	preAndCurrentSpans, err := r.batchGetPreSpan(ctx, preAndCurrentSpanIDs, req.Tenants, req.StartTime-timeutil.Day2MillSec(30), req.StartTime+1)
+	if err != nil {
+		return nil, errorx.WrapByCode(err, obErrorx.CommercialCommonInternalErrorCodeCode)
+	}
+
+	// span processors
+	processors, err := r.buildHelper.BuildSearchTraceOApiProcessors(ctx, span_processor.Settings{
+		WorkspaceId:           req.WorkspaceID,
+		ThirdPartyWorkspaceID: req.ThirdPartyWorkspaceID,
+		PlatformType:          req.PlatformType,
+		QueryStartTime:        req.StartTime - timeutil.Day2MillSec(30), // past 30 days
+		QueryEndTime:          req.StartTime,
+		QueryTenants:          req.Tenants,
+	})
+	if err != nil {
+		return nil, errorx.WrapByCode(err, obErrorx.CommercialCommonInternalErrorCodeCode)
+	}
+	for _, p := range processors {
+		preAndCurrentSpans, err = p.Transform(ctx, preAndCurrentSpans)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// auth check
+	if err := r.checkGetPreSpanAuth(ctx, &ListPreSpanReq{
+		WorkspaceID:           req.WorkspaceID,
+		ThirdPartyWorkspaceID: req.ThirdPartyWorkspaceID,
+		StartTime:             req.StartTime,
+		TraceID:               req.TraceID,
+		SpanID:                req.SpanID,
+		PreviousResponseID:    req.PreviousResponseID,
+		PlatformType:          req.PlatformType,
+	}, req.Tenants, preAndCurrentSpans); err != nil {
+		return nil, err
+	}
+
+	// order SpanList: remove duplicate span_id, and remove current span
+	orderSpans := r.orderPreSpans(ctx, preAndCurrentSpans, respIDByOrder)
+
+	return &ListPreSpanOApiResp{
+		Spans: orderSpans,
+	}, nil
+}
+
+func (r *TraceServiceImpl) IngestTraces(ctx context.Context, req *IngestTracesReq) error {
+	processors, err := r.buildHelper.BuildIngestTraceProcessors(ctx, span_processor.Settings{})
 	if err != nil {
 		return errorx.WrapByCode(err, obErrorx.CommercialCommonInternalErrorCodeCode)
 	}
@@ -471,6 +1427,7 @@ func (r *TraceServiceImpl) GetTracesAdvanceInfo(ctx context.Context, req *GetTra
 		lock             sync.Mutex
 		defaultTimeRange = int64(60 * 60 * 1000) // ms
 	)
+	g.SetLimit(5)
 	tenants, err := r.getTenants(ctx, req.PlatformType)
 	if err != nil {
 		return nil, err
@@ -478,19 +1435,15 @@ func (r *TraceServiceImpl) GetTracesAdvanceInfo(ctx context.Context, req *GetTra
 	resp := &GetTracesAdvanceInfoResp{
 		Infos: []*loop_span.TraceAdvanceInfo{},
 	}
-	// use one processor...
-	processors, err := r.buildHelper.BuildAdvanceInfoProcessors(ctx, span_processor.Settings{
-		WorkspaceId:  req.WorkspaceID,
-		PlatformType: req.PlatformType,
-	})
-	if err != nil {
-		logs.CtxError(ctx, "Fail to build advance info processor, %v", err)
-		return nil, err
+	workspaceID := strconv.FormatInt(req.WorkspaceID, 10)
+	if req.ThirdPartyWorkspaceID != "" {
+		workspaceID = req.ThirdPartyWorkspaceID
 	}
 	for _, v := range req.Traces {
 		g.Go(func() error {
 			defer goroutine.Recovery(ctx)
 			qReq := &repo.GetTraceParam{
+				WorkSpaceID:        workspaceID,
 				Tenants:            tenants,
 				TraceID:            v.TraceID,
 				StartAt:            v.StartTime,
@@ -501,12 +1454,28 @@ func (r *TraceServiceImpl) GetTracesAdvanceInfo(ctx context.Context, req *GetTra
 					loop_span.SpanFieldInput,
 					loop_span.SpanFieldOutput,
 				},
+				Filters: loop_span.GetModelSpansFilter(),
 			}
 			st := time.Now()
-			spans, err := r.traceRepo.GetTrace(ctx, qReq)
+			traceResult, err := r.traceRepo.GetTrace(ctx, qReq)
 			r.metrics.EmitGetTrace(req.WorkspaceID, st, err != nil)
 			if err != nil {
 				logs.CtxError(ctx, "Fail to get trace %v, %v", *qReq, err)
+				return err
+			}
+			spans := traceResult.Spans
+			processors, err := r.buildHelper.BuildAdvanceInfoProcessors(ctx, span_processor.Settings{
+				WorkspaceId:           req.WorkspaceID,
+				ThirdPartyWorkspaceID: req.ThirdPartyWorkspaceID,
+				PlatformType:          req.PlatformType,
+				QueryStartTime:        v.StartTime,
+				QueryEndTime:          v.EndTime + defaultTimeRange,
+				SpanDoubleCheck:       true,
+				QueryTenants:          tenants,
+				QueryTraceID:          v.TraceID,
+			})
+			if err != nil {
+				logs.CtxError(ctx, "Fail to build advance info processor, %v", err)
 				return err
 			}
 			for _, p := range processors {
@@ -543,29 +1512,167 @@ func (r *TraceServiceImpl) GetTracesMetaInfo(ctx context.Context, req *GetTraces
 	if err != nil {
 		return nil, errorx.WrapByCode(err, obErrorx.CommercialCommonInternalErrorCodeCode)
 	}
+	baseFields, ok := cfg.FieldMetas[loop_span.PlatformDefault][req.SpanListType]
+	if !ok {
+		return nil, errorx.NewByCode(obErrorx.CommercialCommonInvalidParamCodeCode, errorx.WithExtraMsg("base meta info not found"))
+	}
+
 	fields, ok := cfg.FieldMetas[req.PlatformType][req.SpanListType]
 	if !ok {
-		return nil, errorx.NewByCode(obErrorx.CommercialCommonInvalidParamCodeCode, errorx.WithExtraMsg("meta info not found"))
+		logs.CtxWarn(ctx, "FieldMetas not found: %v-%v", req.PlatformType, req.SpanListType)
 	}
 	fieldMetas := make(map[string]*config.FieldMeta)
-	for _, field := range fields {
+	for _, field := range baseFields {
 		fieldMta, ok := cfg.AvailableFields[field]
 		if !ok || fieldMta == nil {
+			logs.CtxError(ctx, "GetTracesMetaInfo invalid field: %v", field)
 			return nil, errorx.NewByCode(obErrorx.CommercialCommonInternalErrorCodeCode)
 		}
 		fieldMetas[field] = fieldMta
 	}
+	for _, field := range fields {
+		fieldMta, ok := cfg.AvailableFields[field]
+		if !ok || fieldMta == nil {
+			logs.CtxError(ctx, "GetTracesMetaInfo invalid field: %v", field)
+			return nil, errorx.NewByCode(obErrorx.CommercialCommonInternalErrorCodeCode)
+		}
+		fieldMetas[field] = fieldMta
+	}
+
+	spanTypeCfg := r.traceConfig.GetKeySpanTypes(ctx)
+	keySpanTypes, ok := spanTypeCfg[string(req.PlatformType)]
+	if !ok {
+		keySpanTypes = spanTypeCfg[string(loop_span.PlatformDefault)]
+	}
 	return &GetTracesMetaInfoResp{
-		FilesMetas: fieldMetas,
+		FilesMetas:      fieldMetas,
+		KeySpanTypeList: keySpanTypes,
 	}, nil
 }
 
+func (r *TraceServiceImpl) ListMetadata(ctx context.Context, req *ListMetadataReq) (*ListMetadataResp, error) {
+	const maxListMetadataSpansList = 300
+	listSpansResp, err := r.ListSpans(ctx, &ListSpansReq{
+		WorkspaceID:  req.WorkspaceID,
+		StartTime:    req.StartTime,
+		EndTime:      req.EndTime,
+		SpanListType: req.SpanListType,
+		PlatformType: req.PlatformType,
+		Limit:        maxListMetadataSpansList,
+		OmitColumns: []string{
+			"input",
+			"output",
+		},
+		DescByStartTime:    true,
+		NotQueryAnnotation: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	type keyInfo struct {
+		count     int
+		valueType string
+	}
+	keyInfoMap := make(map[string]*keyInfo)
+	for _, span := range listSpansResp.Spans {
+		for key := range span.SystemTagsString {
+			if info, ok := keyInfoMap[key]; ok {
+				info.count++
+			} else {
+				keyInfoMap[key] = &keyInfo{count: 1, valueType: loop_span.MetadataValueTypeString}
+			}
+		}
+		for key := range span.SystemTagsLong {
+			if info, ok := keyInfoMap[key]; ok {
+				info.count++
+			} else {
+				keyInfoMap[key] = &keyInfo{count: 1, valueType: loop_span.MetadataValueTypeLong}
+			}
+		}
+		for key := range span.SystemTagsDouble {
+			if info, ok := keyInfoMap[key]; ok {
+				info.count++
+			} else {
+				keyInfoMap[key] = &keyInfo{count: 1, valueType: loop_span.MetadataValueTypeDouble}
+			}
+		}
+		for key := range span.TagsString {
+			if info, ok := keyInfoMap[key]; ok {
+				info.count++
+			} else {
+				keyInfoMap[key] = &keyInfo{count: 1, valueType: loop_span.MetadataValueTypeString}
+			}
+		}
+		for key := range span.TagsLong {
+			if info, ok := keyInfoMap[key]; ok {
+				info.count++
+			} else {
+				keyInfoMap[key] = &keyInfo{count: 1, valueType: loop_span.MetadataValueTypeLong}
+			}
+		}
+		for key := range span.TagsDouble {
+			if info, ok := keyInfoMap[key]; ok {
+				info.count++
+			} else {
+				keyInfoMap[key] = &keyInfo{count: 1, valueType: loop_span.MetadataValueTypeDouble}
+			}
+		}
+		for key := range span.TagsBool {
+			if info, ok := keyInfoMap[key]; ok {
+				info.count++
+			} else {
+				keyInfoMap[key] = &keyInfo{count: 1, valueType: loop_span.MetadataValueTypeBool}
+			}
+		}
+		for key := range span.TagsByte {
+			if info, ok := keyInfoMap[key]; ok {
+				info.count++
+			} else {
+				keyInfoMap[key] = &keyInfo{count: 1, valueType: loop_span.MetadataValueTypeString}
+			}
+		}
+	}
+
+	keys := lo.Keys(keyInfoMap)
+	sort.Slice(keys, func(i, j int) bool {
+		if keyInfoMap[keys[i]].count != keyInfoMap[keys[j]].count {
+			return keyInfoMap[keys[i]].count > keyInfoMap[keys[j]].count
+		}
+		return keys[i] < keys[j]
+	})
+
+	structFieldSet := make(map[string]struct{}, len(loop_span.SpanStructFieldKeys))
+	for _, k := range loop_span.SpanStructFieldKeys {
+		structFieldSet[k] = struct{}{}
+	}
+
+	items := make([]*trace.MetadataItemInfo, 0, len(loop_span.SpanStructFieldKeys)+len(keys))
+	for _, key := range loop_span.SpanStructFieldKeys {
+		items = append(items, &trace.MetadataItemInfo{
+			Key:       key,
+			ValueType: loop_span.SpanStructFieldValueTypes[key],
+		})
+	}
+	for _, key := range keys {
+		if _, ok := structFieldSet[key]; ok {
+			continue
+		}
+		items = append(items, &trace.MetadataItemInfo{
+			Key:       key,
+			ValueType: keyInfoMap[key].valueType,
+		})
+	}
+
+	return &ListMetadataResp{MetadataItemList: items}, nil
+}
+
 func (r *TraceServiceImpl) ListAnnotations(ctx context.Context, req *ListAnnotationsReq) (*ListAnnotationsResp, error) {
-	tenants, err := r.getTenants(ctx, req.PlatformType)
+	tenants, err := r.getTenants(ctx, req.PlatformType, tenant.WithWorkspaceID(req.WorkspaceID))
 	if err != nil {
 		return nil, err
 	}
 	annotations, err := r.traceRepo.ListAnnotations(ctx, &repo.ListAnnotationsParam{
+		WorkSpaceID:     strconv.FormatInt(req.WorkspaceID, 10),
 		Tenants:         tenants,
 		SpanID:          req.SpanID,
 		TraceID:         req.TraceID,
@@ -582,14 +1689,41 @@ func (r *TraceServiceImpl) ListAnnotations(ctx context.Context, req *ListAnnotat
 	}, nil
 }
 
+func (r *TraceServiceImpl) ListWorkspaceAnnotations(ctx context.Context, req *ListWorkspaceAnnotationsReq) (*ListWorkspaceAnnotationsResp, error) {
+	tenants, err := r.getTenants(ctx, req.PlatformType, tenant.WithWorkspaceID(req.WorkspaceID))
+	if err != nil {
+		return nil, err
+	}
+	const (
+		defaultLimit           = 300
+		defaultDescByUpdatedAt = true
+	)
+	annotations, err := r.traceRepo.ListWorkspaceAnnotations(ctx, &repo.ListWorkspaceAnnotationsParam{
+		WorkSpaceID:     strconv.FormatInt(req.WorkspaceID, 10),
+		Tenants:         tenants,
+		AnnotationType:  req.AnnotationType,
+		StartAt:         req.StartTime,
+		EndAt:           time.Now().UnixMilli(),
+		DescByUpdatedAt: defaultDescByUpdatedAt,
+		Limit:           defaultLimit,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &ListWorkspaceAnnotationsResp{
+		Annotations: annotations,
+	}, nil
+}
+
 func (r *TraceServiceImpl) CreateManualAnnotation(ctx context.Context, req *CreateManualAnnotationReq) (*CreateManualAnnotationResp, error) {
 	tenants, err := r.getTenants(ctx, req.PlatformType)
 	if err != nil {
 		return nil, err
 	}
-	span, err := r.getSpan(ctx,
+	spans, err := r.getSpan(ctx,
 		tenants,
-		req.Annotation.SpanID,
+		[]string{req.Annotation.SpanID},
 		req.Annotation.TraceID,
 		req.Annotation.WorkspaceID,
 		req.Annotation.StartTime.Add(-time.Second).UnixMilli(),
@@ -597,10 +1731,11 @@ func (r *TraceServiceImpl) CreateManualAnnotation(ctx context.Context, req *Crea
 	)
 	if err != nil {
 		return nil, err
-	} else if span == nil {
+	} else if len(spans) == 0 {
 		logs.CtxWarn(ctx, "no span found for span_id %s trace_id %s", req.Annotation.SpanID, req.Annotation.TraceID)
 		return nil, errorx.NewByCode(obErrorx.CommercialCommonInvalidParamCodeCode)
 	}
+	span := spans[0]
 	annotation, err := span.BuildFeedback(
 		loop_span.AnnotationTypeManualFeedback,
 		req.Annotation.Key,
@@ -613,9 +1748,11 @@ func (r *TraceServiceImpl) CreateManualAnnotation(ctx context.Context, req *Crea
 		return nil, errorx.WrapByCode(err, obErrorx.CommercialCommonInvalidParamCodeCode, errorx.WithExtraMsg("invalid annotation"))
 	}
 	if err := r.traceRepo.InsertAnnotations(ctx, &repo.InsertAnnotationParam{
-		Tenant:      span.GetTenant(),
-		TTL:         span.GetTTL(ctx),
-		Annotations: []*loop_span.Annotation{annotation},
+		WorkSpaceID:    span.WorkspaceID,
+		Tenant:         span.GetTenant(),
+		TTL:            span.GetTTL(ctx),
+		Span:           span,
+		AnnotationType: gptr.Of(annotation.AnnotationType),
 	}); err != nil {
 		return nil, err
 	}
@@ -629,9 +1766,9 @@ func (r *TraceServiceImpl) UpdateManualAnnotation(ctx context.Context, req *Upda
 	if err != nil {
 		return err
 	}
-	span, err := r.getSpan(ctx,
+	spans, err := r.getSpan(ctx,
 		tenants,
-		req.Annotation.SpanID,
+		[]string{req.Annotation.SpanID},
 		req.Annotation.TraceID,
 		req.Annotation.WorkspaceID,
 		req.Annotation.StartTime.Add(-time.Second).UnixMilli(),
@@ -639,10 +1776,11 @@ func (r *TraceServiceImpl) UpdateManualAnnotation(ctx context.Context, req *Upda
 	)
 	if err != nil {
 		return err
-	} else if span == nil {
+	} else if len(spans) == 0 {
 		logs.CtxWarn(ctx, "no span found for span_id %s trace_id %s", req.Annotation.SpanID, req.Annotation.TraceID)
 		return errorx.NewByCode(obErrorx.CommercialCommonInvalidParamCodeCode)
 	}
+	span := spans[0]
 	annotation, err := span.BuildFeedback(
 		loop_span.AnnotationTypeManualFeedback,
 		req.Annotation.Key,
@@ -651,15 +1789,15 @@ func (r *TraceServiceImpl) UpdateManualAnnotation(ctx context.Context, req *Upda
 		session.UserIDInCtxOrEmpty(ctx),
 		false,
 	)
-	fmt.Println(annotation.ID, req.AnnotationID)
 	if err != nil || annotation.ID != req.AnnotationID {
 		return errorx.NewByCode(obErrorx.CommercialCommonInvalidParamCodeCode)
 	}
 	existedAnno, err := r.traceRepo.GetAnnotation(ctx, &repo.GetAnnotationParam{
-		Tenants: tenants,
-		ID:      req.AnnotationID,
-		StartAt: time.UnixMicro(span.StartTime).Add(-time.Second).UnixMilli(),
-		EndAt:   time.UnixMicro(span.StartTime).Add(time.Second).UnixMilli(),
+		WorkSpaceID: req.Annotation.WorkspaceID,
+		Tenants:     tenants,
+		ID:          req.AnnotationID,
+		StartAt:     time.UnixMicro(span.StartTime).Add(-time.Second).UnixMilli(),
+		EndAt:       time.UnixMicro(span.StartTime).Add(time.Second).UnixMilli(),
 	})
 	if err != nil {
 		logs.CtxError(ctx, "get annotation %s err %v", req.AnnotationID, err)
@@ -669,9 +1807,11 @@ func (r *TraceServiceImpl) UpdateManualAnnotation(ctx context.Context, req *Upda
 		annotation.CreatedAt = existedAnno.CreatedAt
 	}
 	return r.traceRepo.InsertAnnotations(ctx, &repo.InsertAnnotationParam{
-		Tenant:      span.GetTenant(),
-		TTL:         span.GetTTL(ctx),
-		Annotations: []*loop_span.Annotation{annotation},
+		WorkSpaceID:    span.WorkspaceID,
+		Tenant:         span.GetTenant(),
+		TTL:            span.GetTTL(ctx),
+		Span:           span,
+		AnnotationType: gptr.Of(annotation.AnnotationType),
 	})
 }
 
@@ -680,9 +1820,9 @@ func (r *TraceServiceImpl) DeleteManualAnnotation(ctx context.Context, req *Dele
 	if err != nil {
 		return err
 	}
-	span, err := r.getSpan(ctx,
+	spans, err := r.getSpan(ctx,
 		tenants,
-		req.SpanID,
+		[]string{req.SpanID},
 		req.TraceID,
 		strconv.FormatInt(req.WorkspaceID, 10),
 		req.StartTime-time.Second.Milliseconds(),
@@ -690,10 +1830,11 @@ func (r *TraceServiceImpl) DeleteManualAnnotation(ctx context.Context, req *Dele
 	)
 	if err != nil {
 		return err
-	} else if span == nil {
+	} else if len(spans) == 0 {
 		logs.CtxWarn(ctx, "no span found for span_id %s trace_id %s", req.SpanID, req.TraceID)
 		return errorx.NewByCode(obErrorx.CommercialCommonInternalErrorCodeCode)
 	}
+	span := spans[0]
 	annotation, err := span.BuildFeedback(
 		loop_span.AnnotationTypeManualFeedback,
 		req.AnnotationKey,
@@ -706,9 +1847,11 @@ func (r *TraceServiceImpl) DeleteManualAnnotation(ctx context.Context, req *Dele
 		return errorx.NewByCode(obErrorx.CommercialCommonInvalidParamCodeCode, errorx.WithExtraMsg("invalid annotation"))
 	}
 	return r.traceRepo.InsertAnnotations(ctx, &repo.InsertAnnotationParam{
-		Tenant:      span.GetTenant(),
-		TTL:         span.GetTTL(ctx),
-		Annotations: []*loop_span.Annotation{annotation},
+		WorkSpaceID:    span.WorkspaceID,
+		Tenant:         span.GetTenant(),
+		TTL:            span.GetTTL(ctx),
+		Span:           span,
+		AnnotationType: gptr.Of(annotation.AnnotationType),
 	})
 }
 
@@ -717,9 +1860,9 @@ func (r *TraceServiceImpl) CreateAnnotation(ctx context.Context, req *CreateAnno
 	if err != nil {
 		return err
 	}
-	span, err := r.getSpan(ctx,
+	spans, err := r.getSpan(ctx,
 		cfg.Tenants,
-		req.SpanID,
+		[]string{req.SpanID},
 		req.TraceID,
 		strconv.FormatInt(req.WorkspaceID, 10),
 		time.Now().Add(-time.Duration(req.QueryDays)*24*time.Hour).UnixMilli(),
@@ -727,7 +1870,7 @@ func (r *TraceServiceImpl) CreateAnnotation(ctx context.Context, req *CreateAnno
 	)
 	if err != nil {
 		return err
-	} else if span == nil {
+	} else if len(spans) == 0 {
 		return r.annotationProducer.SendAnnotation(ctx, &entity.AnnotationEvent{
 			Annotation: &loop_span.Annotation{
 				SpanID:         req.SpanID,
@@ -747,6 +1890,7 @@ func (r *TraceServiceImpl) CreateAnnotation(ctx context.Context, req *CreateAnno
 			RetryTimes: 3,
 		})
 	}
+	span := spans[0]
 	annotation, err := span.BuildFeedback(
 		loop_span.AnnotationType(cfg.AnnotationType),
 		req.AnnotationKey,
@@ -757,10 +1901,11 @@ func (r *TraceServiceImpl) CreateAnnotation(ctx context.Context, req *CreateAnno
 		return errorx.WrapByCode(err, obErrorx.CommercialCommonInvalidParamCodeCode, errorx.WithExtraMsg("invalid annotation"))
 	}
 	existedAnno, err := r.traceRepo.GetAnnotation(ctx, &repo.GetAnnotationParam{
-		Tenants: cfg.Tenants,
-		ID:      annotation.ID,
-		StartAt: time.UnixMicro(span.StartTime).Add(-time.Second).UnixMilli(),
-		EndAt:   time.UnixMicro(span.StartTime).Add(time.Second).UnixMilli(),
+		WorkSpaceID: strconv.FormatInt(req.WorkspaceID, 10),
+		Tenants:     cfg.Tenants,
+		ID:          annotation.ID,
+		StartAt:     time.UnixMicro(span.StartTime).Add(-time.Second).UnixMilli(),
+		EndAt:       time.UnixMicro(span.StartTime).Add(time.Second).UnixMilli(),
 	})
 	if err != nil {
 		return err
@@ -769,9 +1914,11 @@ func (r *TraceServiceImpl) CreateAnnotation(ctx context.Context, req *CreateAnno
 		annotation.CreatedAt = existedAnno.CreatedAt
 	}
 	return r.traceRepo.InsertAnnotations(ctx, &repo.InsertAnnotationParam{
-		Tenant:      span.GetTenant(),
-		TTL:         span.GetTTL(ctx),
-		Annotations: []*loop_span.Annotation{annotation},
+		WorkSpaceID:    span.WorkspaceID,
+		Tenant:         span.GetTenant(),
+		TTL:            span.GetTTL(ctx),
+		Span:           span,
+		AnnotationType: gptr.Of(annotation.AnnotationType),
 	})
 }
 
@@ -780,9 +1927,9 @@ func (r *TraceServiceImpl) DeleteAnnotation(ctx context.Context, req *DeleteAnno
 	if err != nil {
 		return err
 	}
-	span, err := r.getSpan(ctx,
+	spans, err := r.getSpan(ctx,
 		cfg.Tenants,
-		req.SpanID,
+		[]string{req.SpanID},
 		req.TraceID,
 		strconv.FormatInt(req.WorkspaceID, 10),
 		time.Now().Add(-time.Duration(req.QueryDays)*24*time.Hour).UnixMilli(),
@@ -790,7 +1937,7 @@ func (r *TraceServiceImpl) DeleteAnnotation(ctx context.Context, req *DeleteAnno
 	)
 	if err != nil {
 		return err
-	} else if span == nil {
+	} else if len(spans) == 0 {
 		return r.annotationProducer.SendAnnotation(ctx, &entity.AnnotationEvent{
 			Annotation: &loop_span.Annotation{
 				SpanID:         req.SpanID,
@@ -809,6 +1956,7 @@ func (r *TraceServiceImpl) DeleteAnnotation(ctx context.Context, req *DeleteAnno
 			RetryTimes: 3,
 		})
 	}
+	span := spans[0]
 	annotation, err := span.BuildFeedback(
 		loop_span.AnnotationType(cfg.AnnotationType),
 		req.AnnotationKey,
@@ -819,9 +1967,11 @@ func (r *TraceServiceImpl) DeleteAnnotation(ctx context.Context, req *DeleteAnno
 		return errorx.WrapByCode(err, obErrorx.CommercialCommonInvalidParamCodeCode, errorx.WithExtraMsg("invalid annotation"))
 	}
 	return r.traceRepo.InsertAnnotations(ctx, &repo.InsertAnnotationParam{
-		Tenant:      span.GetTenant(),
-		TTL:         span.GetTTL(ctx),
-		Annotations: []*loop_span.Annotation{annotation},
+		WorkSpaceID:    span.WorkspaceID,
+		Tenant:         span.GetTenant(),
+		TTL:            span.GetTTL(ctx),
+		Span:           span,
+		AnnotationType: gptr.Of(annotation.AnnotationType),
 	})
 }
 
@@ -840,58 +1990,85 @@ func (r *TraceServiceImpl) Send(ctx context.Context, event *entity.AnnotationEve
 	if err != nil { // retry
 		return err
 	}
-	span, err := r.getSpan(ctx,
+	spans, err := r.getSpan(ctx,
 		cfg.Tenants,
-		event.Annotation.SpanID,
+		[]string{event.Annotation.SpanID},
 		event.Annotation.TraceID,
 		event.Annotation.WorkspaceID,
 		event.StartAt,
 		event.EndAt,
 	)
-	if err != nil || span == nil { // retry if not found yet
+	if err != nil || len(spans) == 0 { // retry if not found yet
 		shouldReSend = true
 		return nil
 	}
+	span := spans[0]
 	event.Annotation.StartTime = time.UnixMicro(span.StartTime)
+	event.Annotation.SpanID = span.SpanID
 	if err := event.Annotation.GenID(); err != nil {
 		logs.CtxWarn(ctx, "failed to generate annotation id for %+v, %v", event.Annotation, err)
 		return nil
 	}
+	span.AddAnnotation(event.Annotation)
 	// retry if failed
 	return r.traceRepo.InsertAnnotations(ctx, &repo.InsertAnnotationParam{
-		Tenant:      span.GetTenant(),
-		TTL:         span.GetTTL(ctx),
-		Annotations: []*loop_span.Annotation{event.Annotation},
+		WorkSpaceID:    span.WorkspaceID,
+		Tenant:         span.GetTenant(),
+		TTL:            span.GetTTL(ctx),
+		Span:           span,
+		AnnotationType: gptr.Of(event.Annotation.AnnotationType),
 	})
 }
 
-func (r *TraceServiceImpl) getSpan(ctx context.Context, tenants []string, spanId, traceId, workspaceId string, startAt, endAt int64) (*loop_span.Span, error) {
-	if spanId == "" || traceId == "" || workspaceId == "" {
+func (r *TraceServiceImpl) getSpan(ctx context.Context, tenants []string, spanIds []string, traceId, workspaceId string, startAt, endAt int64) ([]*loop_span.Span, error) {
+	validSpanIds := make([]string, 0, len(spanIds))
+	for _, span := range spanIds {
+		if span == "" {
+			continue
+		}
+		validSpanIds = append(validSpanIds, span)
+	}
+	if (len(validSpanIds) == 0 && traceId == "") || workspaceId == "" {
 		return nil, errorx.NewByCode(obErrorx.CommercialCommonInvalidParamCodeCode)
 	}
+	var filterFields []*loop_span.FilterField
+	if len(validSpanIds) != 0 {
+		filterFields = append(filterFields,
+			&loop_span.FilterField{
+				FieldName: loop_span.SpanFieldSpanId,
+				FieldType: loop_span.FieldTypeString,
+				Values:    validSpanIds,
+				QueryType: ptr.Of(loop_span.QueryTypeEnumIn),
+			})
+	} else {
+		filterFields = append(filterFields,
+			&loop_span.FilterField{
+				FieldName: loop_span.SpanFieldParentID,
+				FieldType: loop_span.FieldTypeString,
+				Values:    []string{"0", ""},
+				QueryType: ptr.Of(loop_span.QueryTypeEnumIn),
+			})
+	}
+	filterFields = append(filterFields, &loop_span.FilterField{
+		FieldName: loop_span.SpanFieldSpaceId,
+		FieldType: loop_span.FieldTypeString,
+		Values:    []string{workspaceId},
+		QueryType: ptr.Of(loop_span.QueryTypeEnumEq),
+	})
+
+	if traceId != "" {
+		filterFields = append(filterFields, &loop_span.FilterField{
+			FieldName: loop_span.SpanFieldTraceId,
+			FieldType: loop_span.FieldTypeString,
+			Values:    []string{traceId},
+			QueryType: ptr.Of(loop_span.QueryTypeEnumEq),
+		})
+	}
 	res, err := r.traceRepo.ListSpans(ctx, &repo.ListSpansParam{
-		Tenants: tenants,
+		WorkSpaceID: workspaceId,
+		Tenants:     tenants,
 		Filters: &loop_span.FilterFields{
-			FilterFields: []*loop_span.FilterField{
-				{
-					FieldName: loop_span.SpanFieldSpanId,
-					FieldType: loop_span.FieldTypeString,
-					Values:    []string{spanId},
-					QueryType: ptr.Of(loop_span.QueryTypeEnumEq),
-				},
-				{
-					FieldName: loop_span.SpanFieldSpaceId,
-					FieldType: loop_span.FieldTypeString,
-					Values:    []string{workspaceId},
-					QueryType: ptr.Of(loop_span.QueryTypeEnumEq),
-				},
-				{
-					FieldName: loop_span.SpanFieldTraceId,
-					FieldType: loop_span.FieldTypeString,
-					Values:    []string{traceId},
-					QueryType: ptr.Of(loop_span.QueryTypeEnumEq),
-				},
-			},
+			FilterFields: filterFields,
 		},
 		StartAt:            startAt,
 		EndAt:              endAt,
@@ -904,7 +2081,7 @@ func (r *TraceServiceImpl) getSpan(ctx context.Context, tenants []string, spanId
 	} else if len(res.Spans) == 0 {
 		return nil, nil
 	}
-	return res.Spans[0], nil
+	return res.Spans, nil
 }
 
 func (r *TraceServiceImpl) getAnnotationCallerCfg(ctx context.Context, caller string) (*config.AnnotationConfig, error) {
@@ -923,134 +2100,463 @@ func (r *TraceServiceImpl) getAnnotationCallerCfg(ctx context.Context, caller st
 	return nil, errorx.NewByCode(obErrorx.CommercialCommonInvalidParamCodeCode)
 }
 
-func (r *TraceServiceImpl) buildBuiltinFilters(ctx context.Context, f span_filter.Filter, req *ListSpansReq) (*loop_span.FilterFields, error) {
-	filters := make([]*loop_span.FilterField, 0)
-	env := &span_filter.SpanEnv{
-		WorkspaceID:           req.WorkspaceID,
-		ThirdPartyWorkspaceID: req.ThirdPartyWorkspaceID,
-	}
-	basicFilter, forceQuery, err := f.BuildBasicSpanFilter(ctx, env)
-	if err != nil {
-		return nil, err
-	} else if len(basicFilter) == 0 && !forceQuery { // if it's null, no need to query from ck
-		return nil, nil
-	}
-	filters = append(filters, basicFilter...)
-	switch req.SpanListType {
-	case loop_span.SpanListTypeRootSpan:
-		subFilter, err := f.BuildRootSpanFilter(ctx, env)
-		if err != nil {
-			return nil, err
-		}
-		filters = append(filters, subFilter...)
-	case loop_span.SpanListTypeLLMSpan:
-		subFilter, err := f.BuildLLMSpanFilter(ctx, env)
-		if err != nil {
-			return nil, err
-		}
-		filters = append(filters, subFilter...)
-	case loop_span.SpanListTypeAllSpan:
-		subFilter, err := f.BuildALLSpanFilter(ctx, env)
-		if err != nil {
-			return nil, err
-		}
-		filters = append(filters, subFilter...)
-	default:
-		return nil, errorx.NewByCode(obErrorx.CommercialCommonInvalidParamCodeCode, errorx.WithExtraMsg("invalid span list type: %s"))
-	}
-	filterAggr := &loop_span.FilterFields{
-		QueryAndOr:   ptr.Of(loop_span.QueryAndOrEnumAnd),
-		FilterFields: filters,
-	}
-	return filterAggr, nil
+func (r *TraceServiceImpl) getTenants(ctx context.Context, platform loop_span.PlatformType, opts ...tenant.OptFn) ([]string, error) {
+	return r.tenantProvider.GetTenantsByPlatformType(ctx, platform, opts...)
 }
 
-func (r *TraceServiceImpl) combineFilters(filters ...*loop_span.FilterFields) *loop_span.FilterFields {
-	filterAggr := &loop_span.FilterFields{
-		QueryAndOr: ptr.Of(loop_span.QueryAndOrEnumAnd),
+func (r *TraceServiceImpl) ChangeEvaluatorScore(ctx context.Context, req *ChangeEvaluatorScoreRequest) (*ChangeEvaluatorScoreResp, error) {
+	var resp *ChangeEvaluatorScoreResp
+	tenants, err := r.getTenants(ctx, req.PlatformType)
+	if err != nil {
+		return resp, err
 	}
-	for _, f := range filters {
-		if f == nil {
-			continue
+	spans, err := r.getSpan(ctx,
+		tenants,
+		[]string{req.SpanID},
+		"",
+		strconv.FormatInt(req.WorkspaceID, 10),
+		req.StartTime-time.Second.Milliseconds(),
+		req.StartTime+time.Second.Milliseconds(),
+	)
+	if err != nil {
+		return resp, err
+	} else if len(spans) == 0 {
+		logs.CtxWarn(ctx, "no span found for span_id %s", req.SpanID)
+		return resp, errorx.NewByCode(obErrorx.CommercialCommonInvalidParamCodeCode)
+	}
+	span := spans[0]
+	annotation, err := r.traceRepo.GetAnnotation(ctx, &repo.GetAnnotationParam{
+		WorkSpaceID: strconv.FormatInt(req.WorkspaceID, 10),
+		Tenants:     tenants,
+		ID:          req.AnnotationID,
+		StartAt:     time.UnixMicro(span.StartTime).Add(-time.Second).UnixMilli(),
+		EndAt:       time.UnixMicro(span.StartTime).Add(time.Second).UnixMilli(),
+	})
+	if err != nil {
+		logs.CtxError(ctx, "get annotation %s err %v", req.AnnotationID, err)
+		return resp, errorx.NewByCode(obErrorx.CommercialCommonInvalidParamCodeCode, errorx.WithExtraMsg("get annotation error"))
+	}
+	if annotation == nil {
+		return resp, errorx.NewByCode(obErrorx.CommercialCommonInvalidParamCodeCode, errorx.WithExtraMsg("annotation not found"))
+	}
+	updateBy := session.UserIDInCtxOrEmpty(ctx)
+	if updateBy == "" {
+		return resp, errorx.NewByCode(obErrorx.UserParseFailedCode)
+	}
+	annotation.CorrectAutoEvaluateScore(req.Correction.GetScore(), req.Correction.GetExplain(), updateBy)
+	// 以评估数据为主数据，优先修改评估数据，异常则直接返回失败
+	if err = r.correctEvaluatorRecords(ctx, r.evalSvc, annotation); err != nil {
+		return resp, err
+	}
+	// 再同步修改观测数据
+	span.Annotations = append(span.Annotations, annotation)
+	param := &repo.InsertAnnotationParam{
+		WorkSpaceID:    span.WorkspaceID,
+		Tenant:         span.GetTenant(),
+		TTL:            span.GetTTL(ctx),
+		Span:           span,
+		AnnotationType: gptr.Of(annotation.AnnotationType),
+	}
+	if err = r.traceRepo.InsertAnnotations(ctx, param); err != nil {
+		recordID := lo.Ternary(annotation.GetAutoEvaluateMetadata() != nil, annotation.GetAutoEvaluateMetadata().EvaluatorRecordID, 0)
+		// 如果同步修改失败，异步补偿
+		// todo 异步有问题，会重复
+		logs.CtxWarn(ctx, "Sync upsert annotation failed, try async upsert. span_id=[%v], recored_id=[%v], err:%v",
+			annotation.SpanID, recordID, err)
+		return resp, nil
+	}
+	return &ChangeEvaluatorScoreResp{
+		Annotation: annotation.ToFornaxAnnotation(ctx),
+	}, nil
+}
+
+func (r *TraceServiceImpl) correctEvaluatorRecords(ctx context.Context, evalSvc rpc.IEvaluatorRPCAdapter, annotation *loop_span.Annotation) error {
+	if annotation == nil {
+		return errorx.NewByCode(obErrorx.CommercialCommonInvalidParamCodeCode, errorx.WithExtraMsg("annotation is nil"))
+	}
+	if annotation.GetAutoEvaluateMetadata() == nil {
+		return errorx.NewByCode(obErrorx.CommercialCommonInvalidParamCodeCode, errorx.WithExtraMsg("annotation auto evaluate metadata is nil"))
+	}
+	if len(annotation.Corrections) == 0 {
+		return errorx.NewByCode(obErrorx.CommercialCommonInvalidParamCodeCode, errorx.WithExtraMsg("annotation corrections is empty"))
+	}
+	correction := annotation.Corrections[len(annotation.Corrections)-1]
+
+	if err := evalSvc.UpdateEvaluatorRecord(ctx, &rpc.UpdateEvaluatorRecordParam{
+		WorkspaceID:       annotation.WorkspaceID,
+		EvaluatorRecordID: annotation.GetAutoEvaluateMetadata().EvaluatorRecordID,
+		Score:             correction.Value.FloatValue,
+		Reasoning:         correction.Reasoning,
+		UpdatedBy:         correction.UpdatedBy,
+	}); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (r *TraceServiceImpl) ListAnnotationEvaluators(ctx context.Context, req *ListAnnotationEvaluatorsRequest) (*ListAnnotationEvaluatorsResp, error) {
+	resp := &ListAnnotationEvaluatorsResp{}
+	resp.Evaluators = make([]*annotation.AnnotationEvaluator, 0)
+	evaluators := make([]*rpc.Evaluator, 0)
+
+	if req.Name != nil {
+		// 有name直接模糊查询
+		evaluatorList, err := r.evalSvc.ListEvaluators(ctx, &rpc.ListEvaluatorsParam{
+			WorkspaceID: req.WorkspaceID,
+			Name:        req.Name,
+		})
+		if err != nil {
+			return resp, err
 		}
-		filterAggr.FilterFields = append(filterAggr.FilterFields, &loop_span.FilterField{
-			QueryAndOr: ptr.Of(loop_span.QueryAndOrEnumAnd),
-			SubFilter:  f,
+		evaluators = append(evaluators, evaluatorList...)
+	} else {
+		// 没有name先查task
+		taskDOs, _, err := r.taskRepo.ListTasks(ctx, taskrepo.ListTaskParam{
+			WorkspaceIDs: []int64{req.WorkspaceID},
+			ReqLimit:     int32(500),
+			ReqOffset:    int32(0),
+		})
+		if err != nil {
+			return nil, err
+		}
+		if len(taskDOs) == 0 {
+			logs.CtxInfo(ctx, "GetTasks tasks is nil")
+			return resp, nil
+		}
+
+		evaluatorVersionIDS := make(map[int64]bool)
+		for _, taskDO := range taskDOs {
+			taskConfig := tconv.TaskConfigDO2DTO(taskDO.TaskConfig)
+			if taskConfig == nil {
+				continue
+			}
+			for _, evaluator := range taskConfig.AutoEvaluateConfigs {
+				evaluatorVersionIDS[evaluator.EvaluatorVersionID] = true
+				if len(evaluatorVersionIDS) >= 30 {
+					break
+				}
+			}
+			if len(evaluatorVersionIDS) >= 30 {
+				break
+			}
+		}
+		evaluatorVersionIDList := make([]int64, 0)
+		for k := range evaluatorVersionIDS {
+			evaluatorVersionIDList = append(evaluatorVersionIDList, k)
+		}
+		evaluatorList, _, err := r.evalSvc.BatchGetEvaluatorVersions(ctx, &rpc.BatchGetEvaluatorVersionsParam{
+			WorkspaceID:         req.WorkspaceID,
+			EvaluatorVersionIds: evaluatorVersionIDList,
+		})
+		if err != nil {
+			return resp, errorx.NewByCode(obErrorx.CommercialCommonInvalidParamCodeCode, errorx.WithMsgParam("evaluatorVersionIDs is invalid, BatchGetEvaluators err: %v", err.Error()))
+		}
+		evaluators = append(evaluators, evaluatorList...)
+	}
+	for _, evaluator := range evaluators {
+		re := &annotation.AnnotationEvaluator{}
+		if evaluator.EvaluatorVersionID != 0 {
+			re.EvaluatorVersionID = evaluator.EvaluatorVersionID
+		}
+		if evaluator.EvaluatorName != "" {
+			re.EvaluatorName = evaluator.EvaluatorName
+		}
+		if evaluator.EvaluatorVersion != "" {
+			re.EvaluatorVersion = evaluator.EvaluatorVersion
+		}
+		resp.Evaluators = append(resp.Evaluators, re)
+	}
+	return resp, nil
+}
+
+func (r *TraceServiceImpl) ExtractSpanInfo(ctx context.Context, req *ExtractSpanInfoRequest) (*ExtractSpanInfoResp, error) {
+	resp := &ExtractSpanInfoResp{}
+	var spanInfos []*trace.SpanInfo
+	tenants, err := r.getTenants(ctx, req.PlatformType)
+	if err != nil {
+		return resp, err
+	}
+	spans, err := r.getSpan(ctx,
+		tenants,
+		req.SpanIds,
+		req.TraceID,
+		strconv.FormatInt(req.WorkspaceID, 10),
+		req.StartTime-time.Second.Milliseconds(),
+		req.EndTime+time.Second.Milliseconds(),
+	)
+	if err != nil {
+		return resp, err
+	} else if len(spans) == 0 {
+		logs.CtxWarn(ctx, "no span found for span_ids %v trace_id %s", req.SpanIds, req.TraceID)
+		return resp, errorx.NewByCode(obErrorx.CommercialCommonInvalidParamCodeCode)
+	}
+	logs.CtxInfo(ctx, "Get spans success, total conut:%v", len(spans))
+	for _, span := range spans {
+		var fieldList []*dataset.FieldData
+		for _, mapping := range req.FieldMappings {
+			value, err := buildExtractSpanInfo(ctx, span, &mapping)
+			if err != nil {
+				// 非json但使用了jsonpath，也不报错，置空
+				logs.CtxInfo(ctx, "Extract field failed, err:%v", err)
+				return resp, err
+			}
+			content := buildContent(value)
+			// 前端传入的是Name，评测集需要的是key，需要做一下mapping
+			if mapping.FieldSchema.Name == "" {
+				logs.CtxInfo(ctx, "Evaluator field name is nil")
+				continue
+			}
+			fieldList = append(fieldList, &dataset.FieldData{
+				Key:     mapping.FieldSchema.Key,
+				Name:    gptr.Of(mapping.FieldSchema.Name),
+				Content: content,
+			})
+		}
+		spanInfos = append(spanInfos, &trace.SpanInfo{
+			SpanID:    span.SpanID,
+			FieldList: fieldList,
 		})
 	}
-	return filterAggr
+	return &ExtractSpanInfoResp{
+		SpanInfos: spanInfos,
+	}, nil
 }
 
-func (r *TraceServiceImpl) getTenants(ctx context.Context, platform loop_span.PlatformType) ([]string, error) {
-	return r.tenantProvider.GetTenantsByPlatformType(ctx, platform)
-}
+func (r *TraceServiceImpl) GetTrajectories(ctx context.Context, workspaceID int64, traceIDs []string, startTime, endTime int64, platformType loop_span.PlatformType) (map[string]*loop_span.Trajectory, error) {
+	traceIDs = lo.Filter(traceIDs, func(item string, _ int) bool {
+		return item != ""
+	})
+	if len(traceIDs) == 0 {
+		return map[string]*loop_span.Trajectory{}, nil
+	}
 
-func processSpecificFilter(f *loop_span.FilterField) error {
-	switch f.FieldName {
-	case loop_span.SpanFieldStatus:
-		if err := processStatusFilter(f); err != nil {
-			return err
-		}
-	case loop_span.SpanFieldDuration,
-		loop_span.SpanFieldLatencyFirstResp,
-		loop_span.SpanFieldStartTimeFirstResp,
-		loop_span.SpanFieldStartTimeFirstTokenResp,
-		loop_span.SpanFieldLatencyFirstTokenResp,
-		loop_span.SpanFieldReasoningDuration:
-		if err := processLatencyFilter(f); err != nil {
-			return err
-		}
+	tenant, err := r.tenantProvider.GetTenantsByPlatformType(ctx, platformType)
+	if err != nil {
+		return nil, err
 	}
-	return nil
-}
 
-func processStatusFilter(f *loop_span.FilterField) error {
-	if f.QueryType == nil || *f.QueryType != loop_span.QueryTypeEnumIn {
-		return fmt.Errorf("status filter should use in operator")
+	trajectoryConfig, err := r.GetTrajectoryConfig(ctx, &GetTrajectoryConfigRequest{WorkspaceID: workspaceID})
+	if err != nil {
+		logs.CtxError(ctx, "Failed to get trajectory config, workspace_id:%d, err:%+v", workspaceID, err)
+		return nil, err
 	}
-	f.FieldName = loop_span.SpanFieldStatusCode
-	f.FieldType = loop_span.FieldTypeLong
-	checkSuccess, checkError := false, false
-	for _, val := range f.Values {
-		switch val {
-		case loop_span.SpanStatusSuccess:
-			checkSuccess = true
-		case loop_span.SpanStatusError:
-			checkError = true
-		default:
-			return fmt.Errorf("invalid status code field value")
-		}
-	}
-	if checkSuccess && checkError {
-		f.QueryType = ptr.Of(loop_span.QueryTypeEnumAlwaysTrue)
-		f.Values = nil
-	} else if checkSuccess {
-		f.Values = []string{"0"}
-	} else if checkError {
-		f.QueryType = ptr.Of(loop_span.QueryTypeEnumNotIn)
-		f.Values = []string{"0"}
-	} else {
-		return fmt.Errorf("invalid status code query")
-	}
-	return nil
-}
 
-// ms -> us
-func processLatencyFilter(f *loop_span.FilterField) error {
-	if f.FieldType != loop_span.FieldTypeLong {
-		return fmt.Errorf("latency field type should be long ")
+	allSpans, err := r.traceRepo.ListSpansRepeat(ctx, &repo.ListSpansParam{
+		Tenants: tenant,
+		Filters: &loop_span.FilterFields{
+			FilterFields: []*loop_span.FilterField{
+				{
+					FieldName: "trace_id",
+					FieldType: loop_span.FieldTypeString,
+					Values:    traceIDs,
+					QueryType: ptr.Of(loop_span.QueryTypeEnumIn),
+				},
+			},
+		},
+		StartAt:            startTime,
+		EndAt:              endTime,
+		Limit:              1000,
+		NotQueryAnnotation: true,
+		SelectColumns:      []string{loop_span.SpanFieldTraceId, loop_span.SpanFieldSpanId, loop_span.SpanFieldParentID, loop_span.SpanFieldSpaceId, loop_span.SpanFieldSpanName},
+	})
+	if err != nil {
+		logs.CtxError(ctx, "Failed to list all spans, err:%+v", err)
+		return nil, err
 	}
-	micros := make([]string, 0)
-	for _, val := range f.Values {
-		integer, err := strconv.ParseInt(val, 10, 64)
+
+	selectFilters := r.getSelectFilters(traceIDs, trajectoryConfig, allSpans)
+	selectedSpans, err := r.traceRepo.ListSpansRepeat(ctx, &repo.ListSpansParam{
+		Tenants:            tenant,
+		Filters:            selectFilters,
+		StartAt:            startTime,
+		EndAt:              endTime,
+		Limit:              100,
+		NotQueryAnnotation: true,
+	})
+	if err != nil {
+		logs.CtxError(ctx, "Failed to list selected spans, err:%+v", err)
+		return nil, err
+	}
+
+	processors, err := r.buildHelper.BuildGetTraceProcessors(ctx, span_processor.Settings{
+		WorkspaceId:     workspaceID,
+		PlatformType:    platformType,
+		QueryStartTime:  startTime,
+		QueryEndTime:    endTime,
+		SpanDoubleCheck: false,
+	})
+	if err != nil {
+		return nil, errorx.WrapByCode(err, obErrorx.CommercialCommonInternalErrorCodeCode)
+	}
+	for _, p := range processors {
+		selectedSpans.Spans, err = p.Transform(ctx, selectedSpans.Spans)
 		if err != nil {
-			return fmt.Errorf("fail to parse long value %s, %v", val, err)
+			return nil, err
 		}
-		integer = time_util.MillSec2MicroSec(integer)
-		micros = append(micros, strconv.FormatInt(integer, 10))
 	}
-	f.Values = micros
-	return nil
+
+	trajectories, err := r.buildTrajectories(ctx, &allSpans.Spans, ptr.Of(r.convertCustomNode(selectedSpans.Spans)), selectFilters)
+	if err != nil {
+		return nil, err
+	}
+	return trajectories, nil
+}
+
+func (r *TraceServiceImpl) convertCustomNode(spans loop_span.SpanList) loop_span.SpanList {
+	// default agent rule
+	for _, span := range spans {
+		if span != nil && slices.Contains([]string{"graph"}, span.SpanType) {
+			span.SpanType = "agent"
+		}
+	}
+
+	return spans
+}
+
+func (r *TraceServiceImpl) getEvalTargetNextLevelSpanID(allSpans *repo.ListSpansResult) []string {
+	evalTargetSpanIDs := make(map[string]struct{})
+	for _, span := range allSpans.Spans {
+		if span.SpanName == "EvalTarget" {
+			evalTargetSpanIDs[span.SpanID] = struct{}{}
+		}
+	}
+
+	result := make([]string, 0)
+	for _, span := range allSpans.Spans {
+		if _, ok := evalTargetSpanIDs[span.ParentID]; ok {
+			result = append(result, span.SpanID)
+		}
+	}
+
+	return result
+}
+
+func (r *TraceServiceImpl) getSelectFilters(traceIDs []string, trajectoryConfig *GetTrajectoryConfigResponse, allSpans *repo.ListSpansResult) *loop_span.FilterFields {
+	tempSpanFilters := &loop_span.FilterFields{
+		QueryAndOr: lo.ToPtr(loop_span.QueryAndOrEnumAnd),
+		FilterFields: []*loop_span.FilterField{
+			{
+				FieldName: loop_span.SpanFieldTraceId,
+				FieldType: loop_span.FieldTypeString,
+				Values:    traceIDs,
+				QueryType: ptr.Of(loop_span.QueryTypeEnumIn),
+			},
+		},
+	}
+
+	realTrajectoryConfig := trajectoryConfig.GetFiltersWithDefaultFilter()
+	_ = realTrajectoryConfig.Traverse(processSpecificFilter)
+	tempSpanFilters.FilterFields = append(tempSpanFilters.FilterFields, &loop_span.FilterField{
+		SubFilter: realTrajectoryConfig,
+	})
+
+	result := &loop_span.FilterFields{
+		QueryAndOr: lo.ToPtr(loop_span.QueryAndOrEnumOr),
+		FilterFields: []*loop_span.FilterField{
+			{
+				SubFilter: tempSpanFilters,
+			},
+		},
+	}
+	lowSpanIDs := r.getEvalTargetNextLevelSpanID(allSpans)
+	if len(lowSpanIDs) > 0 {
+		result.FilterFields = append(result.FilterFields, &loop_span.FilterField{
+			SubFilter: &loop_span.FilterFields{
+				QueryAndOr: lo.ToPtr(loop_span.QueryAndOrEnumAnd),
+				FilterFields: []*loop_span.FilterField{
+					{
+						FieldName: loop_span.SpanFieldTraceId,
+						FieldType: loop_span.FieldTypeString,
+						Values:    traceIDs,
+						QueryType: ptr.Of(loop_span.QueryTypeEnumIn),
+					},
+					{
+						FieldName: loop_span.SpanFieldSpanId,
+						FieldType: loop_span.FieldTypeString,
+						Values:    lowSpanIDs,
+						QueryType: ptr.Of(loop_span.QueryTypeEnumIn),
+					},
+				},
+			},
+		})
+	}
+
+	return result
+}
+
+func (r *TraceServiceImpl) buildTrajectories(ctx context.Context, allSpans *loop_span.SpanList, selectedSpans *loop_span.SpanList, trajectoryConfig *loop_span.FilterFields) (map[string]*loop_span.Trajectory, error) {
+	// traceID-trajectory
+	trajectoryMap := make(map[string]*loop_span.Trajectory)
+
+	// traceID-spanID-span
+	selectedSpanMap := make(map[string]map[string]*loop_span.Span)
+	for _, span := range *selectedSpans {
+		_, ok := selectedSpanMap[span.TraceID]
+		if !ok {
+			selectedSpanMap[span.TraceID] = make(map[string]*loop_span.Span)
+		}
+		selectedSpanMap[span.TraceID][span.SpanID] = span
+	}
+
+	// traceID-span
+	traceMap := make(map[string][]*loop_span.Span)
+	for _, span := range *allSpans {
+		if _, ok := traceMap[span.TraceID]; !ok {
+			traceMap[span.TraceID] = make([]*loop_span.Span, 0)
+		}
+		if _, ok := selectedSpanMap[span.TraceID]; ok {
+			if span, ok := selectedSpanMap[span.TraceID][span.SpanID]; ok {
+				traceMap[span.TraceID] = append(traceMap[span.TraceID], span)
+				continue
+			}
+		}
+		traceMap[span.TraceID] = append(traceMap[span.TraceID], span)
+	}
+
+	transCfg := loop_span.SpanTransCfgList{
+		{
+			SpanFilter: trajectoryConfig,
+		},
+	}
+	for traceID, spans := range traceMap {
+		filteredSpans, err := transCfg.Transform(ctx, spans)
+		if err != nil {
+			return nil, err
+		}
+
+		trajectoryMap[traceID] = loop_span.BuildTrajectoryFromSpans(filteredSpans)
+	}
+	return trajectoryMap, nil
+}
+
+func buildExtractSpanInfo(ctx context.Context, span *loop_span.Span, fieldMapping *entity.FieldMapping) (string, error) {
+	value, err := span.ExtractByJsonpath(ctx, fieldMapping.TraceFieldKey, fieldMapping.TraceFieldJsonpath)
+	if err != nil {
+		// 非json但使用了jsonpath，也不报错，置空
+		logs.CtxInfo(ctx, "Extract field failed, err:%v", err)
+	}
+	content, errCode := entity.GetContentInfo(ctx, fieldMapping.FieldSchema.ContentType, value)
+	if errCode == entity.DatasetErrorType_MismatchSchema {
+		logs.CtxInfo(ctx, "invalid multi part")
+		return "", errorx.NewByCode(obErrorx.CommercialCommonInvalidParamCodeCode, errorx.WithExtraMsg("invalid multi part"))
+	}
+	valueJSON, err := json.Marshal(content)
+	if err != nil {
+		return "", err
+	}
+	return string(valueJSON), nil
+}
+
+func buildContent(value string) *dataset.Content {
+	var content *dataset.Content
+	err := json.Unmarshal([]byte(value), &content)
+	if err != nil {
+		content = &dataset.Content{
+			ContentType: gptr.Of(common.ContentTypeText),
+			Text:        gptr.Of(value),
+		}
+	}
+	return content
 }
 
 //go:generate mockgen -destination=mocks/span_processor.go -package=mocks . TraceFilterProcessorBuilder
@@ -1062,16 +2568,14 @@ type TraceFilterProcessorBuilder interface {
 	BuildIngestTraceProcessors(context.Context, span_processor.Settings) ([]span_processor.Processor, error)
 	BuildSearchTraceOApiProcessors(context.Context, span_processor.Settings) ([]span_processor.Processor, error)
 	BuildListSpansOApiProcessors(context.Context, span_processor.Settings) ([]span_processor.Processor, error)
+	BuildTraceChatProcessors(context.Context, span_processor.Settings) ([]span_processor.Processor, error)
+	BuildThreadChatProcessors(context.Context, span_processor.Settings) ([]span_processor.Processor, error)
+	BuildThreadStatProcessors(context.Context, span_processor.Settings) ([]span_processor.Processor, error)
 }
 
 type TraceFilterProcessorBuilderImpl struct {
-	platformFilterFactory             span_filter.PlatformFilterFactory
-	getTraceProcessorFactories        []span_processor.Factory
-	listSpansProcessorFactories       []span_processor.Factory
-	advanceInfoProcessorFactories     []span_processor.Factory
-	ingestTraceProcessorFactories     []span_processor.Factory
-	searchTraceOApiProcessorFactories []span_processor.Factory
-	listSpansOApiProcessorFactories   []span_processor.Factory
+	platformFilterFactory span_filter.PlatformFilterFactory
+	processorFactories    map[entity.ProcessorScene][]span_processor.Factory
 }
 
 func (t *TraceFilterProcessorBuilderImpl) BuildPlatformRelatedFilter(
@@ -1081,12 +2585,23 @@ func (t *TraceFilterProcessorBuilderImpl) BuildPlatformRelatedFilter(
 	return t.platformFilterFactory.GetFilter(ctx, platformType)
 }
 
-func (t *TraceFilterProcessorBuilderImpl) BuildGetTraceProcessors(
+func (t *TraceFilterProcessorBuilderImpl) buildProcessors(
 	ctx context.Context,
 	set span_processor.Settings,
+	defaultScene entity.ProcessorScene,
 ) ([]span_processor.Processor, error) {
 	ret := make([]span_processor.Processor, 0)
-	for _, factory := range t.getTraceProcessorFactories {
+
+	scene := defaultScene
+	if set.Scene != "" {
+		scene = set.Scene
+	}
+
+	factories, ok := t.processorFactories[scene]
+	if !ok {
+		return nil, fmt.Errorf("processor factories not found for scene: %s", scene)
+	}
+	for _, factory := range factories {
 		p, err := factory.CreateProcessor(ctx, set)
 		if err != nil {
 			return nil, err
@@ -1094,99 +2609,402 @@ func (t *TraceFilterProcessorBuilderImpl) BuildGetTraceProcessors(
 		ret = append(ret, p)
 	}
 	return ret, nil
+}
+
+func (t *TraceFilterProcessorBuilderImpl) BuildGetTraceProcessors(
+	ctx context.Context,
+	set span_processor.Settings,
+) ([]span_processor.Processor, error) {
+	return t.buildProcessors(ctx, set, entity.SceneGetTrace)
 }
 
 func (t *TraceFilterProcessorBuilderImpl) BuildListSpansProcessors(
 	ctx context.Context,
 	set span_processor.Settings,
 ) ([]span_processor.Processor, error) {
-	ret := make([]span_processor.Processor, 0)
-	for _, factory := range t.listSpansProcessorFactories {
-		p, err := factory.CreateProcessor(ctx, set)
-		if err != nil {
-			return nil, err
-		}
-		ret = append(ret, p)
-	}
-	return ret, nil
+	return t.buildProcessors(ctx, set, entity.SceneListSpans)
 }
 
 func (t *TraceFilterProcessorBuilderImpl) BuildAdvanceInfoProcessors(
 	ctx context.Context,
 	set span_processor.Settings,
 ) ([]span_processor.Processor, error) {
-	ret := make([]span_processor.Processor, 0)
-	for _, factory := range t.advanceInfoProcessorFactories {
-		p, err := factory.CreateProcessor(ctx, set)
-		if err != nil {
-			return nil, err
-		}
-		ret = append(ret, p)
-	}
-	return ret, nil
+	return t.buildProcessors(ctx, set, entity.SceneAdvanceInfo)
 }
 
 func (t *TraceFilterProcessorBuilderImpl) BuildIngestTraceProcessors(
 	ctx context.Context,
 	set span_processor.Settings,
 ) ([]span_processor.Processor, error) {
-	ret := make([]span_processor.Processor, 0)
-	for _, factory := range t.ingestTraceProcessorFactories {
-		p, err := factory.CreateProcessor(ctx, set)
-		if err != nil {
-			return nil, err
-		}
-		ret = append(ret, p)
-	}
-	return ret, nil
+	return t.buildProcessors(ctx, set, entity.SceneIngestTrace)
 }
 
 func (t *TraceFilterProcessorBuilderImpl) BuildSearchTraceOApiProcessors(
 	ctx context.Context,
 	set span_processor.Settings,
 ) ([]span_processor.Processor, error) {
-	ret := make([]span_processor.Processor, 0)
-	for _, factory := range t.searchTraceOApiProcessorFactories {
-		p, err := factory.CreateProcessor(ctx, set)
-		if err != nil {
-			return nil, err
-		}
-		ret = append(ret, p)
-	}
-	return ret, nil
+	return t.buildProcessors(ctx, set, entity.SceneSearchTraceOApi)
 }
 
 func (t *TraceFilterProcessorBuilderImpl) BuildListSpansOApiProcessors(
 	ctx context.Context,
 	set span_processor.Settings,
 ) ([]span_processor.Processor, error) {
-	ret := make([]span_processor.Processor, 0)
-	for _, factory := range t.listSpansOApiProcessorFactories {
-		p, err := factory.CreateProcessor(ctx, set)
-		if err != nil {
-			return nil, err
-		}
-		ret = append(ret, p)
-	}
-	return ret, nil
+	return t.buildProcessors(ctx, set, entity.SceneListSpansOApi)
+}
+
+func (t *TraceFilterProcessorBuilderImpl) BuildTraceChatProcessors(
+	ctx context.Context,
+	set span_processor.Settings,
+) ([]span_processor.Processor, error) {
+	return t.buildProcessors(ctx, set, entity.SceneTraceChat)
+}
+
+func (t *TraceFilterProcessorBuilderImpl) BuildThreadChatProcessors(
+	ctx context.Context,
+	set span_processor.Settings,
+) ([]span_processor.Processor, error) {
+	return t.buildProcessors(ctx, set, entity.SceneThreadChat)
+}
+
+func (t *TraceFilterProcessorBuilderImpl) BuildThreadStatProcessors(
+	ctx context.Context,
+	set span_processor.Settings,
+) ([]span_processor.Processor, error) {
+	return t.buildProcessors(ctx, set, entity.SceneThreadStat)
 }
 
 func NewTraceFilterProcessorBuilder(
 	platformFilterFactory span_filter.PlatformFilterFactory,
-	getTraceProcessorFactories []span_processor.Factory,
-	listSpansProcessorFactories []span_processor.Factory,
-	advanceInfoProcessorFactories []span_processor.Factory,
-	ingestTraceProcessorFactories []span_processor.Factory,
-	searchTraceOApiProcessorFactories []span_processor.Factory,
-	listSpansOApiProcessorFactories []span_processor.Factory,
+	processorFactories map[entity.ProcessorScene][]span_processor.Factory,
 ) TraceFilterProcessorBuilder {
 	return &TraceFilterProcessorBuilderImpl{
-		platformFilterFactory:             platformFilterFactory,
-		getTraceProcessorFactories:        getTraceProcessorFactories,
-		listSpansProcessorFactories:       listSpansProcessorFactories,
-		advanceInfoProcessorFactories:     advanceInfoProcessorFactories,
-		ingestTraceProcessorFactories:     ingestTraceProcessorFactories,
-		searchTraceOApiProcessorFactories: searchTraceOApiProcessorFactories,
-		listSpansOApiProcessorFactories:   listSpansOApiProcessorFactories,
+		platformFilterFactory: platformFilterFactory,
+		processorFactories:    processorFactories,
 	}
+}
+
+func (r *TraceServiceImpl) ListTraceChat(ctx context.Context, req *ListTraceChatRequest) (*ListTraceChatResponse, error) {
+	tenants, err := r.getTenants(ctx, req.PlatformType)
+	if err != nil {
+		return nil, err
+	}
+
+	var pageSize int32
+	if req.WithoutDetail {
+		pageSize = maxChatPageSizeWithoutDetail
+	} else {
+		pageSize = defaultChatPageSize
+		if req.PageSize > 0 && req.PageSize <= maxChatPageSize {
+			pageSize = req.PageSize
+		}
+	}
+
+	filterFields := []*loop_span.FilterField{
+		{
+			FieldName: loop_span.SpanFieldTraceId,
+			FieldType: loop_span.FieldTypeString,
+			Values:    []string{req.TraceID},
+			QueryType: ptr.Of(loop_span.QueryTypeEnumIn),
+		},
+		{
+			FieldName: loop_span.SpanFieldSpanType,
+			FieldType: loop_span.FieldTypeString,
+			Values:    []string{loop_span.SpanTypeModel, loop_span.SpanTypeTool},
+			QueryType: ptr.Of(loop_span.QueryTypeEnumIn),
+		},
+	}
+	if req.Filters != nil {
+		filterFields = append(filterFields, &loop_span.FilterField{SubFilter: req.Filters})
+	}
+	filters := &loop_span.FilterFields{
+		QueryAndOr:   lo.ToPtr(loop_span.QueryAndOrEnumAnd),
+		FilterFields: filterFields,
+	}
+
+	var omitColumns []string
+	if req.WithoutDetail {
+		omitColumns = []string{"input", "output"}
+	}
+
+	listResp, err := r.traceRepo.ListSpans(ctx, &repo.ListSpansParam{
+		WorkSpaceID:        strconv.FormatInt(req.WorkspaceID, 10),
+		Tenants:            tenants,
+		Filters:            filters,
+		StartAt:            req.StartTime,
+		EndAt:              req.EndTime,
+		PageToken:          req.PageToken,
+		Limit:              pageSize,
+		AscByStartTime:     true,
+		NotQueryAnnotation: true,
+		OmitColumns:        omitColumns,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	spans := listResp.Spans
+	processors, err := r.buildHelper.BuildTraceChatProcessors(ctx, span_processor.Settings{
+		WorkspaceId:     req.WorkspaceID,
+		PlatformType:    req.PlatformType,
+		QueryStartTime:  req.StartTime,
+		QueryEndTime:    req.EndTime,
+		QueryTenants:    tenants,
+		SpanDoubleCheck: true,
+		QueryTraceID:    req.TraceID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range processors {
+		spans, err = p.Transform(ctx, spans)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	messages := r.buildChatMessages(ctx, spans, req.WithoutDetail)
+
+	return &ListTraceChatResponse{
+		Messages:      messages,
+		NextPageToken: listResp.PageToken,
+		HasMore:       listResp.HasMore,
+	}, nil
+}
+
+func (r *TraceServiceImpl) ListThreadChat(ctx context.Context, req *ListThreadChatRequest) (*ListThreadChatResponse, error) {
+	tenants, err := r.getTenants(ctx, req.PlatformType)
+	if err != nil {
+		return nil, err
+	}
+
+	pageSize := defaultChatPageSize
+	if req.PageSize > 0 && req.PageSize <= maxChatPageSize {
+		pageSize = req.PageSize
+	}
+
+	filters := &loop_span.FilterFields{
+		QueryAndOr: lo.ToPtr(loop_span.QueryAndOrEnumAnd),
+		FilterFields: []*loop_span.FilterField{
+			{
+				FieldName: loop_span.SpanFieldThreadId,
+				FieldType: loop_span.FieldTypeString,
+				Values:    []string{req.ThreadID},
+				QueryType: ptr.Of(loop_span.QueryTypeEnumIn),
+			},
+			{
+				FieldName: loop_span.SpanFieldSpanType,
+				FieldType: loop_span.FieldTypeString,
+				Values:    []string{loop_span.SpanTypeModel},
+				QueryType: ptr.Of(loop_span.QueryTypeEnumIn),
+			},
+			{
+				FieldName: loop_span.SpanFieldSpaceId,
+				FieldType: loop_span.FieldTypeString,
+				Values:    []string{strconv.FormatInt(req.WorkspaceID, 10)},
+				QueryType: ptr.Of(loop_span.QueryTypeEnumEq),
+			},
+		},
+	}
+
+	listResp, err := r.traceRepo.ListSpans(ctx, &repo.ListSpansParam{
+		WorkSpaceID:        strconv.FormatInt(req.WorkspaceID, 10),
+		Tenants:            tenants,
+		Filters:            filters,
+		StartAt:            req.StartTime,
+		EndAt:              req.EndTime,
+		PageToken:          req.PageToken,
+		Limit:              pageSize,
+		AscByStartTime:     true,
+		NotQueryAnnotation: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	spans := listResp.Spans
+	processors, err := r.buildHelper.BuildThreadChatProcessors(ctx, span_processor.Settings{
+		WorkspaceId:    req.WorkspaceID,
+		PlatformType:   req.PlatformType,
+		QueryStartTime: req.StartTime,
+		QueryEndTime:   req.EndTime,
+		QueryTenants:   tenants,
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range processors {
+		spans, err = p.Transform(ctx, spans)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	messages := r.buildChatMessages(ctx, spans, false)
+
+	return &ListThreadChatResponse{
+		Messages:      messages,
+		NextPageToken: listResp.PageToken,
+		HasMore:       listResp.HasMore,
+	}, nil
+}
+
+func (r *TraceServiceImpl) GetThreadStat(ctx context.Context, req *GetThreadStatRequest) (*GetThreadStatResponse, error) {
+	tenants, err := r.getTenants(ctx, req.PlatformType)
+	if err != nil {
+		return nil, err
+	}
+
+	listResp, err := r.traceRepo.ListSpans(ctx, &repo.ListSpansParam{
+		WorkSpaceID: strconv.FormatInt(req.WorkspaceID, 10),
+		Tenants:     tenants,
+		StartAt:     req.StartTime,
+		EndAt:       req.EndTime,
+		Limit:       5000,
+		OmitColumns: []string{loop_span.SpanFieldInput, loop_span.SpanFieldOutput},
+		Filters: &loop_span.FilterFields{
+			QueryAndOr: lo.ToPtr(loop_span.QueryAndOrEnumAnd),
+			FilterFields: []*loop_span.FilterField{
+				{
+					FieldName: loop_span.SpanFieldThreadId,
+					FieldType: loop_span.FieldTypeString,
+					Values:    []string{req.ThreadID},
+					QueryType: ptr.Of(loop_span.QueryTypeEnumIn),
+				},
+				{
+					FieldName: loop_span.SpanFieldSpanType,
+					FieldType: loop_span.FieldTypeString,
+					Values:    []string{loop_span.SpanTypeModel},
+					QueryType: ptr.Of(loop_span.QueryTypeEnumIn),
+				},
+				{
+					FieldName: loop_span.SpanFieldSpaceId,
+					FieldType: loop_span.FieldTypeString,
+					Values:    []string{strconv.FormatInt(req.WorkspaceID, 10)},
+					QueryType: ptr.Of(loop_span.QueryTypeEnumEq),
+				},
+			},
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	spans := listResp.Spans
+
+	processors, err := r.buildHelper.BuildThreadStatProcessors(ctx, span_processor.Settings{
+		WorkspaceId:    req.WorkspaceID,
+		PlatformType:   req.PlatformType,
+		QueryStartTime: req.StartTime,
+		QueryEndTime:   req.EndTime,
+		QueryTenants:   tenants,
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range processors {
+		spans, err = p.Transform(ctx, spans)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return r.buildThreadStat(ctx, req.ThreadID, spans), nil
+}
+
+func (r *TraceServiceImpl) buildChatMessages(ctx context.Context, spans loop_span.SpanList, withoutDetail bool) []*entity.ChatMessage {
+	messages := make([]*entity.ChatMessage, 0, len(spans)*2)
+	for _, span := range spans {
+		if span == nil {
+			continue
+		}
+		if withoutDetail {
+			messages = append(messages, &entity.ChatMessage{
+				Span: span,
+			})
+			continue
+		}
+		if span.IsModelSpan() {
+			if span.Input != "" {
+				messages = append(messages, &entity.ChatMessage{
+					Role: entity.ChatRoleUser,
+					Span: span,
+				})
+			}
+			if span.Output != "" {
+				messages = append(messages, &entity.ChatMessage{
+					Role: entity.ChatRoleAssistant,
+					Span: span,
+				})
+			} else if span.StatusCode != 0 {
+				if _, ok := span.TagsString[loop_span.SpanFieldError]; ok {
+					messages = append(messages, &entity.ChatMessage{
+						Role: entity.ChatRoleAssistant,
+						Span: span,
+					})
+				}
+			}
+		} else if span.IsToolSpan() {
+			messages = append(messages, &entity.ChatMessage{
+				Role: entity.ChatRoleTool,
+				Span: span,
+			})
+		}
+	}
+	return messages
+}
+
+func (r *TraceServiceImpl) buildThreadStat(ctx context.Context, threadID string, spans loop_span.SpanList) *GetThreadStatResponse {
+	resp := &GetThreadStatResponse{
+		ThreadID:   threadID,
+		UsedModels: make([]string, 0),
+	}
+
+	if len(spans) == 0 {
+		return resp
+	}
+
+	modelCount := make(map[string]int)
+	var minStartTime int64 = math.MaxInt64
+	var maxEndTime int64
+
+	for _, span := range spans {
+		if span == nil {
+			continue
+		}
+		endTime := span.StartTime + span.DurationMicros
+		if span.StartTime < minStartTime {
+			minStartTime = span.StartTime
+		}
+		if endTime > maxEndTime {
+			maxEndTime = endTime
+		}
+		if resp.UserID == "" {
+			if userID, ok := span.TagsString[loop_span.SpanFieldUserID]; ok && userID != "" {
+				resp.UserID = userID
+			}
+		}
+
+		if inputTokens, ok := span.TagsLong[loop_span.SpanFieldInputTokens]; ok {
+			resp.TotalTokens += inputTokens
+		}
+		if outputTokens, ok := span.TagsLong[loop_span.SpanFieldOutputTokens]; ok {
+			resp.TotalTokens += outputTokens
+		}
+
+		if model, ok := span.TagsString[loop_span.SpanFieldModelName]; ok && model != "" {
+			modelCount[model]++
+		}
+	}
+
+	resp.StartTime = minStartTime
+	resp.Duration = maxEndTime - minStartTime
+
+	for model := range modelCount {
+		resp.UsedModels = append(resp.UsedModels, model)
+	}
+	sort.Slice(resp.UsedModels, func(i, j int) bool {
+		return modelCount[resp.UsedModels[i]] > modelCount[resp.UsedModels[j]]
+	})
+
+	return resp
 }

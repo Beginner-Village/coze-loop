@@ -5,11 +5,15 @@ package entity
 
 import (
 	"context"
+	"strconv"
+
+	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/data/domain/dataset"
 
 	"github.com/bytedance/gg/gptr"
 	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/evaluation/domain/common"
 	"github.com/coze-dev/coze-loop/backend/modules/observability/domain/trace/entity/loop_span"
 	"github.com/coze-dev/coze-loop/backend/pkg/json"
+	"github.com/coze-dev/coze-loop/backend/pkg/lang/ptr"
 	"github.com/coze-dev/coze-loop/backend/pkg/logs"
 	"github.com/coze-dev/cozeloop-go/spec/tracespec"
 )
@@ -28,8 +32,23 @@ const (
 	ContentType_Text  ContentType = "Text"
 	ContentType_Image ContentType = "Image"
 	ContentType_Audio ContentType = "Audio"
+	ContentType_Video ContentType = "Video"
 	// 图文混排
 	ContentType_MultiPart ContentType = "MultiPart"
+)
+
+type SchemaKey int64
+
+const (
+	SchemaKey_String  SchemaKey = 1
+	SchemaKey_Integer SchemaKey = 2
+	SchemaKey_Float   SchemaKey = 3
+	SchemaKey_Bool    SchemaKey = 4
+	SchemaKey_Message SchemaKey = 5
+	// 单选
+	SchemaKey_SingleChoice SchemaKey = 6
+	// 轨迹
+	SchemaKey_Trajectory SchemaKey = 7
 )
 
 type FieldDisplayFormat int64
@@ -44,6 +63,10 @@ const (
 
 type EvaluationBizCategory string
 
+const (
+	BizCategoryFromOnlineTrace EvaluationBizCategory = "from_online_trace"
+)
+
 type Dataset struct {
 	// 主键&外键
 	ID          int64
@@ -57,6 +80,11 @@ type Dataset struct {
 	DatasetVersion DatasetVersion
 	// 评测集属性
 	EvaluationBizCategory *EvaluationBizCategory
+	Seesion               *common.Session
+	UserID                *string
+	// 数据集属性
+	Visibility dataset.DatasetVisibility
+	WorkflowID int64
 }
 
 type DatasetVersion struct {
@@ -92,20 +120,41 @@ type FieldSchema struct {
 	ContentType ContentType
 	// [20,50) 内容格式限制相关
 	TextSchema    string
+	SchemaKey     SchemaKey
 	DisplayFormat FieldDisplayFormat
 }
 
-func NewDataset(id, spaceID int64, name string, category DatasetCategory, schema DatasetSchema) *Dataset {
-	dataset := &Dataset{
+func NewDataset(id, spaceID int64, name string, category DatasetCategory,
+	schema DatasetSchema,
+	session *common.Session,
+	evaluationBizCategory *EvaluationBizCategory,
+	isNewWorkflowTask bool,
+	workflowID int64,
+) *Dataset {
+	var userID *string
+	if session != nil {
+		userID = ptr.Of(strconv.FormatInt(*session.UserID, 10))
+	}
+	ds := &Dataset{
 		ID:          id,
 		WorkspaceID: spaceID,
 		Name:        name,
 		DatasetVersion: DatasetVersion{
 			DatasetSchema: schema,
 		},
-		DatasetCategory: category,
+		EvaluationBizCategory: evaluationBizCategory,
+		DatasetCategory:       category,
+		Seesion:               session,
+		UserID:                userID,
 	}
-	return dataset
+	if isNewWorkflowTask {
+		ds.Visibility = dataset.DatasetVisibility_System
+	} else {
+		ds.Visibility = dataset.DatasetVisibility_Space
+	}
+	ds.WorkflowID = workflowID
+
+	return ds
 }
 
 func (d *Dataset) GetFieldSchemaKeyByName(fieldSchemaName string) string {
@@ -128,6 +177,7 @@ type DatasetItem struct {
 	Error       []*ItemError
 	SpanType    string
 	SpanName    string
+	Source      *ItemSource
 }
 
 type ItemError struct {
@@ -142,13 +192,59 @@ type FieldData struct {
 	Content *Content
 }
 
+type ItemSource struct {
+	Type LineageSourceType
+	// 任务类型，根据该字段区分数据导入任务/数据回流任务/...
+	JobType *TrackedJobType
+	// item 关联的任务 id，为 0 表示无相应任务(例如数据是通过克隆另一数据行产生的)
+	JobID *int64
+	// type = DataReflow 时，从该字段获取 span 信息
+	Span *TrackedTraceSpan
+}
+type LineageSourceType int64
+
+const (
+	// 数据回流，需要根据 ItemSource.span.isManual 是否是手动回流。如果是自动回流，则 ItemSource.jobID 中会包含对应的任务 ID
+	LineageSourceType_DataReflow LineageSourceType = 4
+)
+
+type TrackedJobType int64
+
+const (
+	// 数据导入任务
+	TrackedJobType_DatasetIOJob TrackedJobType = 1
+	// 数据回流任务
+	TrackedJobType_DataReflow TrackedJobType = 2
+)
+
+type TrackedTraceSpan struct {
+	TraceID  *string
+	SpanID   *string
+	SpanName *string
+	SpanType *string
+	// 是否手工回流
+	IsManual *bool
+}
+
 type Content struct {
 	ContentType ContentType
 	Text        string
 	Image       *Image
+	Audio       *Audio
+	Video       *Video
 	MultiPart   []*Content
 }
 type Image struct {
+	Name string
+	Url  string
+}
+
+type Audio struct {
+	Name string
+	Url  string
+}
+
+type Video struct {
 	Name string
 	Url  string
 }
@@ -167,6 +263,38 @@ func (i *Image) GetUrl() string {
 		return ""
 	}
 	return i.Url
+}
+
+// GetName returns the name of the audio
+func (a *Audio) GetName() string {
+	if a == nil {
+		return ""
+	}
+	return a.Name
+}
+
+// GetUrl returns the URL of the audio
+func (a *Audio) GetUrl() string {
+	if a == nil {
+		return ""
+	}
+	return a.Url
+}
+
+// GetName returns the name of the video
+func (v *Video) GetName() string {
+	if v == nil {
+		return ""
+	}
+	return v.Name
+}
+
+// GetUrl returns the URL of the video
+func (v *Video) GetUrl() string {
+	if v == nil {
+		return ""
+	}
+	return v.Url
 }
 
 // GetContentType returns the content type of the content
@@ -193,6 +321,22 @@ func (c *Content) GetImage() *Image {
 	return c.Image
 }
 
+// GetAudio returns the audio content
+func (c *Content) GetAudio() *Audio {
+	if c == nil {
+		return nil
+	}
+	return c.Audio
+}
+
+// GetVideo returns the video content
+func (c *Content) GetVideo() *Video {
+	if c == nil {
+		return nil
+	}
+	return c.Video
+}
+
 // GetMultiPart returns the multi-part content
 func (c *Content) GetMultiPart() []*Content {
 	if c == nil {
@@ -201,7 +345,7 @@ func (c *Content) GetMultiPart() []*Content {
 	return c.MultiPart
 }
 
-func NewDatasetItem(workspaceID int64, datasetID int64, span *loop_span.Span) *DatasetItem {
+func NewDatasetItem(workspaceID int64, datasetID int64, span *loop_span.Span, source *ItemSource) *DatasetItem {
 	if span == nil {
 		return nil
 	}
@@ -213,6 +357,7 @@ func NewDatasetItem(workspaceID int64, datasetID int64, span *loop_span.Span) *D
 		FieldData:   make([]*FieldData, 0),
 		SpanType:    span.SpanType,
 		SpanName:    span.SpanName,
+		Source:      source,
 	}
 }
 
@@ -245,6 +390,10 @@ type FieldMapping struct {
 	TraceFieldJsonpath string
 }
 
+func (f *FieldMapping) IsTrajectory() bool {
+	return f.FieldSchema.SchemaKey == SchemaKey_Trajectory
+}
+
 type ItemErrorGroup struct {
 	Type    int64
 	Summary string
@@ -259,8 +408,9 @@ type ItemErrorDetail struct {
 	// 单条错误数据在输入数据中的索引。从 0 开始，下同
 	Index *int32
 	// [startIndex, endIndex] 表示区间错误范围, 如 ExceedDatasetCapacity 错误时
-	StartIndex *int32
-	EndIndex   *int32
+	StartIndex      *int32
+	EndIndex        *int32
+	MessagesByField map[string]string
 }
 
 const (
@@ -291,6 +441,28 @@ func GetContentInfo(ctx context.Context, contentType ContentType, value string) 
 					Image: &Image{
 						Name: part.ImageURL.Name,
 						Url:  part.ImageURL.URL,
+					},
+				})
+			case tracespec.ModelMessagePartTypeAudio:
+				if part.AudioURL == nil {
+					continue
+				}
+				multiPart = append(multiPart, &Content{
+					ContentType: ContentType_Audio,
+					Audio: &Audio{
+						Name: part.AudioURL.Name,
+						Url:  part.AudioURL.URL,
+					},
+				})
+			case tracespec.ModelMessagePartTypeVideo:
+				if part.VideoURL == nil {
+					continue
+				}
+				multiPart = append(multiPart, &Content{
+					ContentType: ContentType_Video,
+					Video: &Video{
+						Name: part.VideoURL.Name,
+						Url:  part.VideoURL.URL,
 					},
 				})
 			case tracespec.ModelMessagePartTypeText, tracespec.ModelMessagePartTypeFile:
@@ -324,6 +496,8 @@ func CommonContentTypeDO2DTO(contentType ContentType) *common.ContentType {
 		return gptr.Of(common.ContentTypeImage)
 	case ContentType_Audio:
 		return gptr.Of(common.ContentTypeAudio)
+	case ContentType_Video:
+		return gptr.Of(common.ContentTypeVideo)
 	case ContentType_MultiPart:
 		return gptr.Of(common.ContentTypeMultiPart)
 	default:

@@ -37,6 +37,7 @@ func Test_NewExptItemEvaluation(t *testing.T) {
 	mockEvaluatorRecordService := servicemocks.NewMockEvaluatorRecordService(ctrl)
 	mockEvaluatorService := servicemocks.NewMockEvaluatorService(ctrl)
 	mockBenefitService := benefitmocks.NewMockIBenefitService(ctrl)
+	mockEvalAsyncRepo := repomocks.NewMockIEvalAsyncRepo(ctrl)
 
 	tests := []struct {
 		name                   string
@@ -48,6 +49,8 @@ func Test_NewExptItemEvaluation(t *testing.T) {
 		evaluatorRecordService EvaluatorRecordService
 		evaluatorService       EvaluatorService
 		benefitService         benefit.IBenefitService
+		evalAsyncRepo          repo.IEvalAsyncRepo
+		evalSetItemSvc         EvaluationSetItemService
 	}{
 		{
 			name:                   "所有参数有效",
@@ -59,6 +62,8 @@ func Test_NewExptItemEvaluation(t *testing.T) {
 			evaluatorRecordService: mockEvaluatorRecordService,
 			evaluatorService:       mockEvaluatorService,
 			benefitService:         mockBenefitService,
+			evalAsyncRepo:          mockEvalAsyncRepo,
+			evalSetItemSvc:         servicemocks.NewMockEvaluationSetItemService(ctrl),
 		},
 		{
 			name:                   "部分参数为nil",
@@ -70,6 +75,8 @@ func Test_NewExptItemEvaluation(t *testing.T) {
 			evaluatorRecordService: mockEvaluatorRecordService,
 			evaluatorService:       mockEvaluatorService,
 			benefitService:         mockBenefitService,
+			evalAsyncRepo:          mockEvalAsyncRepo,
+			evalSetItemSvc:         servicemocks.NewMockEvaluationSetItemService(ctrl),
 		},
 		{
 			name:                   "全部为nil",
@@ -81,6 +88,8 @@ func Test_NewExptItemEvaluation(t *testing.T) {
 			evaluatorRecordService: nil,
 			evaluatorService:       nil,
 			benefitService:         nil,
+			evalAsyncRepo:          nil,
+			evalSetItemSvc:         nil,
 		},
 	}
 
@@ -95,6 +104,8 @@ func Test_NewExptItemEvaluation(t *testing.T) {
 				tt.evaluatorRecordService,
 				tt.evaluatorService,
 				tt.benefitService,
+				tt.evalAsyncRepo,
+				tt.evalSetItemSvc,
 			)
 			assert.NotNil(t, inst)
 		})
@@ -183,7 +194,7 @@ func Test_ExptItemEvalCtxExecutor_Eval(t *testing.T) {
 				mockItemResultRepo.EXPECT().UpdateItemRunLog(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 				mockConfiger.EXPECT().GetErrRetryConf(gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().Return(&entity.RetryConf{IsInDebt: false, RetryTimes: 1, RetryIntervalSecond: 1})
 				mockEvalTargetService.EXPECT().GetRecordByID(gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().Return(nil, nil)
-				mockEvaluatorRecordService.EXPECT().BatchGetEvaluatorRecord(gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().Return(nil, nil)
+				mockEvaluatorRecordService.EXPECT().BatchGetEvaluatorRecord(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().Return(nil, nil)
 			},
 			wantErr: false,
 		},
@@ -269,14 +280,14 @@ func Test_ExptItemEvalCtxExecutor_EvalTurns(t *testing.T) {
 
 	t.Run("参数校验失败-EvalSetItem为nil", func(t *testing.T) {
 		execCtx := &entity.ExptItemEvalCtx{EvalSetItem: nil}
-		err := executor.EvalTurns(context.Background(), execCtx)
+		_, err := executor.EvalTurns(context.Background(), execCtx)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid empty eval_set_item")
 	})
 
 	t.Run("正常流程-无turns", func(t *testing.T) {
 		execCtx := &entity.ExptItemEvalCtx{EvalSetItem: &entity.EvaluationSetItem{Turns: []*entity.Turn{}}}
-		err := executor.EvalTurns(context.Background(), execCtx)
+		_, err := executor.EvalTurns(context.Background(), execCtx)
 		assert.NoError(t, err)
 	})
 }
@@ -308,11 +319,12 @@ func Test_ExptItemEvalCtxExecutor_buildExptTurnEvalCtx(t *testing.T) {
 	t.Run("无existTurnRunResult", func(t *testing.T) {
 		turn := &entity.Turn{ID: 1, FieldDataList: []*entity.FieldData{}}
 		execCtx := &entity.ExptItemEvalCtx{
-			Event:               &entity.ExptItemEvalEvent{SpaceID: 1},
+			Event:               &entity.ExptItemEvalEvent{SpaceID: 1, ExptID: 1, EvalSetItemID: 1},
 			EvalSetItem:         &entity.EvaluationSetItem{Turns: []*entity.Turn{turn}, BaseInfo: &entity.BaseInfo{CreatedAt: gptr.Of(int64(1))}},
 			ExistItemEvalResult: &entity.ExptItemEvalResult{TurnResultRunLogs: map[int64]*entity.ExptTurnResultRunLog{}},
 			Expt:                &entity.Experiment{SourceID: "taskid", SpaceID: 1},
 		}
+		mockItemResultRepo.EXPECT().BatchGet(gomock.Any(), int64(1), int64(1), []int64{1}).Return([]*entity.ExptItemResult{}, nil)
 		etec, err := executor.buildExptTurnEvalCtx(context.Background(), turn, execCtx, nil)
 		assert.NoError(t, err)
 		assert.NotNil(t, etec)
@@ -455,11 +467,12 @@ func Test_buildExptTurnEvalCtx(t *testing.T) {
 	t.Run("GetRecordByID返回错误", func(t *testing.T) {
 		turn := &entity.Turn{ID: 1, FieldDataList: []*entity.FieldData{}}
 		execCtx := &entity.ExptItemEvalCtx{
-			Event:               &entity.ExptItemEvalEvent{SpaceID: 1},
+			Event:               &entity.ExptItemEvalEvent{SpaceID: 1, ExptID: 1, EvalSetItemID: 1},
 			EvalSetItem:         &entity.EvaluationSetItem{Turns: []*entity.Turn{turn}, BaseInfo: &entity.BaseInfo{CreatedAt: gptr.Of(int64(1))}},
 			ExistItemEvalResult: &entity.ExptItemEvalResult{TurnResultRunLogs: map[int64]*entity.ExptTurnResultRunLog{1: {TargetResultID: 123, EvaluatorResultIds: &entity.EvaluatorResults{EvalVerIDToResID: map[int64]int64{1: 100}}}}},
 			Expt:                &entity.Experiment{SourceID: "taskid", SpaceID: 1},
 		}
+		mockItemResultRepo.EXPECT().BatchGet(gomock.Any(), int64(1), int64(1), []int64{1}).Return([]*entity.ExptItemResult{}, nil)
 		mockEvalTargetService.EXPECT().GetRecordByID(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errors.New("mock get record error"))
 		_, err := executor.buildExptTurnEvalCtx(context.Background(), turn, execCtx, nil)
 		assert.Error(t, err)
@@ -469,13 +482,14 @@ func Test_buildExptTurnEvalCtx(t *testing.T) {
 	t.Run("BatchGetEvaluatorRecord返回错误", func(t *testing.T) {
 		turn := &entity.Turn{ID: 1, FieldDataList: []*entity.FieldData{}}
 		execCtx := &entity.ExptItemEvalCtx{
-			Event:               &entity.ExptItemEvalEvent{SpaceID: 1},
+			Event:               &entity.ExptItemEvalEvent{SpaceID: 1, ExptID: 1, EvalSetItemID: 1},
 			EvalSetItem:         &entity.EvaluationSetItem{Turns: []*entity.Turn{turn}, BaseInfo: &entity.BaseInfo{CreatedAt: gptr.Of(int64(1))}},
 			ExistItemEvalResult: &entity.ExptItemEvalResult{TurnResultRunLogs: map[int64]*entity.ExptTurnResultRunLog{1: {TargetResultID: 123, EvaluatorResultIds: &entity.EvaluatorResults{EvalVerIDToResID: map[int64]int64{1: 100}}}}},
 			Expt:                &entity.Experiment{SourceID: "taskid", SpaceID: 1},
 		}
+		mockItemResultRepo.EXPECT().BatchGet(gomock.Any(), int64(1), int64(1), []int64{1}).Return([]*entity.ExptItemResult{}, nil)
 		mockEvalTargetService.EXPECT().GetRecordByID(gomock.Any(), gomock.Any(), gomock.Any()).Return(&entity.EvalTargetRecord{ID: 123}, nil)
-		mockEvaluatorRecordService.EXPECT().BatchGetEvaluatorRecord(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errors.New("mock batchget error"))
+		mockEvaluatorRecordService.EXPECT().BatchGetEvaluatorRecord(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errors.New("mock batchget error"))
 		_, err := executor.buildExptTurnEvalCtx(context.Background(), turn, execCtx, nil)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "mock batchget error")
@@ -484,17 +498,148 @@ func Test_buildExptTurnEvalCtx(t *testing.T) {
 	t.Run("BatchGetEvaluatorRecord返回正常", func(t *testing.T) {
 		turn := &entity.Turn{ID: 1, FieldDataList: []*entity.FieldData{}}
 		execCtx := &entity.ExptItemEvalCtx{
-			Event:               &entity.ExptItemEvalEvent{SpaceID: 1},
+			Event:               &entity.ExptItemEvalEvent{SpaceID: 1, ExptID: 1, EvalSetItemID: 1},
 			EvalSetItem:         &entity.EvaluationSetItem{Turns: []*entity.Turn{turn}, BaseInfo: &entity.BaseInfo{CreatedAt: gptr.Of(int64(1))}},
 			ExistItemEvalResult: &entity.ExptItemEvalResult{TurnResultRunLogs: map[int64]*entity.ExptTurnResultRunLog{1: {TargetResultID: 123, EvaluatorResultIds: &entity.EvaluatorResults{EvalVerIDToResID: map[int64]int64{1: 100}}}}},
 			Expt:                &entity.Experiment{SourceID: "taskid", SpaceID: 1},
 		}
+		mockItemResultRepo.EXPECT().BatchGet(gomock.Any(), int64(1), int64(1), []int64{1}).Return([]*entity.ExptItemResult{}, nil)
 		mockEvalTargetService.EXPECT().GetRecordByID(gomock.Any(), gomock.Any(), gomock.Any()).Return(&entity.EvalTargetRecord{ID: 123}, nil)
-		mockEvaluatorRecordService.EXPECT().BatchGetEvaluatorRecord(gomock.Any(), gomock.Any(), gomock.Any()).Return([]*entity.EvaluatorRecord{{ID: 100, EvaluatorVersionID: 1}}, nil)
+		mockEvaluatorRecordService.EXPECT().BatchGetEvaluatorRecord(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]*entity.EvaluatorRecord{{ID: 100, EvaluatorVersionID: 1}}, nil)
 		etec, err := executor.buildExptTurnEvalCtx(context.Background(), turn, execCtx, nil)
 		assert.NoError(t, err)
 		assert.NotNil(t, etec)
 		assert.NotNil(t, etec.ExptTurnRunResult.EvaluatorResults)
+	})
+
+	t.Run("Ext字段处理_从Event.Ext和ItemResult.Ext合并", func(t *testing.T) {
+		turn := &entity.Turn{ID: 1, FieldDataList: []*entity.FieldData{}}
+		execCtx := &entity.ExptItemEvalCtx{
+			Event: &entity.ExptItemEvalEvent{
+				SpaceID:       1,
+				ExptID:        1,
+				EvalSetItemID: 1,
+				Ext: map[string]string{
+					"event_key1": "event_value1",
+					"event_key2": "event_value2",
+				},
+			},
+			EvalSetItem: &entity.EvaluationSetItem{
+				Turns:    []*entity.Turn{turn},
+				BaseInfo: &entity.BaseInfo{CreatedAt: gptr.Of(int64(1))},
+			},
+			ExistItemEvalResult: &entity.ExptItemEvalResult{TurnResultRunLogs: map[int64]*entity.ExptTurnResultRunLog{}},
+			Expt:                &entity.Experiment{SourceID: "taskid", SpaceID: 1},
+		}
+		itemResult := &entity.ExptItemResult{
+			ID:     1,
+			ItemID: 1,
+			Ext: map[string]string{
+				"item_key1":  "item_value1",
+				"event_key2": "item_value2_override",
+			},
+		}
+		mockItemResultRepo.EXPECT().BatchGet(gomock.Any(), int64(1), int64(1), []int64{1}).Return([]*entity.ExptItemResult{itemResult}, nil)
+		etec, err := executor.buildExptTurnEvalCtx(context.Background(), turn, execCtx, nil)
+		assert.NoError(t, err)
+		assert.NotNil(t, etec)
+		assert.NotNil(t, etec.Ext)
+		assert.Equal(t, "event_value1", etec.Ext["event_key1"])
+		assert.Equal(t, "item_value2_override", etec.Ext["event_key2"])
+		assert.Equal(t, "item_value1", etec.Ext["item_key1"])
+		assert.Equal(t, "taskid", etec.Ext["task_id"])
+		assert.Equal(t, "1", etec.Ext["workspace_id"])
+		assert.Equal(t, "1000", etec.Ext["start_time"])
+	})
+
+	t.Run("Ext字段处理_从FieldDataList提取span_id_run_id_trace_id", func(t *testing.T) {
+		turn := &entity.Turn{
+			ID: 1,
+			FieldDataList: []*entity.FieldData{
+				{Name: "span_id", Content: &entity.Content{Text: gptr.Of("span123")}},
+				{Name: "run_id", Content: &entity.Content{Text: gptr.Of("run456")}},
+				{Name: "trace_id", Content: &entity.Content{Text: gptr.Of("trace789")}},
+			},
+		}
+		execCtx := &entity.ExptItemEvalCtx{
+			Event: &entity.ExptItemEvalEvent{
+				SpaceID:       1,
+				ExptID:        1,
+				EvalSetItemID: 1,
+				Ext:           map[string]string{},
+			},
+			EvalSetItem: &entity.EvaluationSetItem{
+				Turns:    []*entity.Turn{turn},
+				BaseInfo: &entity.BaseInfo{CreatedAt: gptr.Of(int64(1))},
+			},
+			ExistItemEvalResult: &entity.ExptItemEvalResult{TurnResultRunLogs: map[int64]*entity.ExptTurnResultRunLog{}},
+			Expt:                &entity.Experiment{SourceID: "taskid", SpaceID: 1},
+		}
+		mockItemResultRepo.EXPECT().BatchGet(gomock.Any(), int64(1), int64(1), []int64{1}).Return([]*entity.ExptItemResult{}, nil)
+		etec, err := executor.buildExptTurnEvalCtx(context.Background(), turn, execCtx, nil)
+		assert.NoError(t, err)
+		assert.NotNil(t, etec)
+		assert.NotNil(t, etec.Ext)
+		assert.Equal(t, "span123", etec.Ext["span_id"])
+		assert.Equal(t, "run456", etec.Ext["run_id"])
+		assert.Equal(t, "trace789", etec.Ext["trace_id"])
+	})
+
+	t.Run("Ext字段处理_ItemResult.Ext为nil", func(t *testing.T) {
+		turn := &entity.Turn{ID: 1, FieldDataList: []*entity.FieldData{}}
+		execCtx := &entity.ExptItemEvalCtx{
+			Event: &entity.ExptItemEvalEvent{
+				SpaceID:       1,
+				ExptID:        1,
+				EvalSetItemID: 1,
+				Ext: map[string]string{
+					"event_key": "event_value",
+				},
+			},
+			EvalSetItem: &entity.EvaluationSetItem{
+				Turns:    []*entity.Turn{turn},
+				BaseInfo: &entity.BaseInfo{CreatedAt: gptr.Of(int64(1))},
+			},
+			ExistItemEvalResult: &entity.ExptItemEvalResult{TurnResultRunLogs: map[int64]*entity.ExptTurnResultRunLog{}},
+			Expt:                &entity.Experiment{SourceID: "taskid", SpaceID: 1},
+		}
+		itemResult := &entity.ExptItemResult{
+			ID:     1,
+			ItemID: 1,
+			Ext:    nil,
+		}
+		mockItemResultRepo.EXPECT().BatchGet(gomock.Any(), int64(1), int64(1), []int64{1}).Return([]*entity.ExptItemResult{itemResult}, nil)
+		etec, err := executor.buildExptTurnEvalCtx(context.Background(), turn, execCtx, nil)
+		assert.NoError(t, err)
+		assert.NotNil(t, etec)
+		assert.NotNil(t, etec.Ext)
+		assert.Equal(t, "event_value", etec.Ext["event_key"])
+	})
+
+	t.Run("Ext字段处理_BatchGet返回错误", func(t *testing.T) {
+		turn := &entity.Turn{ID: 1, FieldDataList: []*entity.FieldData{}}
+		execCtx := &entity.ExptItemEvalCtx{
+			Event: &entity.ExptItemEvalEvent{
+				SpaceID:       1,
+				ExptID:        1,
+				EvalSetItemID: 1,
+				Ext: map[string]string{
+					"event_key": "event_value",
+				},
+			},
+			EvalSetItem: &entity.EvaluationSetItem{
+				Turns:    []*entity.Turn{turn},
+				BaseInfo: &entity.BaseInfo{CreatedAt: gptr.Of(int64(1))},
+			},
+			ExistItemEvalResult: &entity.ExptItemEvalResult{TurnResultRunLogs: map[int64]*entity.ExptTurnResultRunLog{}},
+			Expt:                &entity.Experiment{SourceID: "taskid", SpaceID: 1},
+		}
+		mockItemResultRepo.EXPECT().BatchGet(gomock.Any(), int64(1), int64(1), []int64{1}).Return(nil, errors.New("batch get error"))
+		etec, err := executor.buildExptTurnEvalCtx(context.Background(), turn, execCtx, nil)
+		assert.NoError(t, err)
+		assert.NotNil(t, etec)
+		assert.NotNil(t, etec.Ext)
+		assert.Equal(t, "event_value", etec.Ext["event_key"])
 	})
 }
 

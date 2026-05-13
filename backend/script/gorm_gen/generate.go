@@ -56,6 +56,7 @@ func generateForPrompt(db *gorm.DB) {
 	for _, table := range []string{
 		"prompt_basic", "prompt_user_draft", "prompt_debug_log", "prompt_debug_context",
 		"prompt_label", "prompt_commit_label_mapping",
+		"tool_basic",
 	} {
 		models = append(models, g.GenerateModel(table,
 			// 添加软删除字段
@@ -68,7 +69,7 @@ func generateForPrompt(db *gorm.DB) {
 			})))
 	}
 
-	for _, table := range []string{"prompt_commit"} {
+	for _, table := range []string{"prompt_commit", "prompt_relation", "tool_commit"} {
 		models = append(models, g.GenerateModel(table,
 			gen.FieldGORMTag("*", func(tag field.GormTag) field.GormTag {
 				return tag.Set("charset=utf8mb4")
@@ -202,6 +203,8 @@ func generateForEvaluationExpt(db *gorm.DB) {
 		"expt_insight_analysis_record",
 		"expt_insight_analysis_feedback_comment",
 		"expt_insight_analysis_feedback_vote",
+		"expt_template",
+		"expt_template_evaluator_ref",
 	}
 
 	var models []any
@@ -236,10 +239,10 @@ func generateForEvaluationEvaluator(db *gorm.DB) {
 	g.UseDB(db)
 
 	evaluatorModel := g.GenerateModelAs("evaluator", "Evaluator")
-	evaluatorVersionModel := g.GenerateModelAs("evaluator_version", "EvaluatorVersion")
-	evaluatorRecordModel := g.GenerateModelAs("evaluator_record", "EvaluatorRecord")
+	evaluatorTagModel := g.GenerateModelAs("evaluator_tag", "EvaluatorTag")
+	evaluatorRecordModel := g.GenerateModelAs("evaluator_template", "EvaluatorTemplate")
 
-	g.ApplyBasic(evaluatorModel, evaluatorVersionModel, evaluatorRecordModel)
+	g.ApplyBasic(evaluatorModel, evaluatorTagModel, evaluatorRecordModel)
 	g.Execute()
 }
 
@@ -250,8 +253,14 @@ func generateForObservability(db *gorm.DB) {
 
 	// 为 observability_view 表添加软删除字段
 	observabilityView := g.GenerateModelAs("observability_view", "ObservabilityView")
+	observabilityTask := g.GenerateModelAs("task", "ObservabilityTask")
+	observabilityTaskRun := g.GenerateModelAs("auto_task_run", "ObservabilityTaskRun")
+	observabilityTrajectoryConfig := g.GenerateModelAs("observability_trajectory_config", "ObservabilityTrajectoryConfig")
 
 	g.ApplyBasic(observabilityView)
+	g.ApplyBasic(observabilityTask)
+	g.ApplyBasic(observabilityTaskRun)
+	g.ApplyBasic(observabilityTrajectoryConfig)
 	g.Execute()
 }
 

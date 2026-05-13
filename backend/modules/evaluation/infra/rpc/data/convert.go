@@ -7,11 +7,14 @@ import (
 	"context"
 	"strings"
 
+	"github.com/bytedance/gg/gmap"
 	"github.com/bytedance/gg/gptr"
-
 	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/data/domain/dataset"
+	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/data/domain/dataset_job"
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/application/convertor/common"
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/domain/entity"
+	"github.com/coze-dev/coze-loop/backend/pkg/json"
+	"github.com/coze-dev/coze-loop/backend/pkg/logs"
 )
 
 func convert2DatasetOrderBys(ctx context.Context, orderBys []*entity.OrderBy) (datasetOrderBys []*dataset.OrderBy) {
@@ -43,6 +46,15 @@ func convert2DatasetMultiModalSpec(ctx context.Context, multiModalSpec *entity.M
 		MaxFileCount:     &multiModalSpec.MaxFileCount,
 		MaxFileSize:      &multiModalSpec.MaxFileSize,
 		SupportedFormats: multiModalSpec.SupportedFormats,
+		MaxPartCount:     &multiModalSpec.MaxPartCount,
+		MaxFileSizeByType: gmap.Map(multiModalSpec.MaxFileSizeByType, func(k entity.ContentType, v int64) (dataset.ContentType, int64) {
+			convRes, _ := dataset.ContentTypeFromString(common.ConvertContentTypeDO2DTO(k))
+			return convRes, v
+		}),
+		SupportedFormatsByType: gmap.Map(multiModalSpec.SupportedFormatsByType, func(k entity.ContentType, v []string) (dataset.ContentType, []string) {
+			convRes, _ := dataset.ContentTypeFromString(common.ConvertContentTypeDO2DTO(k))
+			return convRes, v
+		}),
 	}
 }
 
@@ -198,6 +210,13 @@ func convert2EvaluationSetMultiModalSpec(ctx context.Context, multiModalSpec *da
 		MaxFileCount:     gptr.Indirect(multiModalSpec.MaxFileCount),
 		MaxFileSize:      gptr.Indirect(multiModalSpec.MaxFileSize),
 		SupportedFormats: multiModalSpec.SupportedFormats,
+		MaxPartCount:     gptr.Indirect(multiModalSpec.MaxPartCount),
+		MaxFileSizeByType: gmap.Map(multiModalSpec.MaxFileSizeByType, func(k dataset.ContentType, v int64) (entity.ContentType, int64) {
+			return common.ConvertContentTypeDTO2DO(k.String()), v
+		}),
+		SupportedFormatsByType: gmap.Map(multiModalSpec.SupportedFormatsByType, func(k dataset.ContentType, v []string) (entity.ContentType, []string) {
+			return common.ConvertContentTypeDTO2DO(k.String()), v
+		}),
 	}
 }
 
@@ -226,8 +245,33 @@ func convert2EvaluationSetFieldSchema(ctx context.Context, schema *dataset.Field
 		MultiModelSpec:       convert2EvaluationSetMultiModalSpec(ctx, schema.MultiModelSpec),
 		TextSchema:           gptr.Indirect(schema.TextSchema),
 		Hidden:               gptr.Indirect(schema.Hidden),
+		SchemaKey:            toSchemaKey(schema.SchemaKey),
 	}
 	return fieldSchema
+}
+
+func toSchemaKey(key *dataset.SchemaKey) *entity.SchemaKey {
+	if key == nil {
+		return nil
+	}
+	switch *key {
+	case dataset.SchemaKey_String:
+		return gptr.Of(entity.SchemaKey_String)
+	case dataset.SchemaKey_Integer:
+		return gptr.Of(entity.SchemaKey_Integer)
+	case dataset.SchemaKey_Float:
+		return gptr.Of(entity.SchemaKey_Float)
+	case dataset.SchemaKey_Bool:
+		return gptr.Of(entity.SchemaKey_Bool)
+	case dataset.SchemaKey_Message:
+		return gptr.Of(entity.SchemaKey_Message)
+	case dataset.SchemaKey_SingleChoice:
+		return gptr.Of(entity.SchemaKey_SingleChoice)
+	case dataset.SchemaKey_Trajectory:
+		return gptr.Of(entity.SchemaKey_Trajectory)
+	default:
+		return nil
+	}
 }
 
 func convert2EvaluationSetSchema(ctx context.Context, schema *dataset.DatasetSchema) (datasetSchema *entity.EvaluationSetSchema) {
@@ -361,6 +405,7 @@ func convert2EvaluationSetFieldData(ctx context.Context, fieldData *dataset.Fiel
 				Text:        part.Content,
 				Image:       convertObjectStorageToImage(ctx, part.Attachments),
 				Audio:       convertObjectStorageToAudio(ctx, part.Attachments),
+				Video:       convertObjectStorageToVideo(ctx, part.Attachments),
 			}
 
 			// 如果 part 还有嵌套的 Parts，递归处理
@@ -388,8 +433,10 @@ func convert2EvaluationSetFieldData(ctx context.Context, fieldData *dataset.Fiel
 			Text:        fieldData.Content,
 			Image:       convertObjectStorageToImage(ctx, fieldData.Attachments),
 			Audio:       convertObjectStorageToAudio(ctx, fieldData.Attachments),
+			Video:       convertObjectStorageToVideo(ctx, fieldData.Attachments),
 			MultiPart:   multiPart,
 		},
+		TraceID: gptr.Indirect(fieldData.TraceID),
 	}
 	return evalSetFieldData
 }
@@ -436,8 +483,38 @@ func convertObjectStorageToAudio(ctx context.Context, attachments []*dataset.Obj
 		// 根据文件名或其他信息判断是否为音频
 		if isAudioAttachment(attachment) {
 			return &entity.Audio{
-				Format: getAudioFormat(attachment),
-				URL:    attachment.URL,
+				Format:          getAudioFormat(attachment),
+				URL:             attachment.URL,
+				Name:            attachment.Name,
+				URI:             attachment.URI,
+				StorageProvider: convertStorageProvider(attachment.Provider),
+			}
+		}
+	}
+
+	return nil
+}
+
+// convertObjectStorageToVideo 从 ObjectStorage 列表中提取视频信息并转换为 entity.Video
+func convertObjectStorageToVideo(ctx context.Context, attachments []*dataset.ObjectStorage) *entity.Video {
+	if len(attachments) == 0 {
+		return nil
+	}
+
+	// 查找第一个音频类型的 attachment
+	for _, attachment := range attachments {
+		if attachment == nil {
+			continue
+		}
+
+		// 根据文件名或其他信息判断是否为音频
+		if isVideoAttachment(attachment) {
+			return &entity.Video{
+				Name:            attachment.Name,
+				URL:             attachment.URL,
+				URI:             attachment.URI,
+				ThumbURL:        attachment.ThumbURL,
+				StorageProvider: convertStorageProvider(attachment.Provider),
 			}
 		}
 	}
@@ -495,6 +572,31 @@ func isAudioAttachment(attachment *dataset.ObjectStorage) bool {
 	return false
 }
 
+// isVideoAttachment 判断 ObjectStorage 是否为音频类型
+func isVideoAttachment(attachment *dataset.ObjectStorage) bool {
+	if attachment == nil || attachment.Name == nil {
+		return false
+	}
+
+	name := *attachment.Name
+	// 根据文件扩展名判断是否为音频
+	videoExtensions := []string{".mp4", ".avi", ".mov", ".wmv", ".flv", ".mkv", ".webm"}
+	for _, ext := range videoExtensions {
+		if len(name) >= len(ext) && name[len(name)-len(ext):] == ext {
+			return true
+		}
+		// 也检查大写版本
+		if len(name) >= len(ext) {
+			nameExt := name[len(name)-len(ext):]
+			if nameExt == strings.ToUpper(ext) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
 // getAudioFormat 从 ObjectStorage 中获取音频格式
 func getAudioFormat(attachment *dataset.ObjectStorage) *string {
 	if attachment == nil || attachment.Name == nil {
@@ -524,17 +626,21 @@ func convertStorageProvider(provider *dataset.StorageProvider) *entity.StoragePr
 	return &entityProvider
 }
 
-func convert2EvaluationSetTurn(ctx context.Context, data []*dataset.FieldData) (turns []*entity.Turn) {
+func convert2EvaluationSetTurn(ctx context.Context, item *dataset.DatasetItem) (turns []*entity.Turn) {
+	data := item.Data
 	if len(data) == 0 {
 		return nil
 	}
 	turn := &entity.Turn{
 		FieldDataList: make([]*entity.FieldData, 0),
+		ItemID:        gptr.Indirect(item.ItemID),
+		EvalSetID:     item.GetDatasetID(),
 	}
 	for _, e := range data {
 		turn.FieldDataList = append(turn.FieldDataList, convert2EvaluationSetFieldData(ctx, e))
 	}
 	turns = append(turns, turn)
+	logs.CtxInfo(ctx, "conv turn from item: %v", json.Jsonify(item))
 	return turns
 }
 
@@ -550,7 +656,7 @@ func convert2EvaluationSetItem(ctx context.Context, item *dataset.DatasetItem) (
 		SchemaID:        gptr.Indirect(item.SchemaID),
 		ItemID:          gptr.Indirect(item.ItemID),
 		ItemKey:         gptr.Indirect(item.ItemKey),
-		Turns:           convert2EvaluationSetTurn(ctx, item.Data),
+		Turns:           convert2EvaluationSetTurn(ctx, item),
 		BaseInfo: &entity.BaseInfo{
 			CreatedAt: item.CreatedAt,
 			UpdatedAt: item.UpdatedAt,
@@ -618,4 +724,241 @@ func convert2EvaluationSetErrorDetail(ctx context.Context, errorDetail *dataset.
 		EndIndex:   errorDetail.EndIndex,
 	}
 	return res
+}
+
+func convert2DatasetIOJob(ctx context.Context, job *dataset_job.DatasetIOJob) *entity.DatasetIOJob {
+	if job == nil {
+		return nil
+	}
+	return &entity.DatasetIOJob{
+		ID:            job.ID,
+		AppID:         job.AppID,
+		SpaceID:       job.SpaceID,
+		DatasetID:     job.DatasetID,
+		JobType:       entity.JobType(job.JobType),
+		Source:        convert2DatasetIOEndpoint(ctx, job.Source),
+		Target:        convert2DatasetIOEndpoint(ctx, job.Target),
+		FieldMappings: convert2FieldMappings(ctx, job.FieldMappings),
+		Option:        convert2DatasetIOJobOption(ctx, job.Option),
+		Status:        (*entity.JobStatus)(job.Status),
+		Progress:      convert2DatasetIOJobProgress(ctx, job.Progress),
+		Errors:        convert2EvaluationSetErrorGroups(ctx, job.Errors),
+		CreatedBy:     job.CreatedBy,
+		CreatedAt:     job.CreatedAt,
+		UpdatedBy:     job.UpdatedBy,
+		UpdatedAt:     job.UpdatedAt,
+		StartedAt:     job.StartedAt,
+		EndedAt:       job.EndedAt,
+	}
+}
+
+func convert2DatasetIOEndpoint(ctx context.Context, endpoint *dataset_job.DatasetIOEndpoint) *entity.DatasetIOEndpoint {
+	if endpoint == nil {
+		return nil
+	}
+	return &entity.DatasetIOEndpoint{
+		File:    convert2DatasetIOFile(ctx, endpoint.File),
+		Dataset: convert2DatasetIODataset(ctx, endpoint.Dataset),
+	}
+}
+
+func convert2DatasetIOFile(ctx context.Context, file *dataset_job.DatasetIOFile) *entity.DatasetIOFile {
+	if file == nil {
+		return nil
+	}
+	p := convertStorageProvider(&file.Provider)
+	var provider entity.StorageProvider
+	if p != nil {
+		provider = *p
+	}
+	return &entity.DatasetIOFile{
+		Provider:         provider,
+		Path:             file.Path,
+		Format:           (*entity.FileFormat)(file.Format),
+		CompressFormat:   (*entity.FileFormat)(file.CompressFormat),
+		Files:            file.Files,
+		OriginalFileName: file.OriginalFileName,
+		DownloadURL:      file.DownloadURL,
+		ProviderID:       file.ProviderID,
+		ProviderAuth:     convert2ProviderAuth(ctx, file.ProviderAuth),
+	}
+}
+
+func convert2ProviderAuth(ctx context.Context, auth *dataset_job.ProviderAuth) *entity.ProviderAuth {
+	if auth == nil {
+		return nil
+	}
+	return &entity.ProviderAuth{
+		ProviderAccountID: auth.ProviderAccountID,
+	}
+}
+
+func convert2DatasetIODataset(ctx context.Context, ds *dataset_job.DatasetIODataset) *entity.DatasetIODataset {
+	if ds == nil {
+		return nil
+	}
+	return &entity.DatasetIODataset{
+		SpaceID:   ds.SpaceID,
+		DatasetID: ds.DatasetID,
+		VersionID: ds.VersionID,
+	}
+}
+
+func convert2FieldMappings(ctx context.Context, mappings []*dataset_job.FieldMapping) []*entity.FieldMapping {
+	if len(mappings) == 0 {
+		return nil
+	}
+	res := make([]*entity.FieldMapping, len(mappings))
+	for i, m := range mappings {
+		res[i] = &entity.FieldMapping{
+			Source: m.Source,
+			Target: m.Target,
+		}
+	}
+	return res
+}
+
+func convert2DatasetIOJobOption(ctx context.Context, opt *dataset_job.DatasetIOJobOption) *entity.DatasetIOJobOption {
+	if opt == nil {
+		return nil
+	}
+	return &entity.DatasetIOJobOption{
+		OverwriteDataset: opt.OverwriteDataset,
+	}
+}
+
+func convert2DatasetIOJobProgress(ctx context.Context, progress *dataset_job.DatasetIOJobProgress) *entity.DatasetIOJobProgress {
+	if progress == nil {
+		return nil
+	}
+	return &entity.DatasetIOJobProgress{
+		Total:         progress.Total,
+		Processed:     progress.Processed,
+		Added:         progress.Added,
+		Name:          progress.Name,
+		SubProgresses: convert2DatasetIOJobSubProgresses(ctx, progress.SubProgresses),
+	}
+}
+
+func convert2DatasetIOJobSubProgresses(ctx context.Context, progresses []*dataset_job.DatasetIOJobProgress) []*entity.DatasetIOJobProgress {
+	if len(progresses) == 0 {
+		return nil
+	}
+	res := make([]*entity.DatasetIOJobProgress, len(progresses))
+	for i, p := range progresses {
+		res[i] = convert2DatasetIOJobProgress(ctx, p)
+	}
+	return res
+}
+
+func convert2ThriftDatasetIOFile(ctx context.Context, file *entity.DatasetIOFile) *dataset_job.DatasetIOFile {
+	if file == nil {
+		return nil
+	}
+	provider := dataset.StorageProvider(file.Provider)
+
+	return &dataset_job.DatasetIOFile{
+		Provider:         provider,
+		Path:             file.Path,
+		Format:           (*dataset_job.FileFormat)(file.Format),
+		CompressFormat:   (*dataset_job.FileFormat)(file.CompressFormat),
+		Files:            file.Files,
+		OriginalFileName: file.OriginalFileName,
+		DownloadURL:      file.DownloadURL,
+		ProviderID:       file.ProviderID,
+		ProviderAuth:     convert2ThriftProviderAuth(ctx, file.ProviderAuth),
+	}
+}
+
+func convert2ThriftProviderAuth(ctx context.Context, auth *entity.ProviderAuth) *dataset_job.ProviderAuth {
+	if auth == nil {
+		return nil
+	}
+	return &dataset_job.ProviderAuth{
+		ProviderAccountID: auth.ProviderAccountID,
+	}
+}
+
+func convert2ThriftFieldMappings(ctx context.Context, mappings []*entity.FieldMapping) []*dataset_job.FieldMapping {
+	if len(mappings) == 0 {
+		return nil
+	}
+	res := make([]*dataset_job.FieldMapping, len(mappings))
+	for i, m := range mappings {
+		res[i] = &dataset_job.FieldMapping{
+			Source: m.Source,
+			Target: m.Target,
+		}
+	}
+	return res
+}
+
+func convert2ThriftDatasetIOJobOption(ctx context.Context, opt *entity.DatasetIOJobOption) *dataset_job.DatasetIOJobOption {
+	if opt == nil {
+		return nil
+	}
+	return &dataset_job.DatasetIOJobOption{
+		OverwriteDataset:  opt.OverwriteDataset,
+		FieldWriteOptions: convert2DatasetFieldWriteOptions(ctx, opt.FieldWriteOptions),
+	}
+}
+
+func convert2DatasetFieldWriteOptions(ctx context.Context, options []*entity.FieldWriteOption) []*dataset.FieldWriteOption {
+	if len(options) == 0 {
+		return nil
+	}
+	res := make([]*dataset.FieldWriteOption, 0, len(options))
+	for _, opt := range options {
+		res = append(res, convert2DatasetFieldWriteOption(ctx, opt))
+	}
+	return res
+}
+
+func convert2DatasetFieldWriteOption(ctx context.Context, opt *entity.FieldWriteOption) *dataset.FieldWriteOption {
+	if opt == nil {
+		return nil
+	}
+	return &dataset.FieldWriteOption{
+		FieldName:          opt.FieldName,
+		FieldKey:           opt.FieldKey,
+		MultiModalStoreOpt: convert2DatasetMultiModalStoreOption(ctx, opt.MultiModalStoreOpt),
+	}
+}
+
+func convert2DatasetMultiModalStoreOption(ctx context.Context, opt *entity.MultiModalStoreOption) *dataset.MultiModalStoreOption {
+	if opt == nil {
+		return nil
+	}
+	var strategy *dataset.MultiModalStoreStrategy
+	if opt.MultiModalStoreStrategy != nil {
+		s := dataset.MultiModalStoreStrategy(*opt.MultiModalStoreStrategy)
+		strategy = &s
+	}
+	return &dataset.MultiModalStoreOption{
+		MultiModalStoreStrategy: strategy,
+		ContentType:             convert2DatasetContentType(opt.ContentType),
+	}
+}
+
+func convert2DatasetContentType(contentType *entity.ContentType) *dataset.ContentType {
+	if contentType == nil {
+		return nil
+	}
+	var t dataset.ContentType
+	switch gptr.Indirect(contentType) {
+	case entity.ContentTypeText:
+		t = dataset.ContentType_Text
+	case entity.ContentTypeImage:
+		t = dataset.ContentType_Image
+	case entity.ContentTypeAudio:
+		t = dataset.ContentType_Audio
+	case entity.ContentTypeVideo:
+		t = dataset.ContentType_Video
+	case entity.ContentTypeMultipart:
+		t = dataset.ContentType_MultiPart
+	}
+	if t == 0 {
+		return nil
+	}
+	return &t
 }

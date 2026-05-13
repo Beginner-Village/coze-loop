@@ -10,6 +10,7 @@ import (
 
 	"github.com/bytedance/gg/gptr"
 
+	"github.com/coze-dev/coze-loop/backend/kitex_gen/base"
 	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/evaluation"
 	domain_eval_set "github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/evaluation/domain/eval_set"
 	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/evaluation/eval_set"
@@ -108,6 +109,127 @@ func (e *EvaluationSetApplicationImpl) CreateEvaluationSet(ctx context.Context, 
 	// 返回结果构建、错误处理
 	return &eval_set.CreateEvaluationSetResponse{
 		EvaluationSetID: &id,
+	}, nil
+}
+
+func (e *EvaluationSetApplicationImpl) CreateEvaluationSetWithImport(ctx context.Context, req *eval_set.CreateEvaluationSetWithImportRequest) (r *eval_set.CreateEvaluationSetWithImportResponse, err error) {
+	defer func() {
+		e.metric.EmitCreate(req.GetWorkspaceID(), err)
+	}()
+	// 参数校验
+	if req == nil {
+		return nil, errorx.NewByCode(errno.CommonInvalidParamCode, errorx.WithExtraMsg("req is nil"))
+	}
+	if req.Name == nil {
+		return nil, errorx.NewByCode(errno.CommonInvalidParamCode, errorx.WithExtraMsg("name is nil"))
+	}
+	if req.EvaluationSetSchema == nil {
+		return nil, errorx.NewByCode(errno.CommonInvalidParamCode, errorx.WithExtraMsg("schema is nil"))
+	}
+	if req.Source == nil {
+		return nil, errorx.NewByCode(errno.CommonInvalidParamCode, errorx.WithExtraMsg("source is nil"))
+	}
+	// 鉴权
+	err = e.auth.Authorization(ctx, &rpc.AuthorizationParam{
+		ObjectID:      strconv.FormatInt(req.WorkspaceID, 10),
+		SpaceID:       req.WorkspaceID,
+		ActionObjects: []*rpc.ActionObject{{Action: gptr.Of("createLoopEvaluationSet"), EntityType: gptr.Of(rpc.AuthEntityType_Space)}},
+	})
+	if err != nil {
+		return nil, err
+	}
+	// domain调用
+	var session *entity.Session
+	if req.Session != nil {
+		session = &entity.Session{
+			UserID: strconv.FormatInt(gptr.Indirect(req.Session.UserID), 10),
+			AppID:  gptr.Indirect(req.Session.AppID),
+		}
+	}
+	id, jobID, err := e.evaluationSetService.CreateEvaluationSetWithImport(ctx, &entity.CreateEvaluationSetWithImportParam{
+		SpaceID:             req.WorkspaceID,
+		Name:                gptr.Indirect(req.Name),
+		Description:         req.Description,
+		EvaluationSetSchema: evaluation_set.SchemaDTO2DO(req.EvaluationSetSchema),
+		BizCategory:         req.BizCategory,
+		SourceType:          evaluation_set.SourceTypeDTO2DO(req.SourceType),
+		Source:              evaluation_set.DatasetIOEndpointDTO2DO(req.Source),
+		FieldMappings:       evaluation_set.FieldMappingsDTO2DOs(req.FieldMappings),
+		Session:             session,
+		Option:              evaluation_set.DatasetIOJobOptionDTO2DO(req.Option),
+	})
+	if err != nil {
+		return nil, err
+	}
+	// 返回结果构建、错误处理
+	return &eval_set.CreateEvaluationSetWithImportResponse{
+		EvaluationSetID: gptr.Of(id),
+		JobID:           gptr.Of(jobID),
+	}, nil
+}
+
+func (e *EvaluationSetApplicationImpl) ParseImportSourceFile(ctx context.Context, req *eval_set.ParseImportSourceFileRequest) (r *eval_set.ParseImportSourceFileResponse, err error) {
+	if req == nil {
+		return nil, errorx.NewByCode(errno.CommonInvalidParamCode, errorx.WithExtraMsg("req is nil"))
+	}
+	if req.File == nil {
+		return nil, errorx.NewByCode(errno.CommonInvalidParamCode, errorx.WithExtraMsg("file is nil"))
+	}
+
+	if err = e.auth.Authorization(ctx, &rpc.AuthorizationParam{
+		ObjectID:      strconv.FormatInt(req.WorkspaceID, 10),
+		SpaceID:       req.WorkspaceID,
+		ActionObjects: []*rpc.ActionObject{{Action: gptr.Of("createLoopEvaluationSet"), EntityType: gptr.Of(rpc.AuthEntityType_Space)}},
+	}); err != nil {
+		return nil, err
+	}
+
+	param := &entity.ParseImportSourceFileParam{
+		SpaceID: req.WorkspaceID,
+		File:    evaluation_set.DatasetIOFileDTO2DO(req.GetFile()),
+	}
+
+	result, err := e.evaluationSetService.ParseImportSourceFile(ctx, param)
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &eval_set.ParseImportSourceFileResponse{
+		BaseResp: base.NewBaseResp(),
+	}
+	if result != nil {
+		resp.Bytes = gptr.Of(result.Bytes)
+		resp.FieldSchemas = evaluation_set.FieldSchemaDO2DTOs(result.FieldSchemas)
+		resp.Conflicts = evaluation_set.ConflictFieldDO2DTOs(result.Conflicts)
+		resp.FilesWithAmbiguousColumn = result.FilesWithAmbiguousColumn
+		resp.UntypedURLFields = result.UntypedURLFields
+		resp.PrecheckDataByField = result.PrecheckDataByField
+	}
+
+	return resp, nil
+}
+
+func (e *EvaluationSetApplicationImpl) ValidateEvaluationSetMultiPartData(ctx context.Context, req *eval_set.ValidateEvaluationSetMultiPartDataRequest) (r *eval_set.ValidateEvaluationSetMultiPartDataResponse, err error) {
+	if req == nil {
+		return nil, errorx.NewByCode(errno.CommonInvalidParamCode, errorx.WithExtraMsg("req is nil"))
+	}
+
+	if err = e.auth.Authorization(ctx, &rpc.AuthorizationParam{
+		ObjectID:      strconv.FormatInt(req.SpaceID, 10),
+		SpaceID:       req.SpaceID,
+		ActionObjects: []*rpc.ActionObject{{Action: gptr.Of("createLoopEvaluationSet"), EntityType: gptr.Of(rpc.AuthEntityType_Space)}},
+	}); err != nil {
+		return nil, err
+	}
+
+	details, err := e.evaluationSetService.ValidateMultiPartData(ctx, req.SpaceID, req.GetPreviewData(), evaluation_set.MultiModalStoreOptionDTO2DO(req.GetStoreOption()))
+	if err != nil {
+		return nil, err
+	}
+
+	return &eval_set.ValidateEvaluationSetMultiPartDataResponse{
+		BaseResp:                  base.NewBaseResp(),
+		AttachmentUrlsCheckDetail: evaluation_set.UploadAttachmentDetailsDO2DTOs(details),
 	}, nil
 }
 
@@ -292,20 +414,22 @@ func (e *EvaluationSetApplicationImpl) BatchCreateEvaluationSetItems(ctx context
 		return nil, err
 	}
 	// domain调用
-	idMap, errors, err := e.evaluationSetItemService.BatchCreateEvaluationSetItems(ctx, &entity.BatchCreateEvaluationSetItemsParam{
-		SpaceID:          req.WorkspaceID,
-		EvaluationSetID:  req.EvaluationSetID,
-		Items:            evaluation_set.ItemDTO2DOs(req.Items),
-		SkipInvalidItems: req.SkipInvalidItems,
-		AllowPartialAdd:  req.AllowPartialAdd,
+	idMap, errors, itemOutputs, err := e.evaluationSetItemService.BatchCreateEvaluationSetItems(ctx, &entity.BatchCreateEvaluationSetItemsParam{
+		SpaceID:           req.WorkspaceID,
+		EvaluationSetID:   req.EvaluationSetID,
+		Items:             evaluation_set.ItemDTO2DOs(req.Items),
+		SkipInvalidItems:  req.SkipInvalidItems,
+		AllowPartialAdd:   req.AllowPartialAdd,
+		FieldWriteOptions: evaluation_set.FieldWriteOptionDTO2DOs(req.FieldWriteOptions),
 	})
 	if err != nil {
 		return nil, err
 	}
 	// 返回结果构建、错误处理
 	return &eval_set.BatchCreateEvaluationSetItemsResponse{
-		AddedItems: idMap,
-		Errors:     evaluation_set.ItemErrorGroupDO2DTOs(errors),
+		AddedItems:  idMap,
+		Errors:      evaluation_set.ItemErrorGroupDO2DTOs(errors),
+		ItemOutputs: evaluation_set.CreateDatasetItemOutputDO2DTOs(itemOutputs),
 	}, nil
 }
 
@@ -338,7 +462,7 @@ func (e *EvaluationSetApplicationImpl) UpdateEvaluationSetItem(ctx context.Conte
 		return nil, err
 	}
 	// domain调用
-	err = e.evaluationSetItemService.UpdateEvaluationSetItem(ctx, req.WorkspaceID, req.EvaluationSetID, req.ItemID, evaluation_set.TurnDTO2DOs(req.Turns))
+	err = e.evaluationSetItemService.UpdateEvaluationSetItem(ctx, req.WorkspaceID, req.EvaluationSetID, req.ItemID, evaluation_set.TurnDTO2DOs(req.GetEvaluationSetID(), req.GetItemID(), req.Turns), evaluation_set.FieldWriteOptionDTO2DOs(req.FieldWriteOptions))
 	if err != nil {
 		return nil, err
 	}
@@ -412,13 +536,14 @@ func (e *EvaluationSetApplicationImpl) ListEvaluationSetItems(ctx context.Contex
 		return nil, err
 	}
 	// domain调用
-	items, total, nextCursor, err := e.evaluationSetItemService.ListEvaluationSetItems(ctx, &entity.ListEvaluationSetItemsParam{
+	items, total, filterTotal, nextCursor, err := e.evaluationSetItemService.ListEvaluationSetItems(ctx, &entity.ListEvaluationSetItemsParam{
 		SpaceID:         req.WorkspaceID,
 		EvaluationSetID: req.EvaluationSetID,
 		VersionID:       req.VersionID,
 		PageNumber:      req.PageNumber,
 		PageSize:        req.PageSize,
 		OrderBys:        common.ConvertOrderByDTO2DOs(req.OrderBys),
+		Filter:          req.Filter,
 	})
 	if err != nil {
 		return nil, err
@@ -427,6 +552,7 @@ func (e *EvaluationSetApplicationImpl) ListEvaluationSetItems(ctx context.Contex
 	return &eval_set.ListEvaluationSetItemsResponse{
 		Items:         evaluation_set.ItemDO2DTOs(items),
 		Total:         total,
+		FilterTotal:   filterTotal,
 		NextPageToken: nextCursor,
 	}, nil
 }
@@ -694,4 +820,49 @@ func (e *EvaluationSetApplicationImpl) ClearEvaluationSetDraftItem(ctx context.C
 		return nil, err
 	}
 	return &eval_set.ClearEvaluationSetDraftItemResponse{}, nil
+}
+
+func (e *EvaluationSetApplicationImpl) GetEvaluationSetItemField(ctx context.Context, req *eval_set.GetEvaluationSetItemFieldRequest) (r *eval_set.GetEvaluationSetItemFieldResponse, err error) {
+	// 参数校验
+	if req == nil {
+		return nil, errorx.NewByCode(errno.CommonInvalidParamCode, errorx.WithExtraMsg("req is nil"))
+	}
+	// 鉴权
+	set, err := e.evaluationSetService.GetEvaluationSet(ctx, &req.WorkspaceID, req.EvaluationSetID, gptr.Of(true))
+	if err != nil {
+		return nil, err
+	}
+	if set == nil {
+		return nil, errorx.NewByCode(errno.ResourceNotFoundCode, errorx.WithExtraMsg("errno set not found"))
+	}
+	var ownerID *string
+	if set.BaseInfo != nil && set.BaseInfo.CreatedBy != nil {
+		ownerID = set.BaseInfo.CreatedBy.UserID
+	}
+	err = e.auth.AuthorizationWithoutSPI(ctx, &rpc.AuthorizationWithoutSPIParam{
+		ObjectID:        strconv.FormatInt(set.ID, 10),
+		SpaceID:         req.WorkspaceID,
+		ActionObjects:   []*rpc.ActionObject{{Action: gptr.Of(consts.Read), EntityType: gptr.Of(rpc.AuthEntityType_EvaluationSet)}},
+		OwnerID:         ownerID,
+		ResourceSpaceID: set.SpaceID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	// domain调用
+	fieldData, err := e.evaluationSetItemService.GetEvaluationSetItemField(ctx, &entity.GetEvaluationSetItemFieldParam{
+		SpaceID:         req.WorkspaceID,
+		EvaluationSetID: req.EvaluationSetID,
+		ItemPK:          req.GetItemPk(),
+		FieldName:       req.GetFieldName(),
+		FieldKey:        gptr.Of(req.GetFieldKey()),
+		TurnID:          req.TurnID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	// 返回结果构建、错误处理
+	return &eval_set.GetEvaluationSetItemFieldResponse{
+		FieldData: evaluation_set.FieldDataDO2DTO(fieldData),
+	}, nil
 }

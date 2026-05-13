@@ -35,6 +35,11 @@ func (p *CreateEvalTargetRequest) IsValid() error {
 	return nil
 }
 func (p *CreateEvalTargetParam) IsValid() error {
+	if p.CustomEvalTarget != nil {
+		if err := p.CustomEvalTarget.IsValid(); err != nil {
+			return fmt.Errorf("field CustomEvalTarget not valid, %w", err)
+		}
+	}
 	return nil
 }
 func (p *CreateEvalTargetResponse) IsValid() error {
@@ -104,6 +109,11 @@ func (p *ExecuteEvalTargetRequest) IsValid() error {
 			return fmt.Errorf("field InputData not valid, %w", err)
 		}
 	}
+	if p.EvalTarget != nil {
+		if err := p.EvalTarget.IsValid(); err != nil {
+			return fmt.Errorf("field EvalTarget not valid, %w", err)
+		}
+	}
 	if p.Base != nil {
 		if err := p.Base.IsValid(); err != nil {
 			return fmt.Errorf("field Base not valid, %w", err)
@@ -117,6 +127,14 @@ func (p *ExecuteEvalTargetResponse) IsValid() error {
 			return fmt.Errorf("field EvalTargetRecord not valid, %w", err)
 		}
 	}
+	if p.BaseResp != nil {
+		if err := p.BaseResp.IsValid(); err != nil {
+			return fmt.Errorf("field BaseResp not valid, %w", err)
+		}
+	}
+	return nil
+}
+func (p *AsyncExecuteEvalTargetResponse) IsValid() error {
 	if p.BaseResp != nil {
 		if err := p.BaseResp.IsValid(); err != nil {
 			return fmt.Errorf("field BaseResp not valid, %w", err)
@@ -177,6 +195,22 @@ func (p *BatchGetEvalTargetRecordsResponse) IsValid() error {
 	}
 	return nil
 }
+func (p *GetEvalTargetOutputFieldContentRequest) IsValid() error {
+	if p.Base != nil {
+		if err := p.Base.IsValid(); err != nil {
+			return fmt.Errorf("field Base not valid, %w", err)
+		}
+	}
+	return nil
+}
+func (p *GetEvalTargetOutputFieldContentResponse) IsValid() error {
+	if p.BaseResp != nil {
+		if err := p.BaseResp.IsValid(); err != nil {
+			return fmt.Errorf("field BaseResp not valid, %w", err)
+		}
+	}
+	return nil
+}
 func (p *ListSourceEvalTargetsRequest) IsValid() error {
 	if p.Name != nil {
 		if len(*p.Name) < int(1) {
@@ -214,6 +248,27 @@ func (p *BatchGetSourceEvalTargetsResponse) IsValid() error {
 	}
 	return nil
 }
+func (p *GetSourceEvalTargetVersionRequest) IsValid() error {
+	if p.Base != nil {
+		if err := p.Base.IsValid(); err != nil {
+			return fmt.Errorf("field Base not valid, %w", err)
+		}
+	}
+	return nil
+}
+func (p *GetSourceEvalTargetVersionResponse) IsValid() error {
+	if p.EvalTargetVersion != nil {
+		if err := p.EvalTargetVersion.IsValid(); err != nil {
+			return fmt.Errorf("field EvalTargetVersion not valid, %w", err)
+		}
+	}
+	if p.BaseResp != nil {
+		if err := p.BaseResp.IsValid(); err != nil {
+			return fmt.Errorf("field BaseResp not valid, %w", err)
+		}
+	}
+	return nil
+}
 func (p *ListSourceEvalTargetVersionsRequest) IsValid() error {
 	if p.Base != nil {
 		if err := p.Base.IsValid(); err != nil {
@@ -223,6 +278,105 @@ func (p *ListSourceEvalTargetVersionsRequest) IsValid() error {
 	return nil
 }
 func (p *ListSourceEvalTargetVersionsResponse) IsValid() error {
+	if p.BaseResp != nil {
+		if err := p.BaseResp.IsValid(); err != nil {
+			return fmt.Errorf("field BaseResp not valid, %w", err)
+		}
+	}
+	return nil
+}
+func (p *SearchCustomEvalTargetRequest) IsValid() error {
+	if p.CustomRPCServer != nil {
+		if err := p.CustomRPCServer.IsValid(); err != nil {
+			return fmt.Errorf("field CustomRPCServer not valid, %w", err)
+		}
+	}
+	if p.Base != nil {
+		if err := p.Base.IsValid(); err != nil {
+			return fmt.Errorf("field Base not valid, %w", err)
+		}
+	}
+	return nil
+}
+func (p *SearchCustomEvalTargetResponse) IsValid() error {
+	if p.BaseResp != nil {
+		if err := p.BaseResp.IsValid(); err != nil {
+			return fmt.Errorf("field BaseResp not valid, %w", err)
+		}
+	}
+	return nil
+}
+func (p *DebugEvalTargetRequest) IsValid() error {
+	if p.TargetRuntimeParam != nil {
+		if err := p.TargetRuntimeParam.IsValid(); err != nil {
+			return fmt.Errorf("field TargetRuntimeParam not valid, %w", err)
+		}
+	}
+	if p.CustomRPCServer != nil {
+		if err := p.CustomRPCServer.IsValid(); err != nil {
+			return fmt.Errorf("field CustomRPCServer not valid, %w", err)
+		}
+	}
+	if p.Base != nil {
+		if err := p.Base.IsValid(); err != nil {
+			return fmt.Errorf("field Base not valid, %w", err)
+		}
+	}
+	return nil
+}
+func (p *DebugEvalTargetResponse) IsValid() error {
+	if p.EvalTargetRecord != nil {
+		if err := p.EvalTargetRecord.IsValid(); err != nil {
+			return fmt.Errorf("field EvalTargetRecord not valid, %w", err)
+		}
+	}
+	if p.BaseResp != nil {
+		if err := p.BaseResp.IsValid(); err != nil {
+			return fmt.Errorf("field BaseResp not valid, %w", err)
+		}
+	}
+	return nil
+}
+func (p *AsyncDebugEvalTargetRequest) IsValid() error {
+	if p.TargetRuntimeParam != nil {
+		if err := p.TargetRuntimeParam.IsValid(); err != nil {
+			return fmt.Errorf("field TargetRuntimeParam not valid, %w", err)
+		}
+	}
+	if p.CustomRPCServer != nil {
+		if err := p.CustomRPCServer.IsValid(); err != nil {
+			return fmt.Errorf("field CustomRPCServer not valid, %w", err)
+		}
+	}
+	if p.Base != nil {
+		if err := p.Base.IsValid(); err != nil {
+			return fmt.Errorf("field Base not valid, %w", err)
+		}
+	}
+	return nil
+}
+func (p *MockEvalTargetOutputRequest) IsValid() error {
+	if p.Base != nil {
+		if err := p.Base.IsValid(); err != nil {
+			return fmt.Errorf("field Base not valid, %w", err)
+		}
+	}
+	return nil
+}
+func (p *AsyncDebugEvalTargetResponse) IsValid() error {
+	if p.BaseResp != nil {
+		if err := p.BaseResp.IsValid(); err != nil {
+			return fmt.Errorf("field BaseResp not valid, %w", err)
+		}
+	}
+	return nil
+}
+func (p *MockEvalTargetOutputResponse) IsValid() error {
+	if p.EvalTarget != nil {
+		if err := p.EvalTarget.IsValid(); err != nil {
+			return fmt.Errorf("field EvalTarget not valid, %w", err)
+		}
+	}
 	if p.BaseResp != nil {
 		if err := p.BaseResp.IsValid(); err != nil {
 			return fmt.Errorf("field BaseResp not valid, %w", err)

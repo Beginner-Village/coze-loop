@@ -4,6 +4,8 @@ include "../../../base.thrift"
 include "domain/eval_set.thrift"
 include "domain/common.thrift"
 include "../data/domain/dataset.thrift"
+include "../data/domain/dataset_job.thrift"
+include "../data/domain/filter.thrift"
 
 struct CreateEvaluationSetRequest {
     1: required i64 workspace_id (api.js_conv="true", go.tag='json:"workspace_id"'),
@@ -13,7 +15,7 @@ struct CreateEvaluationSetRequest {
     4: optional eval_set.EvaluationSetSchema evaluation_set_schema,
     5: optional eval_set.BizCategory biz_category (vt.max_size = "128") // 业务分类
 
-    200: optional common.Session session
+    200: optional common.Session session (api.none = 'true')
     255: optional base.Base Base
 }
 
@@ -21,6 +23,54 @@ struct CreateEvaluationSetResponse {
     1: optional i64 evaluation_set_id (api.js_conv="true", go.tag='json:"evaluation_set_id"'),
 
     255: base.BaseResp BaseResp
+}
+
+struct CreateEvaluationSetWithImportRequest {
+    1: required i64 workspace_id (api.js_conv="true", go.tag='json:"workspace_id"'),
+
+    2: optional string name (vt.min_size = "1", vt.max_size = "255"),
+    3: optional string description (vt.max_size = "2048"),
+    4: optional eval_set.EvaluationSetSchema evaluation_set_schema,
+    5: optional eval_set.BizCategory biz_category (vt.max_size = "128") // 业务分类
+
+    6: optional dataset_job.SourceType source_type (vt.defined_only = "true")
+    7: required dataset_job.DatasetIOEndpoint source
+    8: optional list<dataset_job.FieldMapping> fieldMappings (vt.min_size = "1", vt.elem.skip = "false")
+    9: optional dataset_job.DatasetIOJobOption option
+
+    200: optional common.Session session (api.none = 'true')
+    255: optional base.Base Base
+}
+
+struct CreateEvaluationSetWithImportResponse {
+    1: optional i64 evaluation_set_id (api.js_conv="true", go.tag='json:"evaluation_set_id"'),
+    2: optional i64 job_id (api.js_conv="true", go.tag='json:"job_id"')
+
+    255: base.BaseResp BaseResp
+}
+
+struct ParseImportSourceFileRequest {
+    1: required i64 workspace_id (api.js_conv="true", go.tag='json:"workspace_id"'),
+    2: optional dataset_job.DatasetIOFile file (vt.not_nil = "true")                // 如果 path 为文件夹，此处只默认解析当前路径级别下所有指定类型的文件，不嵌套解析
+
+    255: optional base.Base base
+}
+
+struct ParseImportSourceFileResponse {
+    1: optional i64 bytes (api.js_conv="true", go.tag='json:"bytes"')       // 文件大小，单位为 byte
+    10: optional list<eval_set.FieldSchema> field_schemas,        // 数据集字段约束
+    3: optional list<ConflictField> conflicts            // 冲突详情。key: 列名，val：冲突详情
+    4: optional list<string> files_with_ambiguous_column // 存在列定义不明确的文件（即一个列被定义为多个类型），当前仅 jsonl 文件会出现该状况
+    5: optional list<string> untyped_url_fields              // 无类型标记的 URL 列名列表（内容为文件中的列名）
+    6: optional map<string, list<string>> precheck_data_by_field // 返回至多前 10 行数据用于预校验，结果按列聚合。key: 文件中的列名，value: 对应单元格内的内容
+
+    /*base*/
+    255: optional base.BaseResp baseResp
+}
+
+struct ConflictField {
+    1: optional string field_name                           // 存在冲突的列名
+    2: optional map<string, eval_set.FieldSchema> detail_m // 冲突详情。key: 文件名，val：该文件中包含的类型
 }
 
 struct UpdateEvaluationSetRequest {
@@ -183,8 +233,9 @@ struct BatchCreateEvaluationSetItemsRequest {
     2: required i64 evaluation_set_id (api.path='evaluation_set_id',api.js_conv='true', go.tag='json:"evaluation_set_id"'),
     3: optional list<eval_set.EvaluationSetItem> items (vt.min_size='1',vt.max_size='100'),
 
-    10: optional bool skip_invalid_items, // items 中存在无效数据时，默认不会写入任何数据；设置 skipInvalidItems=true 会跳过无效数据，写入有效数据                                                    // items 中存在无效数据时，默认不会写入任何数据；设置 skipInvalidItems=true 会跳过无效数据，写入有效数据
+    10: optional bool skip_invalid_items // items 中存在无效数据时，默认不会写入任何数据；设置 skipInvalidItems=true 会跳过无效数据，写入有效数据                                                    // items 中存在无效数据时，默认不会写入任何数据；设置 skipInvalidItems=true 会跳过无效数据，写入有效数据
     11: optional bool allow_partial_add  // 批量写入 items 如果超出数据集容量限制，默认不会写入任何数据；设置 partialAdd=true 会写入不超出容量限制的前 N 条
+    12: optional list<dataset.FieldWriteOption> field_write_options (vt.elem.skip = "false")
 
     255: optional base.Base Base
 }
@@ -193,6 +244,8 @@ struct BatchCreateEvaluationSetItemsResponse {
     1: optional map<i64, i64> added_items (api.js_conv='true', go.tag='json:"added_items"') // key: item 在 items 中的索引
     2: optional list<dataset.ItemErrorGroup> errors
 
+    3: optional list<dataset.CreateDatasetItemOutput> item_outputs
+
     255: base.BaseResp BaseResp
 }
 
@@ -200,7 +253,9 @@ struct UpdateEvaluationSetItemRequest {
     1: required i64 workspace_id (api.js_conv='true', go.tag='json:"workspace_id"'),
     2: required i64 evaluation_set_id (api.path='evaluation_set_id',api.js_conv='true', go.tag='json:"evaluation_set_id"'),
     3: required i64 item_id (api.path='item_id',api.js_conv='true', go.tag='json:"item_id"'),
-    5: optional list<eval_set.Turn> turns,  // 每轮对话
+    5: optional list<eval_set.Turn> turns,   // 每轮对话
+
+    10: optional list<dataset.FieldWriteOption> field_write_options (vt.elem.skip = "false")
 
     255: optional base.Base Base
 }
@@ -242,9 +297,10 @@ struct ListEvaluationSetItemsRequest {
     100: optional i32 page_number,
     101: optional i32 page_size,    // 分页大小 (0, 200]，默认为 20
     102: optional string page_token
-    103: optional list<common.OrderBy> order_bys,
+    103: optional list<common.OrderBy> order_bys, // 排列顺序，默认按照 updated_at 顺序排列，目前仅支持按照一个字段排序，该字段必须是 field key 或 item 元信息中的 created_at 或 updated_at
 
     200: optional list<i64> item_id_not_in (api.js_conv="true", go.tag='json:"item_id_not_in"')
+    201: optional filter.Filter filter // item 过滤条件
 
     255: optional base.Base Base
 }
@@ -254,6 +310,7 @@ struct ListEvaluationSetItemsResponse {
 
     100: optional i64 total (api.js_conv="true", go.tag='json:"total"'),
     101: optional string next_page_token
+    102: optional i64 filter_total (agw.js_conv = "str", go.tag='json:"filter_total"')
 
     255: base.BaseResp BaseResp
 }
@@ -299,29 +356,119 @@ struct ClearEvaluationSetDraftItemResponse {
     255: base.BaseResp BaseResp
 }
 
+struct GetEvaluationSetItemFieldRequest {
+    1: required i64 workspace_id (api.js_conv='true', go.tag='json:"workspace_id"'),
+    2: required i64 evaluation_set_id (api.path='evaluation_set_id',api.js_conv='true', go.tag='json:"evaluation_set_id"'),
+    3: required i64 item_pk (api.path='item_pk',api.js_conv='true', go.tag='json:"item_pk"'), // item 的主键ID，即 item.ID 这一字段
+    5: required string field_name // 列名
+    6: optional i64 turn_id (api.js_conv='true', go.tag='json:"turn_id"') // 当 item 为多轮时，必须提供
+    7: optional string field_key (api.query='field_key', go.tag='json:"field_key"') // 列的唯一键，用于精确查找；与 field_name 同时指定时，仅 field_key 生效
+
+    255: optional base.Base Base
+}
+
+struct GetEvaluationSetItemFieldResponse {
+    1: optional eval_set.FieldData field_data
+
+    255: optional base.BaseResp BaseResp
+}
+
+struct UploadAttachmentDetail {
+    1: optional dataset.ContentType content_type
+    2: optional string imagex_service_id              // 图片处理服务 id
+    // [20,50) 多模态信息. 根据 contentType 获取对应内容
+    20: optional common.Image origin_image   // contentType=Image，原始图片
+    21: optional common.Image image         // contentType=Image，上传后的图片
+    22: optional common.Audio origin_audio   // contentType=Audio，原始音频
+    23: optional common.Audio audio        // contentType=Audio. 上传后的音频
+    24: optional common.Video origin_video   // contentType=Video，原始视频
+    25: optional common.Video video        // contentType=Video. 上传后的视频
+    // 错误信息
+    101: optional dataset.ItemErrorType error_type // notice: 只返回图片相关的错误类型
+    102: optional string err_msg
+}
+
+struct ValidateEvaluationSetMultiPartDataRequest {
+    1: required i64 space_id (agw.js_conv = "str", vt.gt = "0")
+    2: optional list<string> preview_data (vt.min_size = "1") // 可以是包含特定格式的多模态数据或单一的 url 链接
+    3: optional dataset.MultiModalStoreOption store_option (vt.not_nil = "true") // 目前仅模态类型在当前接口有效
+
+    /*base*/
+    255: optional base.Base base
+}
+
+struct ValidateEvaluationSetMultiPartDataResponse {
+    1: optional list<UploadAttachmentDetail> attachment_urls_check_detail // 根据校验结果中是否包含错误，判断数据是否合法
+    255: optional base.BaseResp baseResp
+}
+
 service EvaluationSetService {
     // 基本信息管理
-    CreateEvaluationSetResponse CreateEvaluationSet(1: CreateEvaluationSetRequest req) (api.category="evaluation_set", api.post = "/api/evaluation/v1/evaluation_sets")
-    UpdateEvaluationSetResponse UpdateEvaluationSet(1: UpdateEvaluationSetRequest req) (api.category="evaluation_set", api.patch = "/api/evaluation/v1/evaluation_sets/:evaluation_set_id")
-    DeleteEvaluationSetResponse DeleteEvaluationSet(1: DeleteEvaluationSetRequest req) (api.category="evaluation_set", api.delete = "/api/evaluation/v1/evaluation_sets/:evaluation_set_id"),
-    GetEvaluationSetResponse GetEvaluationSet(1: GetEvaluationSetRequest req) (api.category="evaluation_set", api.get = "/api/evaluation/v1/evaluation_sets/:evaluation_set_id"),
-    ListEvaluationSetsResponse ListEvaluationSets(1: ListEvaluationSetsRequest req) (api.category="evaluation_set", api.post = "/api/evaluation/v1/evaluation_sets/list"),
+    CreateEvaluationSetResponse CreateEvaluationSet(1: CreateEvaluationSetRequest req) (
+        api.category="evaluation_set", api.post = "/api/evaluation/v1/evaluation_sets", api.op_type = 'create', api.tag = 'volc-agentkit,open'
+    )
+    UpdateEvaluationSetResponse UpdateEvaluationSet(1: UpdateEvaluationSetRequest req) (
+        api.category="evaluation_set", api.patch = "/api/evaluation/v1/evaluation_sets/:evaluation_set_id", api.op_type = 'update', api.tag = 'volc-agentkit,open'
+    )
+    DeleteEvaluationSetResponse DeleteEvaluationSet(1: DeleteEvaluationSetRequest req) (
+        api.category="evaluation_set", api.delete = "/api/evaluation/v1/evaluation_sets/:evaluation_set_id", api.op_type = 'delete', api.tag = 'volc-agentkit,open'
+    )
+    GetEvaluationSetResponse GetEvaluationSet(1: GetEvaluationSetRequest req) (
+        api.category="evaluation_set", api.get = "/api/evaluation/v1/evaluation_sets/:evaluation_set_id", api.op_type = 'query', api.tag = 'volc-agentkit,open'
+    )
+    ListEvaluationSetsResponse ListEvaluationSets(1: ListEvaluationSetsRequest req) (
+        api.category="evaluation_set", api.post = "/api/evaluation/v1/evaluation_sets/list", api.op_type = 'list', api.tag = 'volc-agentkit,open'
+    )
+    CreateEvaluationSetWithImportResponse CreateEvaluationSetWithImport(1: CreateEvaluationSetWithImportRequest req) (
+        api.category="evaluation_set", api.post = "/api/evaluation/v1/evaluation_sets/create_with_import", api.op_type = 'create', api.tag = 'volc-agentkit'
+    )
+    ParseImportSourceFileResponse ParseImportSourceFile(1: ParseImportSourceFileRequest req) (
+        api.category="evaluation_set", api.post = "/api/evaluation/v1/evaluation_sets/parse_import_source_file", api.op_type = 'query', api.tag = 'volc-agentkit'
+    )
 
     // 版本管理
-    CreateEvaluationSetVersionResponse CreateEvaluationSetVersion(1: CreateEvaluationSetVersionRequest req) (api.category="evaluation_set", api.post = "/api/evaluation/v1/evaluation_sets/:evaluation_set_id/versions"),
-    GetEvaluationSetVersionResponse GetEvaluationSetVersion(1: GetEvaluationSetVersionRequest req) (api.category="evaluation_set", api.get = "/api/evaluation/v1/evaluation_sets/:evaluation_set_id/versions/:version_id"),
-    ListEvaluationSetVersionsResponse ListEvaluationSetVersions(1: ListEvaluationSetVersionsRequest req) (api.category="evaluation_set", api.post = "/api/evaluation/v1/evaluation_sets/:evaluation_set_id/versions/list"),
-    BatchGetEvaluationSetVersionsResponse BatchGetEvaluationSetVersions(1: BatchGetEvaluationSetVersionsRequest req) (api.category="evaluation_set", api.post = "/api/evaluation/v1/evaluation_set_versions/batch_get"),
+    CreateEvaluationSetVersionResponse CreateEvaluationSetVersion(1: CreateEvaluationSetVersionRequest req) (
+        api.category="evaluation_set", api.post = "/api/evaluation/v1/evaluation_sets/:evaluation_set_id/versions", api.op_type = 'create', api.tag = 'volc-agentkit,open'
+    )
+    GetEvaluationSetVersionResponse GetEvaluationSetVersion(1: GetEvaluationSetVersionRequest req) (
+        api.category="evaluation_set", api.get = "/api/evaluation/v1/evaluation_sets/:evaluation_set_id/versions/:version_id", api.op_type = 'query', api.tag = 'volc-agentkit'
+    )
+    ListEvaluationSetVersionsResponse ListEvaluationSetVersions(1: ListEvaluationSetVersionsRequest req) (
+        api.category="evaluation_set", api.post = "/api/evaluation/v1/evaluation_sets/:evaluation_set_id/versions/list", api.op_type = 'list', api.tag = 'volc-agentkit,open'
+    )
+    BatchGetEvaluationSetVersionsResponse BatchGetEvaluationSetVersions(1: BatchGetEvaluationSetVersionsRequest req) (
+        api.category="evaluation_set", api.post = "/api/evaluation/v1/evaluation_set_versions/batch_get", api.op_type = 'query', api.tag = 'volc-agentkit'
+    )
 
     // 字段管理
-    UpdateEvaluationSetSchemaResponse UpdateEvaluationSetSchema(1: UpdateEvaluationSetSchemaRequest req) (api.category="evaluation_set", api.put = "/api/evaluation/v1/evaluation_sets/:evaluation_set_id/schema"),
+    UpdateEvaluationSetSchemaResponse UpdateEvaluationSetSchema(1: UpdateEvaluationSetSchemaRequest req) (
+        api.category="evaluation_set", api.put = "/api/evaluation/v1/evaluation_sets/:evaluation_set_id/schema", api.op_type = 'update', api.tag = 'volc-agentkit,open'
+    )
 
     // 数据管理
-    BatchCreateEvaluationSetItemsResponse BatchCreateEvaluationSetItems(1: BatchCreateEvaluationSetItemsRequest req) (api.category="evaluation_set", api.post = "/api/evaluation/v1/evaluation_sets/:evaluation_set_id/items/batch_create")
-    UpdateEvaluationSetItemResponse UpdateEvaluationSetItem(1: UpdateEvaluationSetItemRequest req) (api.category="evaluation_set", api.put = "/api/evaluation/v1/evaluation_sets/:evaluation_set_id/items/:item_id")
-    BatchDeleteEvaluationSetItemsResponse BatchDeleteEvaluationSetItems(1: BatchDeleteEvaluationSetItemsRequest req) (api.category="evaluation_set", api.post = "/api/evaluation/v1/evaluation_sets/:evaluation_set_id/items/batch_delete")
-    ListEvaluationSetItemsResponse ListEvaluationSetItems(1: ListEvaluationSetItemsRequest req) (api.category="evaluation_set", api.post = "/api/evaluation/v1/evaluation_sets/:evaluation_set_id/items/list")
-    BatchGetEvaluationSetItemsResponse BatchGetEvaluationSetItems(1: BatchGetEvaluationSetItemsRequest req) (api.category="evaluation_set", api.post = "/api/evaluation/v1/evaluation_sets/:evaluation_set_id/items/batch_get")
-    ClearEvaluationSetDraftItemResponse ClearEvaluationSetDraftItem(1: ClearEvaluationSetDraftItemRequest req) (api.category="evaluation_set", api.post = "/api/evaluation/v1/evaluation_sets/:evaluation_set_id/items/clear")
+    BatchCreateEvaluationSetItemsResponse BatchCreateEvaluationSetItems(1: BatchCreateEvaluationSetItemsRequest req) (
+        api.category="evaluation_set", api.post = "/api/evaluation/v1/evaluation_sets/:evaluation_set_id/items/batch_create", api.op_type = 'create', api.tag = 'volc-agentkit,open'
+    )
+    UpdateEvaluationSetItemResponse UpdateEvaluationSetItem(1: UpdateEvaluationSetItemRequest req) (
+        api.category="evaluation_set", api.put = "/api/evaluation/v1/evaluation_sets/:evaluation_set_id/items/:item_id", api.op_type = 'update', api.tag = 'volc-agentkit,open'
+    )
+    BatchDeleteEvaluationSetItemsResponse BatchDeleteEvaluationSetItems(1: BatchDeleteEvaluationSetItemsRequest req) (
+        api.category="evaluation_set", api.post = "/api/evaluation/v1/evaluation_sets/:evaluation_set_id/items/batch_delete", api.op_type = 'delete', api.tag = 'volc-agentkit,open'
+    )
+    ListEvaluationSetItemsResponse ListEvaluationSetItems(1: ListEvaluationSetItemsRequest req) (
+        api.category="evaluation_set", api.post = "/api/evaluation/v1/evaluation_sets/:evaluation_set_id/items/list", api.op_type = 'list', api.tag = 'volc-agentkit,open'
+    )
+    BatchGetEvaluationSetItemsResponse BatchGetEvaluationSetItems(1: BatchGetEvaluationSetItemsRequest req) (
+        api.category="evaluation_set", api.post = "/api/evaluation/v1/evaluation_sets/:evaluation_set_id/items/batch_get", api.op_type = 'query', api.tag = 'volc-agentkit'
+    )
+    ClearEvaluationSetDraftItemResponse ClearEvaluationSetDraftItem(1: ClearEvaluationSetDraftItemRequest req) (
+        api.category="evaluation_set", api.post = "/api/evaluation/v1/evaluation_sets/:evaluation_set_id/items/clear", api.op_type = 'update', api.tag = 'volc-agentkit'
+    )
+    GetEvaluationSetItemFieldResponse GetEvaluationSetItemField(1: GetEvaluationSetItemFieldRequest req) (
+        api.category="evaluation_set", api.get = "/api/evaluation/v1/evaluation_sets/:evaluation_set_id/items/:item_pk/field", api.op_type = 'query', api.tag = 'volc-agentkit,open'
+    )
+    ValidateEvaluationSetMultiPartDataResponse ValidateEvaluationSetMultiPartData(1: ValidateEvaluationSetMultiPartDataRequest req) (
+        api.category="evaluation_set", api.post = "/api/evaluation/v1/evaluation_sets/multi_part_data/validate", api.op_type = 'query', api.tag = 'volc-agentkit,open'
+    )
 }
 

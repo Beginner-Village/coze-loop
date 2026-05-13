@@ -22,15 +22,28 @@ type Client interface {
 	ListEvaluatorVersions(ctx context.Context, request *evaluator.ListEvaluatorVersionsRequest, callOptions ...callopt.Option) (r *evaluator.ListEvaluatorVersionsResponse, err error)
 	GetEvaluatorVersion(ctx context.Context, request *evaluator.GetEvaluatorVersionRequest, callOptions ...callopt.Option) (r *evaluator.GetEvaluatorVersionResponse, err error)
 	BatchGetEvaluatorVersions(ctx context.Context, request *evaluator.BatchGetEvaluatorVersionsRequest, callOptions ...callopt.Option) (r *evaluator.BatchGetEvaluatorVersionsResponse, err error)
+	BatchGetEvaluatorVersionIDs(ctx context.Context, request *evaluator.BatchGetEvaluatorVersionIDsRequest, callOptions ...callopt.Option) (r *evaluator.BatchGetEvaluatorVersionIDsResponse, err error)
 	SubmitEvaluatorVersion(ctx context.Context, request *evaluator.SubmitEvaluatorVersionRequest, callOptions ...callopt.Option) (r *evaluator.SubmitEvaluatorVersionResponse, err error)
 	ListTemplates(ctx context.Context, request *evaluator.ListTemplatesRequest, callOptions ...callopt.Option) (r *evaluator.ListTemplatesResponse, err error)
 	GetTemplateInfo(ctx context.Context, request *evaluator.GetTemplateInfoRequest, callOptions ...callopt.Option) (r *evaluator.GetTemplateInfoResponse, err error)
 	GetDefaultPromptEvaluatorTools(ctx context.Context, req *evaluator.GetDefaultPromptEvaluatorToolsRequest, callOptions ...callopt.Option) (r *evaluator.GetDefaultPromptEvaluatorToolsResponse, err error)
 	RunEvaluator(ctx context.Context, req *evaluator.RunEvaluatorRequest, callOptions ...callopt.Option) (r *evaluator.RunEvaluatorResponse, err error)
 	DebugEvaluator(ctx context.Context, req *evaluator.DebugEvaluatorRequest, callOptions ...callopt.Option) (r *evaluator.DebugEvaluatorResponse, err error)
+	BatchDebugEvaluator(ctx context.Context, req *evaluator.BatchDebugEvaluatorRequest, callOptions ...callopt.Option) (r *evaluator.BatchDebugEvaluatorResponse, err error)
+	AsyncRunEvaluator(ctx context.Context, req *evaluator.AsyncRunEvaluatorRequest, callOptions ...callopt.Option) (r *evaluator.AsyncRunEvaluatorResponse, err error)
+	AsyncDebugEvaluator(ctx context.Context, req *evaluator.AsyncDebugEvaluatorRequest, callOptions ...callopt.Option) (r *evaluator.AsyncDebugEvaluatorResponse, err error)
 	UpdateEvaluatorRecord(ctx context.Context, req *evaluator.UpdateEvaluatorRecordRequest, callOptions ...callopt.Option) (r *evaluator.UpdateEvaluatorRecordResponse, err error)
 	GetEvaluatorRecord(ctx context.Context, req *evaluator.GetEvaluatorRecordRequest, callOptions ...callopt.Option) (r *evaluator.GetEvaluatorRecordResponse, err error)
 	BatchGetEvaluatorRecords(ctx context.Context, req *evaluator.BatchGetEvaluatorRecordsRequest, callOptions ...callopt.Option) (r *evaluator.BatchGetEvaluatorRecordsResponse, err error)
+	ValidateEvaluator(ctx context.Context, request *evaluator.ValidateEvaluatorRequest, callOptions ...callopt.Option) (r *evaluator.ValidateEvaluatorResponse, err error)
+	ListTemplatesV2(ctx context.Context, request *evaluator.ListTemplatesV2Request, callOptions ...callopt.Option) (r *evaluator.ListTemplatesV2Response, err error)
+	GetTemplateV2(ctx context.Context, request *evaluator.GetTemplateV2Request, callOptions ...callopt.Option) (r *evaluator.GetTemplateV2Response, err error)
+	CreateEvaluatorTemplate(ctx context.Context, request *evaluator.CreateEvaluatorTemplateRequest, callOptions ...callopt.Option) (r *evaluator.CreateEvaluatorTemplateResponse, err error)
+	UpdateEvaluatorTemplate(ctx context.Context, request *evaluator.UpdateEvaluatorTemplateRequest, callOptions ...callopt.Option) (r *evaluator.UpdateEvaluatorTemplateResponse, err error)
+	DeleteEvaluatorTemplate(ctx context.Context, request *evaluator.DeleteEvaluatorTemplateRequest, callOptions ...callopt.Option) (r *evaluator.DeleteEvaluatorTemplateResponse, err error)
+	DebugBuiltinEvaluator(ctx context.Context, req *evaluator.DebugBuiltinEvaluatorRequest, callOptions ...callopt.Option) (r *evaluator.DebugBuiltinEvaluatorResponse, err error)
+	UpdateBuiltinEvaluatorTags(ctx context.Context, req *evaluator.UpdateBuiltinEvaluatorTagsRequest, callOptions ...callopt.Option) (r *evaluator.UpdateBuiltinEvaluatorTagsResponse, err error)
+	ListEvaluatorTags(ctx context.Context, req *evaluator.ListEvaluatorTagsRequest, callOptions ...callopt.Option) (r *evaluator.ListEvaluatorTagsResponse, err error)
 }
 
 // NewClient creates a client for the service defined in IDL.
@@ -117,6 +130,11 @@ func (p *kEvaluatorServiceClient) BatchGetEvaluatorVersions(ctx context.Context,
 	return p.kClient.BatchGetEvaluatorVersions(ctx, request)
 }
 
+func (p *kEvaluatorServiceClient) BatchGetEvaluatorVersionIDs(ctx context.Context, request *evaluator.BatchGetEvaluatorVersionIDsRequest, callOptions ...callopt.Option) (r *evaluator.BatchGetEvaluatorVersionIDsResponse, err error) {
+	ctx = client.NewCtxWithCallOptions(ctx, callOptions)
+	return p.kClient.BatchGetEvaluatorVersionIDs(ctx, request)
+}
+
 func (p *kEvaluatorServiceClient) SubmitEvaluatorVersion(ctx context.Context, request *evaluator.SubmitEvaluatorVersionRequest, callOptions ...callopt.Option) (r *evaluator.SubmitEvaluatorVersionResponse, err error) {
 	ctx = client.NewCtxWithCallOptions(ctx, callOptions)
 	return p.kClient.SubmitEvaluatorVersion(ctx, request)
@@ -147,6 +165,21 @@ func (p *kEvaluatorServiceClient) DebugEvaluator(ctx context.Context, req *evalu
 	return p.kClient.DebugEvaluator(ctx, req)
 }
 
+func (p *kEvaluatorServiceClient) BatchDebugEvaluator(ctx context.Context, req *evaluator.BatchDebugEvaluatorRequest, callOptions ...callopt.Option) (r *evaluator.BatchDebugEvaluatorResponse, err error) {
+	ctx = client.NewCtxWithCallOptions(ctx, callOptions)
+	return p.kClient.BatchDebugEvaluator(ctx, req)
+}
+
+func (p *kEvaluatorServiceClient) AsyncRunEvaluator(ctx context.Context, req *evaluator.AsyncRunEvaluatorRequest, callOptions ...callopt.Option) (r *evaluator.AsyncRunEvaluatorResponse, err error) {
+	ctx = client.NewCtxWithCallOptions(ctx, callOptions)
+	return p.kClient.AsyncRunEvaluator(ctx, req)
+}
+
+func (p *kEvaluatorServiceClient) AsyncDebugEvaluator(ctx context.Context, req *evaluator.AsyncDebugEvaluatorRequest, callOptions ...callopt.Option) (r *evaluator.AsyncDebugEvaluatorResponse, err error) {
+	ctx = client.NewCtxWithCallOptions(ctx, callOptions)
+	return p.kClient.AsyncDebugEvaluator(ctx, req)
+}
+
 func (p *kEvaluatorServiceClient) UpdateEvaluatorRecord(ctx context.Context, req *evaluator.UpdateEvaluatorRecordRequest, callOptions ...callopt.Option) (r *evaluator.UpdateEvaluatorRecordResponse, err error) {
 	ctx = client.NewCtxWithCallOptions(ctx, callOptions)
 	return p.kClient.UpdateEvaluatorRecord(ctx, req)
@@ -160,4 +193,49 @@ func (p *kEvaluatorServiceClient) GetEvaluatorRecord(ctx context.Context, req *e
 func (p *kEvaluatorServiceClient) BatchGetEvaluatorRecords(ctx context.Context, req *evaluator.BatchGetEvaluatorRecordsRequest, callOptions ...callopt.Option) (r *evaluator.BatchGetEvaluatorRecordsResponse, err error) {
 	ctx = client.NewCtxWithCallOptions(ctx, callOptions)
 	return p.kClient.BatchGetEvaluatorRecords(ctx, req)
+}
+
+func (p *kEvaluatorServiceClient) ValidateEvaluator(ctx context.Context, request *evaluator.ValidateEvaluatorRequest, callOptions ...callopt.Option) (r *evaluator.ValidateEvaluatorResponse, err error) {
+	ctx = client.NewCtxWithCallOptions(ctx, callOptions)
+	return p.kClient.ValidateEvaluator(ctx, request)
+}
+
+func (p *kEvaluatorServiceClient) ListTemplatesV2(ctx context.Context, request *evaluator.ListTemplatesV2Request, callOptions ...callopt.Option) (r *evaluator.ListTemplatesV2Response, err error) {
+	ctx = client.NewCtxWithCallOptions(ctx, callOptions)
+	return p.kClient.ListTemplatesV2(ctx, request)
+}
+
+func (p *kEvaluatorServiceClient) GetTemplateV2(ctx context.Context, request *evaluator.GetTemplateV2Request, callOptions ...callopt.Option) (r *evaluator.GetTemplateV2Response, err error) {
+	ctx = client.NewCtxWithCallOptions(ctx, callOptions)
+	return p.kClient.GetTemplateV2(ctx, request)
+}
+
+func (p *kEvaluatorServiceClient) CreateEvaluatorTemplate(ctx context.Context, request *evaluator.CreateEvaluatorTemplateRequest, callOptions ...callopt.Option) (r *evaluator.CreateEvaluatorTemplateResponse, err error) {
+	ctx = client.NewCtxWithCallOptions(ctx, callOptions)
+	return p.kClient.CreateEvaluatorTemplate(ctx, request)
+}
+
+func (p *kEvaluatorServiceClient) UpdateEvaluatorTemplate(ctx context.Context, request *evaluator.UpdateEvaluatorTemplateRequest, callOptions ...callopt.Option) (r *evaluator.UpdateEvaluatorTemplateResponse, err error) {
+	ctx = client.NewCtxWithCallOptions(ctx, callOptions)
+	return p.kClient.UpdateEvaluatorTemplate(ctx, request)
+}
+
+func (p *kEvaluatorServiceClient) DeleteEvaluatorTemplate(ctx context.Context, request *evaluator.DeleteEvaluatorTemplateRequest, callOptions ...callopt.Option) (r *evaluator.DeleteEvaluatorTemplateResponse, err error) {
+	ctx = client.NewCtxWithCallOptions(ctx, callOptions)
+	return p.kClient.DeleteEvaluatorTemplate(ctx, request)
+}
+
+func (p *kEvaluatorServiceClient) DebugBuiltinEvaluator(ctx context.Context, req *evaluator.DebugBuiltinEvaluatorRequest, callOptions ...callopt.Option) (r *evaluator.DebugBuiltinEvaluatorResponse, err error) {
+	ctx = client.NewCtxWithCallOptions(ctx, callOptions)
+	return p.kClient.DebugBuiltinEvaluator(ctx, req)
+}
+
+func (p *kEvaluatorServiceClient) UpdateBuiltinEvaluatorTags(ctx context.Context, req *evaluator.UpdateBuiltinEvaluatorTagsRequest, callOptions ...callopt.Option) (r *evaluator.UpdateBuiltinEvaluatorTagsResponse, err error) {
+	ctx = client.NewCtxWithCallOptions(ctx, callOptions)
+	return p.kClient.UpdateBuiltinEvaluatorTags(ctx, req)
+}
+
+func (p *kEvaluatorServiceClient) ListEvaluatorTags(ctx context.Context, req *evaluator.ListEvaluatorTagsRequest, callOptions ...callopt.Option) (r *evaluator.ListEvaluatorTagsResponse, err error) {
+	ctx = client.NewCtxWithCallOptions(ctx, callOptions)
+	return p.kClient.ListEvaluatorTags(ctx, req)
 }

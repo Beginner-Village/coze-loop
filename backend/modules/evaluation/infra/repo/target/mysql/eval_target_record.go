@@ -15,12 +15,16 @@ import (
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/pkg/contexts"
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/pkg/errno"
 	"github.com/coze-dev/coze-loop/backend/pkg/errorx"
+	"github.com/coze-dev/coze-loop/backend/pkg/json"
 )
 
 //go:generate mockgen -destination=mocks/eval_target_record.go -package=mocks . EvalTargetRecordDAO
 type EvalTargetRecordDAO interface {
 	Create(ctx context.Context, record *model.TargetRecord) (id int64, err error)
-	GetByIDAndSpaceID(ctx context.Context, recordID int64, spaceID int64) (*model.TargetRecord, error)
+	Save(ctx context.Context, record *model.TargetRecord) error
+	Update(ctx context.Context, record *model.TargetRecord) error
+	GetByIDAndSpaceID(ctx context.Context, recordID, spaceID int64) (*model.TargetRecord, error)
+	GetByRunIDItemIDTurnID(ctx context.Context, spaceID, runID, itemID, turnID int64) (*model.TargetRecord, error)
 	ListByIDsAndSpaceID(ctx context.Context, recordIDs []int64, spaceID int64) ([]*model.TargetRecord, error)
 }
 
@@ -29,8 +33,22 @@ type EvalTargetRecordDAOImpl struct {
 	query *query.Query
 }
 
+func (e *EvalTargetRecordDAOImpl) Update(ctx context.Context, record *model.TargetRecord) error {
+	if err := e.db.NewSession(ctx).Model(&model.TargetRecord{}).Where("id = ?", record.ID).Updates(record).Error; err != nil {
+		return errorx.Wrapf(err, "TargetRecord update fail, id: %v, updated: %v", record.ID, json.Jsonify(record))
+	}
+	return nil
+}
+
 func NewEvalTargetRecordDAO(db db.Provider) EvalTargetRecordDAO {
 	return &EvalTargetRecordDAOImpl{db: db, query: query.Use(db.NewSession(context.Background()))}
+}
+
+func (e *EvalTargetRecordDAOImpl) Save(ctx context.Context, record *model.TargetRecord) error {
+	if err := e.db.NewSession(ctx).Save(record).Error; err != nil {
+		return errorx.WrapByCode(err, errno.CommonMySqlErrorCode)
+	}
+	return nil
 }
 
 func (e *EvalTargetRecordDAOImpl) Create(ctx context.Context, record *model.TargetRecord) (id int64, err error) {
@@ -42,9 +60,29 @@ func (e *EvalTargetRecordDAOImpl) Create(ctx context.Context, record *model.Targ
 	return record.ID, nil
 }
 
-func (e *EvalTargetRecordDAOImpl) GetByIDAndSpaceID(ctx context.Context, recordID int64, spaceID int64) (*model.TargetRecord, error) {
+func (e *EvalTargetRecordDAOImpl) GetByIDAndSpaceID(ctx context.Context, recordID, spaceID int64) (*model.TargetRecord, error) {
 	q := e.query
 	first, err := q.WithContext(ctx).TargetRecord.Where(q.TargetRecord.SpaceID.Eq(spaceID), q.TargetRecord.ID.Eq(recordID), q.TargetRecord.DeletedAt.IsNull()).First()
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, errorx.WrapByCode(err, errno.CommonMySqlErrorCode)
+	}
+
+	return first, nil
+}
+
+func (e *EvalTargetRecordDAOImpl) GetByRunIDItemIDTurnID(ctx context.Context, spaceID, runID, itemID, turnID int64) (*model.TargetRecord, error) {
+	q := e.query
+	first, err := q.WithContext(ctx).TargetRecord.Where(
+		q.TargetRecord.SpaceID.Eq(spaceID),
+		q.TargetRecord.ExperimentRunID.Eq(runID),
+		q.TargetRecord.ItemID.Eq(itemID),
+		q.TargetRecord.TurnID.Eq(turnID),
+		q.TargetRecord.DeletedAt.IsNull(),
+	).First()
 
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil

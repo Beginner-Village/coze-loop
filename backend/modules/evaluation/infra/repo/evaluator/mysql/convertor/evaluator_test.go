@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bytedance/gg/gptr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -98,7 +99,7 @@ func TestConvertEvaluatorVersionPO2DO(t *testing.T) {
 						},
 					},
 					ModelConfig: &evaluatordo.ModelConfig{
-						ModelID:     12345,
+						ModelID:     gptr.Of(int64(12345)),
 						ModelName:   "test-model",
 						Temperature: ptr.Of(float64(0.7)),
 						MaxTokens:   ptr.Of(int32(1000)),
@@ -282,7 +283,7 @@ func TestConvertEvaluatorVersionPO2DO(t *testing.T) {
 						},
 					},
 					ModelConfig: &evaluatordo.ModelConfig{
-						ModelID:     1749615085,
+						ModelID:     gptr.Of(int64(1749615085)),
 						ModelName:   "豆包·1.6·深度思考",
 						MaxTokens:   ptr.Of(int32(4096)),
 						Temperature: ptr.Of(float64(0.1)),
@@ -365,7 +366,7 @@ func TestConvertEvaluatorVersionPO2DO(t *testing.T) {
 					// 验证 ModelConfig
 					if tt.want.PromptEvaluatorVersion.ModelConfig != nil {
 						require.NotNil(t, got.PromptEvaluatorVersion.ModelConfig)
-						assert.Equal(t, tt.want.PromptEvaluatorVersion.ModelConfig.ModelID, got.PromptEvaluatorVersion.ModelConfig.ModelID)
+						assert.Equal(t, tt.want.PromptEvaluatorVersion.ModelConfig.GetModelID(), got.PromptEvaluatorVersion.ModelConfig.GetModelID())
 						assert.Equal(t, tt.want.PromptEvaluatorVersion.ModelConfig.ModelName, got.PromptEvaluatorVersion.ModelConfig.ModelName)
 						if tt.want.PromptEvaluatorVersion.ModelConfig.Temperature != nil {
 							assert.Equal(t, *tt.want.PromptEvaluatorVersion.ModelConfig.Temperature, *got.PromptEvaluatorVersion.ModelConfig.Temperature)
@@ -418,18 +419,17 @@ func TestConvertEvaluatorVersionPO2DO(t *testing.T) {
 			}
 
 			// 验证基础信息字段
-			require.NotNil(t, got.GetEvaluatorVersion())
-			assert.Equal(t, tt.po.ID, got.GetEvaluatorVersion().GetID())
-			assert.Equal(t, tt.po.Version, got.GetEvaluatorVersion().GetVersion())
-			assert.Equal(t, tt.po.SpaceID, got.GetEvaluatorVersion().GetSpaceID())
-			assert.Equal(t, tt.po.EvaluatorID, got.GetEvaluatorVersion().GetEvaluatorID())
+			assert.Equal(t, tt.po.ID, got.GetEvaluatorVersionID())
+			assert.Equal(t, tt.po.Version, got.GetVersion())
+			assert.Equal(t, tt.po.SpaceID, got.GetSpaceID())
+			assert.Equal(t, tt.po.EvaluatorID, got.GetEvaluatorID())
 
 			if tt.po.Description != nil {
-				assert.Equal(t, *tt.po.Description, got.GetEvaluatorVersion().GetDescription())
+				assert.Equal(t, *tt.po.Description, got.GetEvaluatorVersionDescription())
 			}
 
 			// 验证 BaseInfo
-			baseInfo := got.GetEvaluatorVersion().GetBaseInfo()
+			baseInfo := got.GetBaseInfo()
 			require.NotNil(t, baseInfo)
 			assert.Equal(t, tt.po.CreatedBy, *baseInfo.CreatedBy.UserID)
 			assert.Equal(t, tt.po.UpdatedBy, *baseInfo.UpdatedBy.UserID)

@@ -6,10 +6,12 @@ package producer
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/bytedance/gg/gptr"
+	"github.com/mohae/deepcopy"
 	"github.com/samber/lo"
 
 	"github.com/coze-dev/coze-loop/backend/infra/mq"
@@ -21,6 +23,11 @@ import (
 	"github.com/coze-dev/coze-loop/backend/pkg/errorx"
 	"github.com/coze-dev/coze-loop/backend/pkg/json"
 	"github.com/coze-dev/coze-loop/backend/pkg/logs"
+)
+
+const (
+	CtxKeyEnv = "K_ENV"
+	XttEnv    = "x_tt_env"
 )
 
 var (
@@ -52,11 +59,16 @@ func newExptEventPublisher(ctx context.Context, cfgFactory conf.IConfigLoaderFac
 		rocket.ExptOnlineEvalResultRMQKey,
 		rocket.ExptTurnResultFilterRMQKey,
 		rocket.ExptExportCSVEventRMQKey,
+		rocket.ExptLifecycleEventRMQKey,
 	} {
 		p := &producer{}
 
 		if err := loader.UnmarshalKey(ctx, key, &p.cfg); err != nil {
 			return nil, err
+		}
+
+		if gptr.Indirect(p.cfg.DisableProduce) {
+			continue
 		}
 
 		if !p.cfg.Valid() {
@@ -107,7 +119,13 @@ func (e *exptEventPublisher) PublishExptScheduleEvent(ctx context.Context, event
 	return e.batchSend(ctx, rocket.ExptScheduleEventRMQKey, []any{event}, duration)
 }
 
-func (e *exptEventPublisher) PublishExptRecordEvalEvent(ctx context.Context, event *entity.ExptItemEvalEvent, duration *time.Duration) error {
+func (e *exptEventPublisher) PublishExptRecordEvalEvent(ctx context.Context, event *entity.ExptItemEvalEvent, duration *time.Duration, modifyFunc func(event *entity.ExptItemEvalEvent)) error {
+	if copied, ok := deepcopy.Copy(event).(*entity.ExptItemEvalEvent); ok {
+		if modifyFunc != nil {
+			modifyFunc(copied)
+		}
+		event = copied
+	}
 	return e.batchSend(ctx, rocket.ExptRecordEvalEventRMQKey, []any{event}, duration)
 }
 
@@ -139,6 +157,10 @@ func (e *exptEventPublisher) PublishExptTurnResultFilterEvent(ctx context.Contex
 	return e.batchSend(ctx, rocket.ExptTurnResultFilterRMQKey, []any{event}, duration)
 }
 
+func (e *exptEventPublisher) PublishExptLifecycleEvent(ctx context.Context, event *entity.ExptLifecycleEvent, duration *time.Duration) error {
+	return e.batchSend(ctx, rocket.ExptLifecycleEventRMQKey, []any{event}, duration)
+}
+
 func (e *exptEventPublisher) batchSend(ctx context.Context, pk string, events []any, duration *time.Duration) error {
 	p, ok := e.producers[pk]
 	if !ok {
@@ -160,12 +182,14 @@ func (e *exptEventPublisher) batchSend(ctx context.Context, pk string, events []
 		}
 		msgs = append(msgs, msg)
 	}
-
+	if env := os.Getenv(XttEnv); env != "" {
+		ctx = context.WithValue(ctx, CtxKeyEnv, env) //nolint:staticcheck
+	}
 	resp, err := p.p.SendBatch(ctx, msgs)
 	if err != nil {
-		return errorx.Wrapf(err, "send batch message fail, msgs: %v", json.Jsonify(msgs))
+		return errorx.Wrapf(err, "send batch message fail, producer_key: %v, msgs: %v", pk, json.Jsonify(msgs))
 	}
 
-	logs.CtxInfo(ctx, "expt event batch send success, message_id: %v, offset: %v", resp.MessageID, resp.Offset)
+	logs.CtxInfo(ctx, "expt event batch send success, producer_key: %v, message_id: %v, offset: %v", pk, resp.MessageID, resp.Offset)
 	return nil
 }

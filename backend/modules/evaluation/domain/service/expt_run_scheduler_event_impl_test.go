@@ -98,13 +98,13 @@ func TestExptSchedulerImpl_Schedule(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		prepareMock func(f *fields, ctrl *gomock.Controller, args args) // 修改点：添加 ctrl 参数
+		prepareMock func(f *fields, ctrl *gomock.Controller, args args) // Modification: add ctrl parameter
 		args        args
 		wantErr     bool
 		assertErr   func(t *testing.T, err error)
 	}{
 		{
-			name: "正常流程-全部成功",
+			name: "Normal flow - all success",
 			args: args{
 				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
 				event: &entity.ExptScheduleEvent{
@@ -113,14 +113,24 @@ func TestExptSchedulerImpl_Schedule(t *testing.T) {
 					SpaceID:     3,
 					ExptRunMode: 1,
 					Session:     &entity.Session{UserID: testUserID},
+					CreatedAt:   time.Now().Unix(),
 				},
 			},
-			prepareMock: func(f *fields, ctrl *gomock.Controller, args args) { // 修改点：添加 ctrl 参数
+			prepareMock: func(f *fields, ctrl *gomock.Controller, args args) { // Modification: add ctrl parameter
+				f.configer.EXPECT().GetSchedulerAbortCtrl(gomock.Any()).Return(&entity.SchedulerAbortCtrl{}).AnyTimes()
 				f.manager.EXPECT().GetDetail(gomock.Any(), int64(1), int64(3), args.event.Session).Return(mockExpt, nil).Times(1)
 				f.manager.EXPECT().GetRunLog(gomock.Any(), int64(1), int64(2), int64(3), args.event.Session).Return(&entity.ExptRunLog{}, nil).Times(1)
 				f.mutex.EXPECT().LockWithRenew(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(true, args.ctx, func() {}, nil).Times(1)
-				f.configer.EXPECT().GetExptExecConf(gomock.Any(), int64(3)).Return(&entity.ExptExecConf{ZombieIntervalSecond: math.MaxInt}).AnyTimes()
-				f.configer.EXPECT().GetConsumerConf(gomock.Any()).Return(&entity.ExptConsumerConf{}).AnyTimes()
+				f.mutex.EXPECT().Unlock(gomock.Any()).Return(true, nil).AnyTimes()
+				f.configer.EXPECT().GetExptExecConf(gomock.Any(), int64(3)).Return(&entity.ExptExecConf{
+					ZombieIntervalSecond: math.MaxInt,
+					ExptItemEvalConf:     &entity.ExptItemEvalConf{},
+				}).AnyTimes()
+				f.configer.EXPECT().GetConsumerConf(gomock.Any()).Return(&entity.ExptConsumerConf{
+					ExptExecConf: &entity.ExptExecConf{
+						ExptItemEvalConf: &entity.ExptItemEvalConf{},
+					},
+				}).AnyTimes()
 				f.idGen.EXPECT().GenMultiIDs(gomock.Any(), gomock.Any()).Return([]int64{1, 2, 3}, nil).AnyTimes()
 				f.publisher.EXPECT().PublishExptTurnResultFilterEvent(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 				f.resultSvc.EXPECT().UpsertExptTurnResultFilter(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
@@ -128,14 +138,13 @@ func TestExptSchedulerImpl_Schedule(t *testing.T) {
 				mode := entitymocks.NewMockExptSchedulerMode(ctrl)
 				mode.EXPECT().ExptStart(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
 				mode.EXPECT().ExptEnd(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(false, nil).Times(1)
-				mode.EXPECT().NextTick(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
 				mode.EXPECT().ScheduleStart(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
 				mode.EXPECT().ScanEvalItems(gomock.Any(), gomock.Any(), gomock.Any()).Return([]*entity.ExptEvalItem{}, []*entity.ExptEvalItem{}, []*entity.ExptEvalItem{}, nil).Times(1)
-				mode.EXPECT().ScheduleEnd(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				mode.EXPECT().PublishResult(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 				f.schedulerModeFactory.EXPECT().
 					NewSchedulerMode(gomock.Any()).
 					Return(mode, nil).Times(1)
-				// 由于 mode 是内部 new 的，实际测试时需用 interface 替换或注入
+				// Since mode is newed internally, interface substitution or injection is needed for actual testing
 			},
 			wantErr: false,
 			assertErr: func(t *testing.T, err error) {
@@ -143,7 +152,7 @@ func TestExptSchedulerImpl_Schedule(t *testing.T) {
 			},
 		},
 		{
-			name: "实验报错",
+			name: "Experiment error",
 			args: args{
 				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
 				event: &entity.ExptScheduleEvent{
@@ -152,28 +161,39 @@ func TestExptSchedulerImpl_Schedule(t *testing.T) {
 					SpaceID:     3,
 					ExptRunMode: 1,
 					Session:     &entity.Session{UserID: testUserID},
+					CreatedAt:   time.Now().Unix(),
 				},
 			},
-			prepareMock: func(f *fields, ctrl *gomock.Controller, args args) { // 修改点：添加 ctrl 参数
+			prepareMock: func(f *fields, ctrl *gomock.Controller, args args) { // Modification: add ctrl parameter
+				f.configer.EXPECT().GetSchedulerAbortCtrl(gomock.Any()).Return(&entity.SchedulerAbortCtrl{}).AnyTimes()
 				f.manager.EXPECT().GetDetail(gomock.Any(), int64(1), int64(3), args.event.Session).Return(mockExpt, nil).Times(1)
 				f.manager.EXPECT().GetRunLog(gomock.Any(), int64(1), int64(2), int64(3), args.event.Session).Return(&entity.ExptRunLog{}, nil).Times(1)
 				f.mutex.EXPECT().LockWithRenew(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(true, args.ctx, func() {}, nil).Times(1)
-				f.configer.EXPECT().GetExptExecConf(gomock.Any(), int64(3)).Return(&entity.ExptExecConf{ZombieIntervalSecond: math.MaxInt}).AnyTimes()
-				f.configer.EXPECT().GetConsumerConf(gomock.Any()).Return(&entity.ExptConsumerConf{}).AnyTimes()
+				f.mutex.EXPECT().Unlock(gomock.Any()).Return(true, nil).AnyTimes()
+				f.configer.EXPECT().GetExptExecConf(gomock.Any(), int64(3)).Return(&entity.ExptExecConf{
+					ZombieIntervalSecond: math.MaxInt,
+					ExptItemEvalConf:     &entity.ExptItemEvalConf{},
+				}).AnyTimes()
+				f.configer.EXPECT().GetConsumerConf(gomock.Any()).Return(&entity.ExptConsumerConf{
+					ExptExecConf: &entity.ExptExecConf{
+						ExptItemEvalConf: &entity.ExptItemEvalConf{},
+					},
+				}).AnyTimes()
 				f.idGen.EXPECT().GenMultiIDs(gomock.Any(), gomock.Any()).Return([]int64{1, 2, 3}, nil).AnyTimes()
-				f.manager.EXPECT().CompleteRun(gomock.Any(), int64(1), int64(2), gomock.Any(), gomock.Any(), args.event.Session, gomock.Any()).Return(nil).Times(1)
-				f.manager.EXPECT().CompleteExpt(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.manager.EXPECT().CompleteRun(gomock.Any(), int64(1), int64(2), int64(3), args.event.Session, gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.manager.EXPECT().CompleteExpt(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
 				mode := entitymocks.NewMockExptSchedulerMode(ctrl)
 				mode.EXPECT().ExptStart(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
 				mode.EXPECT().ScheduleStart(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
 				mode.EXPECT().ScanEvalItems(gomock.Any(), gomock.Any(), gomock.Any()).Return([]*entity.ExptEvalItem{}, []*entity.ExptEvalItem{}, []*entity.ExptEvalItem{}, nil).Times(1)
-				mode.EXPECT().ScheduleEnd(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("test error")).Times(1)
+				mode.EXPECT().ExptEnd(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(false, errors.New("test error")).Times(1)
+				mode.EXPECT().PublishResult(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 				f.publisher.EXPECT().PublishExptTurnResultFilterEvent(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 				f.resultSvc.EXPECT().UpsertExptTurnResultFilter(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 				f.schedulerModeFactory.EXPECT().
 					NewSchedulerMode(gomock.Any()).
 					Return(mode, nil).Times(1)
-				// 由于 mode 是内部 new 的，实际测试时需用 interface 替换或注入
+				// Since mode is newed internally, interface substitution or injection is needed for actual testing
 			},
 			wantErr: false,
 			assertErr: func(t *testing.T, err error) {
@@ -204,7 +224,7 @@ func TestExptSchedulerImpl_Schedule(t *testing.T) {
 			}
 
 			if tt.prepareMock != nil {
-				tt.prepareMock(f, ctrl, tt.args) // 修改点：传递 ctrl
+				tt.prepareMock(f, ctrl, tt.args) // Modification point: pass ctrl
 			}
 
 			svc := &ExptSchedulerImpl{
@@ -259,13 +279,13 @@ func TestExptSchedulerImpl_RecordEvalItemRunLogs(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		prepareMock func(f *fields, ctrl *gomock.Controller, args args) // 修改点：添加 ctrl 参数
+		prepareMock func(f *fields, ctrl *gomock.Controller, args args) // Modification: add ctrl parameter
 		args        args
 		wantErr     bool
 		assertErr   func(t *testing.T, err error)
 	}{
 		{
-			name: "正常流程-全部成功",
+			name: "Normal flow - all success",
 			args: args{
 				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
 				event: &entity.ExptScheduleEvent{
@@ -280,7 +300,7 @@ func TestExptSchedulerImpl_RecordEvalItemRunLogs(t *testing.T) {
 					{ItemID: 2, State: entity.ItemRunState_Fail},
 				},
 			},
-			prepareMock: func(f *fields, ctrl *gomock.Controller, args args) { // 修改点：添加 ctrl 参数
+			prepareMock: func(f *fields, ctrl *gomock.Controller, args args) { // Modification: add ctrl parameter
 				f.ResultSvc.EXPECT().RecordItemRunLogs(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 				mockMode.EXPECT().PublishResult(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 				f.ResultSvc.EXPECT().UpsertExptTurnResultFilter(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
@@ -301,7 +321,7 @@ func TestExptSchedulerImpl_RecordEvalItemRunLogs(t *testing.T) {
 			}
 
 			if tt.prepareMock != nil {
-				tt.prepareMock(f, ctrl, tt.args) // 修改点：传递 ctrl
+				tt.prepareMock(f, ctrl, tt.args) // Modification: pass ctrl
 			}
 
 			svc := &ExptSchedulerImpl{
@@ -339,13 +359,13 @@ func TestExptSchedulerImpl_SubmitItemEval(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		prepareMock func(f *fields, ctrl *gomock.Controller, args args) // 修改点：添加 ctrl 参数
+		prepareMock func(f *fields, ctrl *gomock.Controller, args args) // Modification: add ctrl parameter
 		args        args
 		wantErr     bool
 		assertErr   func(t *testing.T, err error)
 	}{
 		{
-			name: "正常流程-全部成功",
+			name: "Normal flow - all success",
 			args: args{
 				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
 				event: &entity.ExptScheduleEvent{
@@ -367,7 +387,7 @@ func TestExptSchedulerImpl_SubmitItemEval(t *testing.T) {
 					ExptType: entity.ExptType_Offline,
 				},
 			},
-			prepareMock: func(f *fields, ctrl *gomock.Controller, args args) { // 修改点：添加 ctrl 参数
+			prepareMock: func(f *fields, ctrl *gomock.Controller, args args) { // Modification: add ctrl parameter
 				f.exptItemResultRepo.EXPECT().UpdateItemRunLog(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 				f.exptItemResultRepo.EXPECT().UpdateItemsResult(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 				f.exptItemResultRepo.EXPECT().BatchGet(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]*entity.ExptItemResult{}, nil).AnyTimes()
@@ -408,7 +428,7 @@ func TestExptSchedulerImpl_SubmitItemEval(t *testing.T) {
 			}
 
 			if tt.prepareMock != nil {
-				tt.prepareMock(f, ctrl, tt.args) // 修改点：传递 ctrl
+				tt.prepareMock(f, ctrl, tt.args) // Modification: pass ctrl
 			}
 
 			svc := &ExptSchedulerImpl{
@@ -513,10 +533,10 @@ func TestExptSchedulerImpl_HandleEventLock(t *testing.T) {
 		args    lockArgs
 		next    func(ctx context.Context, event *entity.ExptScheduleEvent) error
 		wantErr bool
-		wantNil bool // 是否期望返回 nil（即锁未获得时）
+		wantNil bool // whether nil is expected (i.e. when lock is not obtained)
 	}{
 		{
-			name: "正常加锁并调用next",
+			name: "Normal lock and call next",
 			args: lockArgs{
 				event:   &entity.ExptScheduleEvent{ExptID: 1, ExptRunID: 2},
 				locked:  true,
@@ -529,7 +549,7 @@ func TestExptSchedulerImpl_HandleEventLock(t *testing.T) {
 			wantNil: false,
 		},
 		{
-			name: "加锁失败返回错误",
+			name: "Lock failure returns error",
 			args: lockArgs{
 				event:   &entity.ExptScheduleEvent{ExptID: 1, ExptRunID: 2},
 				locked:  false,
@@ -542,7 +562,7 @@ func TestExptSchedulerImpl_HandleEventLock(t *testing.T) {
 			wantNil: false,
 		},
 		{
-			name: "未获得锁直接返回nil",
+			name: "Return nil directly if lock is not obtained",
 			args: lockArgs{
 				event:   &entity.ExptScheduleEvent{ExptID: 1, ExptRunID: 2},
 				locked:  false,
@@ -560,6 +580,9 @@ func TestExptSchedulerImpl_HandleEventLock(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			unlockCalled := false
 			mutex.EXPECT().LockWithRenew(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(tt.args.locked, context.Background(), func() { unlockCalled = true }, tt.args.lockErr)
+			if tt.args.locked && tt.args.lockErr == nil {
+				mutex.EXPECT().Unlock(gomock.Any()).Return(true, nil)
+			}
 			handler := svc.HandleEventLock(tt.next)
 			err := handler(context.Background(), tt.args.event)
 			if tt.wantErr {
@@ -604,7 +627,7 @@ func TestExptSchedulerImpl_HandleEventCheck(t *testing.T) {
 		wantErr     bool
 	}{
 		{
-			name: "正常流程，未完成，未超时，调用next",
+			name: "Normal flow, not finished, no timeout, call next",
 			args: checkArgs{
 				event:      &entity.ExptScheduleEvent{ExptID: 1, ExptRunID: 2, SpaceID: 3, CreatedAt: time.Now().Unix()},
 				runLog:     &entity.ExptRunLog{Status: int64(entity.ExptStatus_Processing)},
@@ -620,7 +643,7 @@ func TestExptSchedulerImpl_HandleEventCheck(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "runLog返回错误",
+			name: "runLog returns error",
 			args: checkArgs{
 				event:      &entity.ExptScheduleEvent{ExptID: 1, ExptRunID: 2, SpaceID: 3},
 				runLog:     nil,
@@ -635,7 +658,7 @@ func TestExptSchedulerImpl_HandleEventCheck(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "实验已完成直接返回nil",
+			name: "Experiment completed, return nil directly",
 			args: checkArgs{
 				event:      &entity.ExptScheduleEvent{ExptID: 1, ExptRunID: 2, SpaceID: 3},
 				runLog:     &entity.ExptRunLog{Status: int64(entity.ExptStatus_Success)},
@@ -648,6 +671,40 @@ func TestExptSchedulerImpl_HandleEventCheck(t *testing.T) {
 			},
 			preparemock: func() {
 				manager.EXPECT().GetRunLog(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&entity.ExptRunLog{Status: int64(entity.ExptStatus_Success)}, nil).Times(1)
+			},
+			wantErr: false,
+		},
+		{
+			name: "Experiment terminating, return nil directly",
+			args: checkArgs{
+				event:      &entity.ExptScheduleEvent{ExptID: 1, ExptRunID: 2, SpaceID: 3},
+				runLog:     &entity.ExptRunLog{Status: int64(entity.ExptStatus_Terminating)},
+				runLogErr:  nil,
+				zombieSecs: 10000,
+				createdAt:  time.Now().Unix(),
+			},
+			next: func(ctx context.Context, event *entity.ExptScheduleEvent) error {
+				return errors.New("should not be called")
+			},
+			preparemock: func() {
+				manager.EXPECT().GetRunLog(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&entity.ExptRunLog{Status: int64(entity.ExptStatus_Terminating)}, nil).Times(1)
+			},
+			wantErr: false,
+		},
+		{
+			name: "Experiment draining, return nil directly",
+			args: checkArgs{
+				event:      &entity.ExptScheduleEvent{ExptID: 1, ExptRunID: 2, SpaceID: 3},
+				runLog:     &entity.ExptRunLog{Status: int64(entity.ExptStatus_Draining)},
+				runLogErr:  nil,
+				zombieSecs: 10000,
+				createdAt:  time.Now().Unix(),
+			},
+			next: func(ctx context.Context, event *entity.ExptScheduleEvent) error {
+				return errors.New("should not be called")
+			},
+			preparemock: func() {
+				manager.EXPECT().GetRunLog(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&entity.ExptRunLog{Status: int64(entity.ExptStatus_Draining)}, nil).Times(1)
 			},
 			wantErr: false,
 		},
@@ -797,7 +854,7 @@ func TestExptSchedulerImpl_handleZombies(t *testing.T) {
 					int64(1),
 					int64(2),
 					[]int64{1, 3},
-					map[string]any{"status": int32(entity.ItemRunState_Fail)},
+					map[string]any{"status": int32(entity.ItemRunState_Fail), "result_state": int32(entity.ExptItemResultStateLogged)},
 					int64(3),
 				).Return(nil).Times(1)
 				f.exptTurnResultRepo.EXPECT().CreateOrUpdateItemsTurnRunLogStatus(
@@ -870,7 +927,7 @@ func TestExptSchedulerImpl_handleZombies(t *testing.T) {
 					int64(1),
 					int64(2),
 					[]int64{1},
-					map[string]any{"status": int32(entity.ItemRunState_Fail)},
+					map[string]any{"status": int32(entity.ItemRunState_Fail), "result_state": int32(entity.ExptItemResultStateLogged)},
 					int64(3),
 				).Return(errors.New("update item run log failed")).Times(1)
 			},
@@ -916,7 +973,7 @@ func TestExptSchedulerImpl_handleZombies(t *testing.T) {
 					int64(1),
 					int64(2),
 					[]int64{1},
-					map[string]any{"status": int32(entity.ItemRunState_Fail)},
+					map[string]any{"status": int32(entity.ItemRunState_Fail), "result_state": int32(entity.ExptItemResultStateLogged)},
 					int64(3),
 				).Return(nil).Times(1)
 				f.exptTurnResultRepo.EXPECT().CreateOrUpdateItemsTurnRunLogStatus(
@@ -976,7 +1033,7 @@ func TestExptSchedulerImpl_handleZombies(t *testing.T) {
 					int64(1),
 					int64(2),
 					[]int64{1, 2},
-					map[string]any{"status": int32(entity.ItemRunState_Fail)},
+					map[string]any{"status": int32(entity.ItemRunState_Fail), "result_state": int32(entity.ExptItemResultStateLogged)},
 					int64(3),
 				).Return(nil).Times(1)
 				f.exptTurnResultRepo.EXPECT().CreateOrUpdateItemsTurnRunLogStatus(
@@ -1143,7 +1200,7 @@ func TestExptSchedulerImpl_handleZombies(t *testing.T) {
 				ExptTurnResultRepo: f.exptTurnResultRepo,
 			}
 
-			alives, zombies, err := svc.handleZombies(tt.args.ctx, tt.args.event, tt.args.items)
+			alives, zombies, err := svc.handleZombies(tt.args.ctx, tt.args.event, tt.args.items, nil)
 
 			if tt.assertErr != nil {
 				tt.assertErr(t, err)
@@ -1169,4 +1226,40 @@ func TestExptSchedulerImpl_handleZombies(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestExptSchedulerImpl_Schedule_ContextCancelled(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockManager := svcmocks.NewMockIExptManager(ctrl)
+	mockFactory := svcmocks.NewMockSchedulerModeFactory(ctrl)
+	mockConfiger := configmocks.NewMockIConfiger(ctrl)
+	mockResultSvc := svcmocks.NewMockExptResultService(ctrl)
+
+	svc := &ExptSchedulerImpl{
+		Manager:              mockManager,
+		schedulerModeFactory: mockFactory,
+		Configer:             mockConfiger,
+		ResultSvc:            mockResultSvc,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	event := &entity.ExptScheduleEvent{ExptID: 1, SpaceID: 1, ExptRunMode: 1}
+	exptDetail := &entity.Experiment{ID: 1}
+	mockMode := entitymocks.NewMockExptSchedulerMode(ctrl)
+
+	mockManager.EXPECT().GetDetail(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(exptDetail, nil)
+	mockFactory.EXPECT().NewSchedulerMode(gomock.Any()).Return(mockMode, nil)
+	mockMode.EXPECT().ExptStart(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+	mockMode.EXPECT().ScheduleStart(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+	mockMode.EXPECT().ScanEvalItems(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil, nil, nil)
+	mockConfiger.EXPECT().GetConsumerConf(gomock.Any()).Return(&entity.ExptConsumerConf{}).AnyTimes()
+	mockMode.EXPECT().ExptEnd(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(true, nil)
+
+	err := svc.schedule(ctx, event)
+	assert.Error(t, err)
+	assert.True(t, errors.Is(err, context.DeadlineExceeded))
 }

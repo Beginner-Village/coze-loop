@@ -32,12 +32,35 @@ func (p *Content) IsValid() error {
 			return fmt.Errorf("field Audio not valid, %w", err)
 		}
 	}
+	if p.Video != nil {
+		if err := p.Video.IsValid(); err != nil {
+			return fmt.Errorf("field Video not valid, %w", err)
+		}
+	}
+	if p.FullContent != nil {
+		if err := p.FullContent.IsValid(); err != nil {
+			return fmt.Errorf("field FullContent not valid, %w", err)
+		}
+	}
 	return nil
 }
 func (p *AudioContent) IsValid() error {
 	return nil
 }
+func (p *Video) IsValid() error {
+	if p.StorageProvider != nil {
+		if p.StorageProvider.String() == "<UNSET>" {
+			return fmt.Errorf("field StorageProvider defined_only rule failed")
+		}
+	}
+	return nil
+}
 func (p *Audio) IsValid() error {
+	if p.StorageProvider != nil {
+		if p.StorageProvider.String() == "<UNSET>" {
+			return fmt.Errorf("field StorageProvider defined_only rule failed")
+		}
+	}
 	return nil
 }
 func (p *Image) IsValid() error {
@@ -60,6 +83,11 @@ func (p *Message) IsValid() error {
 	return nil
 }
 func (p *ArgsSchema) IsValid() error {
+	if p.DefaultValue != nil {
+		if err := p.DefaultValue.IsValid(); err != nil {
+			return fmt.Errorf("field DefaultValue not valid, %w", err)
+		}
+	}
 	return nil
 }
 func (p *UserInfo) IsValid() error {
@@ -85,5 +113,14 @@ func (p *Session) IsValid() error {
 	return nil
 }
 func (p *RuntimeParam) IsValid() error {
+	return nil
+}
+func (p *RateLimit) IsValid() error {
+	return nil
+}
+func (p *AgentConfig) IsValid() error {
+	return nil
+}
+func (p *SkillConfig) IsValid() error {
 	return nil
 }

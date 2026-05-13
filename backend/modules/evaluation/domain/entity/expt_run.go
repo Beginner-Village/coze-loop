@@ -8,6 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bytedance/gg/gptr"
+
+	"github.com/coze-dev/coze-loop/backend/modules/evaluation/pkg/errno"
 	"github.com/coze-dev/coze-loop/backend/pkg/errorx"
 	"github.com/coze-dev/coze-loop/backend/pkg/json"
 	"github.com/coze-dev/coze-loop/backend/pkg/logs"
@@ -16,6 +19,8 @@ import (
 type ExptRunMode int32
 
 const (
+	EvaluationModeUnknown ExptRunMode = 0
+
 	// EvaluationModeSubmit 创建后提交
 	EvaluationModeSubmit ExptRunMode = 1
 
@@ -24,6 +29,11 @@ const (
 
 	// EvaluationModeAppend 追加模式
 	EvaluationModeAppend ExptRunMode = 3
+
+	EvaluationModeRetryAll   ExptRunMode = 4
+	EvaluationModeRetryItems ExptRunMode = 5
+	// EvaluationModeTrialRun 试运行模式
+	EvaluationModeTrialRun ExptRunMode = 6
 )
 
 type ItemRunState int64
@@ -61,6 +71,10 @@ func IsTurnRunFinished(state TurnRunState) bool {
 	return state == TurnRunState_Success || state == TurnRunState_Fail || state == TurnRunState_Terminal
 }
 
+func IsExptFinishing(status ExptStatus) bool {
+	return status == ExptStatus_Terminating || status == ExptStatus_Draining
+}
+
 func IsExptFinished(status ExptStatus) bool {
 	return status == ExptStatus_Success || status == ExptStatus_Failed || status == ExptStatus_Terminated || status == ExptStatus_SystemTerminated
 }
@@ -85,12 +99,13 @@ const (
 )
 
 const (
-	defaultDaemonInterval       = 20 * time.Second
-	defaultZombieIntervalSecond = 60 * 60 * 24
-	defaultItemEvalConcurNum    = 3
-	defaultItemEvalInterval     = 20 * time.Second
-	defaultSpaceExptConcurLimit = 200
-	defaultItemZombieSecond     = 60 * 20
+	defaultDaemonInterval        = 20 * time.Second
+	defaultZombieIntervalSecond  = 60 * 60 * 36
+	defaultItemEvalConcurNum     = 3
+	defaultItemEvalInterval      = 20 * time.Second
+	defaultSpaceExptConcurLimit  = 200
+	defaultItemZombieSecond      = 60 * 20
+	defaultItemAsyncZombieSecond = 60 * 60 * 3
 )
 
 type ExptConsumerConf struct {
@@ -99,6 +114,8 @@ type ExptConsumerConf struct {
 
 	ExptExecConf      *ExptExecConf           `json:"expt_exec_conf" mapstructure:"expt_exec_conf"`
 	SpaceExptExecConf map[int64]*ExptExecConf `json:"space_expt_exec_conf" mapstructure:"space_expt_exec_conf"`
+
+	SchedulerAbortCtrl *SchedulerAbortCtrl `json:"scheduler_abort_ctrl" mapstructure:"scheduler_abort_ctrl"`
 }
 
 func (e *ExptConsumerConf) GetExptExecConf(spaceID int64) *ExptExecConf {
@@ -109,6 +126,53 @@ func (e *ExptConsumerConf) GetExptExecConf(spaceID int64) *ExptExecConf {
 		return e.SpaceExptExecConf[spaceID]
 	}
 	return e.ExptExecConf
+}
+
+func (e *ExptConsumerConf) GetSchedulerAbortCtrl() *SchedulerAbortCtrl {
+	if e != nil && e.SchedulerAbortCtrl != nil {
+		return e.SchedulerAbortCtrl
+	}
+	return nil
+}
+
+type SchedulerAbortCtrl struct {
+	UserExptTypeCtrl  map[string][]ExptType `json:"user_expt_type_ctrl" mapstructure:"user_expt_type_ctrl"`
+	SpaceExptTypeCtrl map[int64][]ExptType  `json:"space_expt_type_ctrl" mapstructure:"space_expt_type_ctrl"`
+	ExptIDCtrl        map[int64]bool        `json:"expt_id_ctrl" mapstructure:"expt_id_ctrl"`
+}
+
+func (s *SchedulerAbortCtrl) Abort(spaceID, exptID int64, userID string, exptType ExptType) bool {
+	if s == nil {
+		return false
+	}
+
+	if s.ExptIDCtrl != nil {
+		if abort, exists := s.ExptIDCtrl[exptID]; exists && abort {
+			return true
+		}
+	}
+
+	if s.SpaceExptTypeCtrl != nil {
+		if exptTypes, exists := s.SpaceExptTypeCtrl[spaceID]; exists {
+			for _, et := range exptTypes {
+				if et == exptType {
+					return true
+				}
+			}
+		}
+	}
+
+	if s.UserExptTypeCtrl != nil {
+		if exptTypes, exists := s.UserExptTypeCtrl[userID]; exists {
+			for _, et := range exptTypes {
+				if et == exptType {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
 }
 
 type ExptExecConf struct {
@@ -148,9 +212,10 @@ func (e *ExptExecConf) GetExptItemEvalConf() *ExptItemEvalConf {
 }
 
 type ExptItemEvalConf struct {
-	ConcurNum      int `json:"concur_num" mapstructure:"concur_num"`
-	IntervalSecond int `json:"interval_second" mapstructure:"interval_second"`
-	ZombieSecond   int `json:"zombie_second" mapstructure:"zombie_second"`
+	ConcurNum         int `json:"concur_num" mapstructure:"concur_num"`
+	IntervalSecond    int `json:"interval_second" mapstructure:"interval_second"`
+	ZombieSecond      int `json:"zombie_second" mapstructure:"zombie_second"`
+	AsyncZombieSecond int `json:"async_zombie_second" mapstructure:"async_zombie_second"`
 }
 
 func (e *ExptItemEvalConf) GetConcurNum() int {
@@ -167,11 +232,25 @@ func (e *ExptItemEvalConf) GetInterval() time.Duration {
 	return defaultItemEvalInterval
 }
 
-func (e *ExptItemEvalConf) GetZombieSecond() int {
+func (e *ExptItemEvalConf) getZombieSecond() int {
 	if e != nil && e.ZombieSecond > 0 {
 		return e.ZombieSecond
 	}
 	return defaultItemZombieSecond
+}
+
+func (e *ExptItemEvalConf) getAsyncZombieSecond() int {
+	if e != nil && e.AsyncZombieSecond > 0 {
+		return e.AsyncZombieSecond
+	}
+	return defaultItemAsyncZombieSecond
+}
+
+func (e *ExptItemEvalConf) GetItemZombieSecond(isAsync bool) int {
+	if isAsync {
+		return e.getAsyncZombieSecond()
+	}
+	return e.getZombieSecond()
 }
 
 func DefaultExptConsumerConf() *ExptConsumerConf {
@@ -326,14 +405,15 @@ func (e *ExptItemEvalCtx) GetRecordEvalLogID(ctx context.Context) (logID string)
 func (e *ExptItemEvalCtx) GetTurnEvalLogID(ctx context.Context, turnID int64) (logID string) {
 	turnRunLog := e.GetExistTurnResultRunLog(turnID)
 
-	defer func() {
-		logs.CtxInfo(ctx, "GetTurnEvalLogID with log_id: %v", logID)
-	}()
+	defer func() { logs.CtxInfo(ctx, "GetTurnEvalLogID with log_id: %v", logID) }()
 
-	if turnRunLog == nil || len(turnRunLog.LogID) == 0 {
+	if turnRunLog == nil {
 		return logs.NewLogID()
 	}
 
+	if len(turnRunLog.LogID) == 0 {
+		turnRunLog.LogID = logs.NewLogID()
+	}
 	return turnRunLog.LogID
 }
 
@@ -367,6 +447,14 @@ type ExptTurnRunResult struct {
 	TargetResult     *EvalTargetRecord
 	EvaluatorResults map[int64]*EvaluatorRecord
 	EvalErr          error
+	AsyncAbort       bool
+}
+
+func (e *ExptTurnRunResult) GetTargetResult() *EvalTargetRecord {
+	if e != nil {
+		return e.TargetResult
+	}
+	return nil
 }
 
 func (e *ExptTurnRunResult) SetTargetResult(er *EvalTargetRecord) *ExptTurnRunResult {
@@ -398,6 +486,39 @@ func (e *ExptTurnRunResult) GetEvaluatorRecord(evaluatorVersionID int64) *Evalua
 	return e.EvaluatorResults[evaluatorVersionID]
 }
 
+func (e *ExptTurnRunResult) AbortWithTargetResult(expt *Experiment) bool {
+	// invalid target result
+	if e.TargetResult == nil {
+		e.SetEvalErr(errorx.NewByCode(errno.CommonInternalErrorCode, errorx.WithExtraMsg("target result is nil")))
+		return true
+	}
+
+	// target exec error
+	if e.TargetResult.EvalTargetOutputData != nil && e.TargetResult.EvalTargetOutputData.EvalTargetRunError != nil {
+		return true
+	}
+
+	// target async exec, with no record
+	if expt.AsyncCallTarget() && gptr.Indirect(e.TargetResult.Status) == EvalTargetRunStatusAsyncInvoking {
+		e.AsyncAbort = true
+		return true
+	}
+
+	return false
+}
+
+func (e *ExptTurnRunResult) AbortWithEvaluatorResults(ctx context.Context, event *ExptItemEvalEvent) bool {
+	// evaluator async exec, check if any evaluator is in async invoking status
+	for _, record := range e.EvaluatorResults {
+		if record != nil && record.Status == EvaluatorRunStatusAsyncInvoking {
+			e.AsyncAbort = true
+			event.WithCtxForceNoRetry(ctx)
+			return true
+		}
+	}
+	return false
+}
+
 //go:generate  mockgen -destination  ./mocks/expt_scheduler_mock.go  --package mocks . ExptSchedulerMode
 type ExptSchedulerMode interface {
 	Mode() ExptRunMode
@@ -405,7 +526,6 @@ type ExptSchedulerMode interface {
 	ScanEvalItems(ctx context.Context, event *ExptScheduleEvent, expt *Experiment) (toSubmit, incomplete, complete []*ExptEvalItem, err error)
 	ExptEnd(ctx context.Context, event *ExptScheduleEvent, expt *Experiment, toSubmit, incomplete int) (nextTick bool, err error)
 	ScheduleStart(ctx context.Context, event *ExptScheduleEvent, expt *Experiment) error
-	ScheduleEnd(ctx context.Context, event *ExptScheduleEvent, expt *Experiment, toSubmit, incomplete int) error
 	NextTick(ctx context.Context, event *ExptScheduleEvent, nextTick bool) error
 	PublishResult(ctx context.Context, turnEvaluatorRefs []*ExptTurnEvaluatorResultRef, event *ExptScheduleEvent) error
 }
@@ -413,4 +533,14 @@ type ExptSchedulerMode interface {
 type CKDBConfig struct {
 	ExptTurnResultFilterDBName string `json:"expt_turn_result_filter_db_name" mapstructure:"expt_turn_result_filter_db_name"`
 	DatasetItemsSnapshotDBName string `json:"dataset_items_snapshot_db_name" mapstructure:"dataset_items_snapshot_db_name"`
+}
+
+type EvalAsyncCtx struct {
+	Event                   *ExptItemEvalEvent
+	RecordID                int64
+	AsyncUnixMS             int64 // async call time with unix ms ts
+	Session                 *Session
+	Callee                  string
+	EvaluatorVersionID      int64 // evaluator version id, used for evaluator async scenario
+	EnableExtractTrajectory *bool
 }

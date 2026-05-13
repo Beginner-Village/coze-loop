@@ -43,13 +43,14 @@ func (m *MockIDatasetRPCAdapter) EXPECT() *MockIDatasetRPCAdapterMockRecorder {
 }
 
 // BatchCreateDatasetItems mocks base method.
-func (m *MockIDatasetRPCAdapter) BatchCreateDatasetItems(ctx context.Context, param *rpc.BatchCreateDatasetItemsParam) (map[int64]int64, []*entity.ItemErrorGroup, error) {
+func (m *MockIDatasetRPCAdapter) BatchCreateDatasetItems(ctx context.Context, param *rpc.BatchCreateDatasetItemsParam) (map[int64]int64, []*entity.ItemErrorGroup, []*entity.DatasetItemOutput, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "BatchCreateDatasetItems", ctx, param)
 	ret0, _ := ret[0].(map[int64]int64)
 	ret1, _ := ret[1].([]*entity.ItemErrorGroup)
-	ret2, _ := ret[2].(error)
-	return ret0, ret1, ret2
+	ret2, _ := ret[2].([]*entity.DatasetItemOutput)
+	ret3, _ := ret[3].(error)
+	return ret0, ret1, ret2, ret3
 }
 
 // BatchCreateDatasetItems indicates an expected call of BatchCreateDatasetItems.
@@ -132,6 +133,22 @@ func (mr *MockIDatasetRPCAdapterMockRecorder) BatchGetVersionedDatasets(ctx, spa
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BatchGetVersionedDatasets", reflect.TypeOf((*MockIDatasetRPCAdapter)(nil).BatchGetVersionedDatasets), ctx, spaceID, versionIDs, deletedAt)
 }
 
+// BatchUpdateDatasetItems mocks base method.
+func (m *MockIDatasetRPCAdapter) BatchUpdateDatasetItems(ctx context.Context, param *rpc.BatchUpdateDatasetItemsParam) ([]*entity.ItemErrorGroup, []*entity.DatasetItemOutput, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "BatchUpdateDatasetItems", ctx, param)
+	ret0, _ := ret[0].([]*entity.ItemErrorGroup)
+	ret1, _ := ret[1].([]*entity.DatasetItemOutput)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// BatchUpdateDatasetItems indicates an expected call of BatchUpdateDatasetItems.
+func (mr *MockIDatasetRPCAdapterMockRecorder) BatchUpdateDatasetItems(ctx, param any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BatchUpdateDatasetItems", reflect.TypeOf((*MockIDatasetRPCAdapter)(nil).BatchUpdateDatasetItems), ctx, param)
+}
+
 // ClearEvaluationSetDraftItem mocks base method.
 func (m *MockIDatasetRPCAdapter) ClearEvaluationSetDraftItem(ctx context.Context, spaceID, evaluationSetID int64) error {
 	m.ctrl.T.Helper()
@@ -176,6 +193,22 @@ func (mr *MockIDatasetRPCAdapterMockRecorder) CreateDatasetVersion(ctx, spaceID,
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateDatasetVersion", reflect.TypeOf((*MockIDatasetRPCAdapter)(nil).CreateDatasetVersion), ctx, spaceID, evaluationSetID, version, desc)
 }
 
+// CreateDatasetWithImport mocks base method.
+func (m *MockIDatasetRPCAdapter) CreateDatasetWithImport(ctx context.Context, param *rpc.CreateDatasetWithImportParam) (int64, int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateDatasetWithImport", ctx, param)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(int64)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// CreateDatasetWithImport indicates an expected call of CreateDatasetWithImport.
+func (mr *MockIDatasetRPCAdapterMockRecorder) CreateDatasetWithImport(ctx, param any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateDatasetWithImport", reflect.TypeOf((*MockIDatasetRPCAdapter)(nil).CreateDatasetWithImport), ctx, param)
+}
+
 // DeleteDataset mocks base method.
 func (m *MockIDatasetRPCAdapter) DeleteDataset(ctx context.Context, spaceID, evaluationSetID int64) error {
 	m.ctrl.T.Helper()
@@ -205,6 +238,36 @@ func (mr *MockIDatasetRPCAdapterMockRecorder) GetDataset(ctx, spaceID, evaluatio
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDataset", reflect.TypeOf((*MockIDatasetRPCAdapter)(nil).GetDataset), ctx, spaceID, evaluationSetID, deletedAt)
 }
 
+// GetDatasetIOJob mocks base method.
+func (m *MockIDatasetRPCAdapter) GetDatasetIOJob(ctx context.Context, spaceID, jobID int64) (*entity.DatasetIOJob, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetDatasetIOJob", ctx, spaceID, jobID)
+	ret0, _ := ret[0].(*entity.DatasetIOJob)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetDatasetIOJob indicates an expected call of GetDatasetIOJob.
+func (mr *MockIDatasetRPCAdapterMockRecorder) GetDatasetIOJob(ctx, spaceID, jobID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDatasetIOJob", reflect.TypeOf((*MockIDatasetRPCAdapter)(nil).GetDatasetIOJob), ctx, spaceID, jobID)
+}
+
+// GetDatasetItemField mocks base method.
+func (m *MockIDatasetRPCAdapter) GetDatasetItemField(ctx context.Context, param *rpc.GetDatasetItemFieldParam) (*entity.FieldData, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetDatasetItemField", ctx, param)
+	ret0, _ := ret[0].(*entity.FieldData)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetDatasetItemField indicates an expected call of GetDatasetItemField.
+func (mr *MockIDatasetRPCAdapterMockRecorder) GetDatasetItemField(ctx, param any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDatasetItemField", reflect.TypeOf((*MockIDatasetRPCAdapter)(nil).GetDatasetItemField), ctx, param)
+}
+
 // GetDatasetVersion mocks base method.
 func (m *MockIDatasetRPCAdapter) GetDatasetVersion(ctx context.Context, spaceID, versionID int64, deletedAt *bool) (*entity.EvaluationSetVersion, *entity.EvaluationSet, error) {
 	m.ctrl.T.Helper()
@@ -221,15 +284,31 @@ func (mr *MockIDatasetRPCAdapterMockRecorder) GetDatasetVersion(ctx, spaceID, ve
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDatasetVersion", reflect.TypeOf((*MockIDatasetRPCAdapter)(nil).GetDatasetVersion), ctx, spaceID, versionID, deletedAt)
 }
 
+// ImportDataset mocks base method.
+func (m *MockIDatasetRPCAdapter) ImportDataset(ctx context.Context, param *rpc.ImportDatasetParam) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ImportDataset", ctx, param)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ImportDataset indicates an expected call of ImportDataset.
+func (mr *MockIDatasetRPCAdapterMockRecorder) ImportDataset(ctx, param any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ImportDataset", reflect.TypeOf((*MockIDatasetRPCAdapter)(nil).ImportDataset), ctx, param)
+}
+
 // ListDatasetItems mocks base method.
-func (m *MockIDatasetRPCAdapter) ListDatasetItems(ctx context.Context, param *rpc.ListDatasetItemsParam) ([]*entity.EvaluationSetItem, *int64, *string, error) {
+func (m *MockIDatasetRPCAdapter) ListDatasetItems(ctx context.Context, param *rpc.ListDatasetItemsParam) ([]*entity.EvaluationSetItem, *int64, *int64, *string, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "ListDatasetItems", ctx, param)
 	ret0, _ := ret[0].([]*entity.EvaluationSetItem)
 	ret1, _ := ret[1].(*int64)
-	ret2, _ := ret[2].(*string)
-	ret3, _ := ret[3].(error)
-	return ret0, ret1, ret2, ret3
+	ret2, _ := ret[2].(*int64)
+	ret3, _ := ret[3].(*string)
+	ret4, _ := ret[4].(error)
+	return ret0, ret1, ret2, ret3, ret4
 }
 
 // ListDatasetItems indicates an expected call of ListDatasetItems.
@@ -239,14 +318,15 @@ func (mr *MockIDatasetRPCAdapterMockRecorder) ListDatasetItems(ctx, param any) *
 }
 
 // ListDatasetItemsByVersion mocks base method.
-func (m *MockIDatasetRPCAdapter) ListDatasetItemsByVersion(ctx context.Context, param *rpc.ListDatasetItemsParam) ([]*entity.EvaluationSetItem, *int64, *string, error) {
+func (m *MockIDatasetRPCAdapter) ListDatasetItemsByVersion(ctx context.Context, param *rpc.ListDatasetItemsParam) ([]*entity.EvaluationSetItem, *int64, *int64, *string, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "ListDatasetItemsByVersion", ctx, param)
 	ret0, _ := ret[0].([]*entity.EvaluationSetItem)
 	ret1, _ := ret[1].(*int64)
-	ret2, _ := ret[2].(*string)
-	ret3, _ := ret[3].(error)
-	return ret0, ret1, ret2, ret3
+	ret2, _ := ret[2].(*int64)
+	ret3, _ := ret[3].(*string)
+	ret4, _ := ret[4].(error)
+	return ret0, ret1, ret2, ret3, ret4
 }
 
 // ListDatasetItemsByVersion indicates an expected call of ListDatasetItemsByVersion.
@@ -256,9 +336,9 @@ func (mr *MockIDatasetRPCAdapterMockRecorder) ListDatasetItemsByVersion(ctx, par
 }
 
 // ListDatasetVersions mocks base method.
-func (m *MockIDatasetRPCAdapter) ListDatasetVersions(ctx context.Context, spaceID, evaluationSetID int64, pageToken *string, pageNumber, pageSize *int32, versionLike *string) ([]*entity.EvaluationSetVersion, *int64, *string, error) {
+func (m *MockIDatasetRPCAdapter) ListDatasetVersions(ctx context.Context, spaceID, evaluationSetID int64, pageToken *string, pageNumber, pageSize *int32, versionLike *string, versions []string) ([]*entity.EvaluationSetVersion, *int64, *string, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListDatasetVersions", ctx, spaceID, evaluationSetID, pageToken, pageNumber, pageSize, versionLike)
+	ret := m.ctrl.Call(m, "ListDatasetVersions", ctx, spaceID, evaluationSetID, pageToken, pageNumber, pageSize, versionLike, versions)
 	ret0, _ := ret[0].([]*entity.EvaluationSetVersion)
 	ret1, _ := ret[1].(*int64)
 	ret2, _ := ret[2].(*string)
@@ -267,9 +347,9 @@ func (m *MockIDatasetRPCAdapter) ListDatasetVersions(ctx context.Context, spaceI
 }
 
 // ListDatasetVersions indicates an expected call of ListDatasetVersions.
-func (mr *MockIDatasetRPCAdapterMockRecorder) ListDatasetVersions(ctx, spaceID, evaluationSetID, pageToken, pageNumber, pageSize, versionLike any) *gomock.Call {
+func (mr *MockIDatasetRPCAdapterMockRecorder) ListDatasetVersions(ctx, spaceID, evaluationSetID, pageToken, pageNumber, pageSize, versionLike, versions any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListDatasetVersions", reflect.TypeOf((*MockIDatasetRPCAdapter)(nil).ListDatasetVersions), ctx, spaceID, evaluationSetID, pageToken, pageNumber, pageSize, versionLike)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListDatasetVersions", reflect.TypeOf((*MockIDatasetRPCAdapter)(nil).ListDatasetVersions), ctx, spaceID, evaluationSetID, pageToken, pageNumber, pageSize, versionLike, versions)
 }
 
 // ListDatasets mocks base method.
@@ -289,10 +369,40 @@ func (mr *MockIDatasetRPCAdapterMockRecorder) ListDatasets(ctx, param any) *gomo
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListDatasets", reflect.TypeOf((*MockIDatasetRPCAdapter)(nil).ListDatasets), ctx, param)
 }
 
-// QueryItemSnapshotMappings mocks base method.
-func (m *MockIDatasetRPCAdapter) QueryItemSnapshotMappings(ctx context.Context, spaceID, datasetID int64, versionID *int64) ([]*entity.ItemSnapshotFieldMapping, string, error) {
+// ParseImportSourceFile mocks base method.
+func (m *MockIDatasetRPCAdapter) ParseImportSourceFile(ctx context.Context, param *entity.ParseImportSourceFileParam) (*entity.ParseImportSourceFileResult, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "QueryItemSnapshotMappings", ctx, spaceID, datasetID, versionID)
+	ret := m.ctrl.Call(m, "ParseImportSourceFile", ctx, param)
+	ret0, _ := ret[0].(*entity.ParseImportSourceFileResult)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ParseImportSourceFile indicates an expected call of ParseImportSourceFile.
+func (mr *MockIDatasetRPCAdapterMockRecorder) ParseImportSourceFile(ctx, param any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ParseImportSourceFile", reflect.TypeOf((*MockIDatasetRPCAdapter)(nil).ParseImportSourceFile), ctx, param)
+}
+
+// ValidateMultiPartData mocks base method.
+func (m *MockIDatasetRPCAdapter) ValidateMultiPartData(arg0 context.Context, arg1 int64, arg2 []string, arg3 *entity.MultiModalStoreOption) ([]*entity.UploadAttachmentDetail, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ValidateMultiPartData", arg0, arg1, arg2, arg3)
+	ret0, _ := ret[0].([]*entity.UploadAttachmentDetail)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ValidateMultiPartData indicates an expected call of ValidateMultiPartData.
+func (mr *MockIDatasetRPCAdapterMockRecorder) ValidateMultiPartData(arg0, arg1, arg2, arg3 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ValidateMultiPartData", reflect.TypeOf((*MockIDatasetRPCAdapter)(nil).ValidateMultiPartData), arg0, arg1, arg2, arg3)
+}
+
+// QueryItemSnapshotMappings mocks base method.
+func (m *MockIDatasetRPCAdapter) QueryItemSnapshotMappings(ctx context.Context, req *rpc.QueryItemSnapshotMappingRequest) ([]*entity.ItemSnapshotFieldMapping, string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "QueryItemSnapshotMappings", ctx, req)
 	ret0, _ := ret[0].([]*entity.ItemSnapshotFieldMapping)
 	ret1, _ := ret[1].(string)
 	ret2, _ := ret[2].(error)
@@ -300,9 +410,9 @@ func (m *MockIDatasetRPCAdapter) QueryItemSnapshotMappings(ctx context.Context, 
 }
 
 // QueryItemSnapshotMappings indicates an expected call of QueryItemSnapshotMappings.
-func (mr *MockIDatasetRPCAdapterMockRecorder) QueryItemSnapshotMappings(ctx, spaceID, datasetID, versionID any) *gomock.Call {
+func (mr *MockIDatasetRPCAdapterMockRecorder) QueryItemSnapshotMappings(ctx, req any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "QueryItemSnapshotMappings", reflect.TypeOf((*MockIDatasetRPCAdapter)(nil).QueryItemSnapshotMappings), ctx, spaceID, datasetID, versionID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "QueryItemSnapshotMappings", reflect.TypeOf((*MockIDatasetRPCAdapter)(nil).QueryItemSnapshotMappings), ctx, req)
 }
 
 // UpdateDataset mocks base method.
@@ -320,17 +430,17 @@ func (mr *MockIDatasetRPCAdapterMockRecorder) UpdateDataset(ctx, spaceID, evalua
 }
 
 // UpdateDatasetItem mocks base method.
-func (m *MockIDatasetRPCAdapter) UpdateDatasetItem(ctx context.Context, spaceID, evaluationSetID, itemID int64, turns []*entity.Turn) error {
+func (m *MockIDatasetRPCAdapter) UpdateDatasetItem(arg0 context.Context, arg1, arg2, arg3 int64, arg4 []*entity.Turn, arg5 []*entity.FieldWriteOption) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateDatasetItem", ctx, spaceID, evaluationSetID, itemID, turns)
+	ret := m.ctrl.Call(m, "UpdateDatasetItem", arg0, arg1, arg2, arg3, arg4, arg5)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // UpdateDatasetItem indicates an expected call of UpdateDatasetItem.
-func (mr *MockIDatasetRPCAdapterMockRecorder) UpdateDatasetItem(ctx, spaceID, evaluationSetID, itemID, turns any) *gomock.Call {
+func (mr *MockIDatasetRPCAdapterMockRecorder) UpdateDatasetItem(arg0, arg1, arg2, arg3, arg4, arg5 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateDatasetItem", reflect.TypeOf((*MockIDatasetRPCAdapter)(nil).UpdateDatasetItem), ctx, spaceID, evaluationSetID, itemID, turns)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateDatasetItem", reflect.TypeOf((*MockIDatasetRPCAdapter)(nil).UpdateDatasetItem), arg0, arg1, arg2, arg3, arg4, arg5)
 }
 
 // UpdateDatasetSchema mocks base method.

@@ -86,6 +86,36 @@ func (mr *MockITraceConfigMockRecorder) GetAnnotationSourceCfg(ctx any) *gomock.
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAnnotationSourceCfg", reflect.TypeOf((*MockITraceConfig)(nil).GetAnnotationSourceCfg), ctx)
 }
 
+// GetBackfillMqProducerCfg mocks base method.
+func (m *MockITraceConfig) GetBackfillMqProducerCfg(ctx context.Context) (*config.MqProducerCfg, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetBackfillMqProducerCfg", ctx)
+	ret0, _ := ret[0].(*config.MqProducerCfg)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetBackfillMqProducerCfg indicates an expected call of GetBackfillMqProducerCfg.
+func (mr *MockITraceConfigMockRecorder) GetBackfillMqProducerCfg(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetBackfillMqProducerCfg", reflect.TypeOf((*MockITraceConfig)(nil).GetBackfillMqProducerCfg), ctx)
+}
+
+// GetConsumerListening mocks base method.
+func (m *MockITraceConfig) GetConsumerListening(ctx context.Context) (*config.ConsumerListening, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetConsumerListening", ctx)
+	ret0, _ := ret[0].(*config.ConsumerListening)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetConsumerListening indicates an expected call of GetConsumerListening.
+func (mr *MockITraceConfigMockRecorder) GetConsumerListening(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetConsumerListening", reflect.TypeOf((*MockITraceConfig)(nil).GetConsumerListening), ctx)
+}
+
 // GetDefaultTraceTenant mocks base method.
 func (m *MockITraceConfig) GetDefaultTraceTenant(ctx context.Context) string {
 	m.ctrl.T.Helper()
@@ -98,6 +128,49 @@ func (m *MockITraceConfig) GetDefaultTraceTenant(ctx context.Context) string {
 func (mr *MockITraceConfigMockRecorder) GetDefaultTraceTenant(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDefaultTraceTenant", reflect.TypeOf((*MockITraceConfig)(nil).GetDefaultTraceTenant), ctx)
+}
+
+// GetKeySpanTypes mocks base method.
+func (m *MockITraceConfig) GetKeySpanTypes(ctx context.Context) map[string][]string {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetKeySpanTypes", ctx)
+	ret0, _ := ret[0].(map[string][]string)
+	return ret0
+}
+
+// GetKeySpanTypes indicates an expected call of GetKeySpanTypes.
+func (mr *MockITraceConfigMockRecorder) GetKeySpanTypes(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetKeySpanTypes", reflect.TypeOf((*MockITraceConfig)(nil).GetKeySpanTypes), ctx)
+}
+
+// GetMetricPlatformTenants mocks base method.
+func (m *MockITraceConfig) GetMetricPlatformTenants(ctx context.Context) (*config.PlatformTenantsCfg, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetMetricPlatformTenants", ctx)
+	ret0, _ := ret[0].(*config.PlatformTenantsCfg)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetMetricPlatformTenants indicates an expected call of GetMetricPlatformTenants.
+func (mr *MockITraceConfigMockRecorder) GetMetricPlatformTenants(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetMetricPlatformTenants", reflect.TypeOf((*MockITraceConfig)(nil).GetMetricPlatformTenants), ctx)
+}
+
+// GetMetricQueryConfig mocks base method.
+func (m *MockITraceConfig) GetMetricQueryConfig(ctx context.Context) *config.MetricQueryConfig {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetMetricQueryConfig", ctx)
+	ret0, _ := ret[0].(*config.MetricQueryConfig)
+	return ret0
+}
+
+// GetMetricQueryConfig indicates an expected call of GetMetricQueryConfig.
+func (mr *MockITraceConfigMockRecorder) GetMetricQueryConfig(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetMetricQueryConfig", reflect.TypeOf((*MockITraceConfig)(nil).GetMetricQueryConfig), ctx)
 }
 
 // GetPlatformSpansTrans mocks base method.
@@ -143,6 +216,21 @@ func (m *MockITraceConfig) GetQueryMaxQPS(ctx context.Context, key string) (int,
 func (mr *MockITraceConfigMockRecorder) GetQueryMaxQPS(ctx, key any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetQueryMaxQPS", reflect.TypeOf((*MockITraceConfig)(nil).GetQueryMaxQPS), ctx, key)
+}
+
+// GetSpanWithAnnotationMqProducerCfg mocks base method.
+func (m *MockITraceConfig) GetSpanWithAnnotationMqProducerCfg(ctx context.Context) (*config.MqProducerCfg, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetSpanWithAnnotationMqProducerCfg", ctx)
+	ret0, _ := ret[0].(*config.MqProducerCfg)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetSpanWithAnnotationMqProducerCfg indicates an expected call of GetSpanWithAnnotationMqProducerCfg.
+func (mr *MockITraceConfigMockRecorder) GetSpanWithAnnotationMqProducerCfg(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSpanWithAnnotationMqProducerCfg", reflect.TypeOf((*MockITraceConfig)(nil).GetSpanWithAnnotationMqProducerCfg), ctx)
 }
 
 // GetSystemViews mocks base method.

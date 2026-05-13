@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/bytedance/gg/gptr"
 	"github.com/mitchellh/mapstructure"
 
+	"github.com/coze-dev/coze-loop/backend/modules/evaluation/pkg/errno"
 	"github.com/coze-dev/coze-loop/backend/pkg/errorx"
 	"github.com/coze-dev/coze-loop/backend/pkg/json"
 )
@@ -18,6 +20,11 @@ type (
 	ExptStatus int64
 	ExptType   int64
 	SourceType = int64
+	Visibility = int64
+)
+
+const (
+	Visibility_Hidden Visibility = 1
 )
 
 const (
@@ -34,6 +41,7 @@ const (
 	ExptStatus_Terminated ExptStatus = 13
 	// System terminated
 	ExptStatus_SystemTerminated ExptStatus = 14
+	ExptStatus_Terminating      ExptStatus = 15
 
 	// 流式执行完成，不再接收新的请求
 	ExptStatus_Draining ExptStatus = 21
@@ -47,16 +55,20 @@ const (
 const (
 	SourceType_Evaluation SourceType = 1
 	SourceType_Trace      SourceType = 2
+	// SourceType_AutoTask 用于 ExptSource，与 IDL domain_expt.SourceType_AutoTask 一致
+	SourceType_AutoTask SourceType = 2
+	// SourceType_Workflow 与 IDL domain_expt.SourceType_Workflow 一致（Pipeline / 工作流来源，用于 enrichExptSourceFromPipeline 等）
+	SourceType_Workflow       SourceType = 3
+	SourceType_IntelligentGen SourceType = 4
 )
 
-// TODO
 type ExptRunLog struct {
 	ID            int64
 	SpaceID       int64
 	CreatedBy     string
 	ExptID        int64
 	ExptRunID     int64
-	ItemIds       []byte
+	ItemIds       []ExptRunLogItems
 	Mode          int32
 	Status        int64
 	PendingCnt    int32
@@ -69,6 +81,36 @@ type ExptRunLog struct {
 	TerminatedCnt int32
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
+}
+
+func (e *ExptRunLog) GetItemIDs() []int64 {
+	var itemIDs []int64
+	for _, items := range e.ItemIds {
+		itemIDs = append(itemIDs, items.ItemIDs...)
+	}
+	return itemIDs
+}
+
+func (e *ExptRunLog) AppendItemIDs(itemIDs []int64) error {
+	if e == nil {
+		return errorx.New("ExptRunLog AppendItemIDs must init first")
+	}
+	exists := make(map[int64]bool)
+	for _, chunk := range e.ItemIds {
+		for _, itemID := range chunk.ItemIDs {
+			exists[itemID] = true
+		}
+	}
+	rlItems := ExptRunLogItems{CreateAt: gptr.Of(time.Now().Unix())}
+	for _, itemID := range itemIDs {
+		if exists[itemID] {
+			return errorx.NewByCode(errno.EvalItemAlreadyRetryingCode, errorx.WithExtraMsg(fmt.Sprintf("existed item_id: %v", itemID)))
+		} else {
+			rlItems.ItemIDs = append(rlItems.ItemIDs, itemID)
+		}
+	}
+	e.ItemIds = append(e.ItemIds, rlItems)
+	return nil
 }
 
 type Experiment struct {
@@ -103,9 +145,19 @@ type Experiment struct {
 	MaxAliveTime int64
 	SourceType   SourceType
 	SourceID     string
+	// TriggerType 实验触发方式，与表字段 trigger_type 一致：manual / openapi / schedule
+	TriggerType string
+	// ExptSource 查询时填充：与一级字段 source_type/source_id 一致；Workflow 时由 Pipeline 补充 span_filter / scheduler / sampler
+	ExptSource        *ExptSource
+	TrialRunItemCount int64
 
 	Stats           *ExptStats
 	AggregateResult *ExptAggregateResult
+
+	ExptTemplateMeta *ExptTemplateMeta // 关联的实验模板基础信息（仅在查询时按需填充，包含模板 ID）
+
+	Visibility Visibility // 实验模板可见性，默认为空，可见
+	ThreadID   *string    // 关联的智能评测会话ID
 }
 
 func (e *Experiment) ToEvaluatorRefDO() []*ExptEvaluatorRef {
@@ -125,6 +177,39 @@ func (e *Experiment) ToEvaluatorRefDO() []*ExptEvaluatorRef {
 	return refs
 }
 
+func (e *Experiment) AsyncExec() bool {
+	return e.AsyncCallTarget() || e.AsyncCallEvaluators()
+}
+
+func (e *Experiment) AsyncCallTarget() bool {
+	if e == nil || e.Target == nil || e.Target.EvalTargetVersion == nil {
+		return false
+	}
+	if e.Target.EvalTargetVersion.CustomRPCServer != nil && gptr.Indirect(e.Target.EvalTargetVersion.CustomRPCServer.IsAsync) {
+		return true
+	}
+	if e.Target.EvalTargetVersion.WebAgent != nil {
+		return true
+	}
+	return false
+}
+
+func (e *Experiment) AsyncCallEvaluators() bool {
+	if e == nil || len(e.Evaluators) == 0 {
+		return false
+	}
+	for _, ev := range e.Evaluators {
+		if ev.IsAsync() {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *Experiment) ContainsEvalTarget() bool {
+	return e != nil && e.TargetVersionID > 0
+}
+
 type ExptEvaluatorVersionRef struct {
 	EvaluatorID        int64
 	EvaluatorVersionID int64
@@ -135,8 +220,12 @@ func (e *ExptEvaluatorVersionRef) String() string {
 }
 
 type EvaluationConfiguration struct {
-	ConnectorConf Connector
-	ItemConcurNum *int
+	ConnectorConf           Connector
+	ItemConcurNum           *int
+	ItemRetryNum            *int
+	TimeRange               *TaskTimeRangeDO `json:"time_range,omitempty"`
+	EnableExtractTrajectory *bool
+	Ext                     map[string]string
 }
 
 type Connector struct {
@@ -153,7 +242,8 @@ func (t *TargetConf) Valid(ctx context.Context, targetType EvalTargetType) error
 	if t == nil || t.TargetVersionID == 0 {
 		return fmt.Errorf("invalid TargetConf: %v", json.Jsonify(t))
 	}
-	if targetType == EvalTargetTypeLoopPrompt { // prompt target might receive no input
+	// prompt/custom_rpc 可能无输入；仅记录型不需要执行，仅需记录对象类型和基本信息
+	if targetType == EvalTargetTypeLoopPrompt || targetType == EvalTargetTypeCustomRPCServer || targetType == EvalTargetTypeWebAgent || targetType.IsRecordOnlyType() {
 		return nil
 	}
 	if t.IngressConf != nil && t.IngressConf.EvalSetAdapter != nil && len(t.IngressConf.EvalSetAdapter.FieldConfs) > 0 {
@@ -170,6 +260,7 @@ type TargetIngressConf struct {
 type EvaluatorsConf struct {
 	EvaluatorConcurNum *int
 	EvaluatorConf      []*EvaluatorConf
+	EnableScoreWeight  bool
 }
 
 func (e *EvaluatorsConf) Valid(ctx context.Context) error {
@@ -203,7 +294,11 @@ func (e *EvaluatorsConf) GetEvaluatorConcurNum() int {
 
 type EvaluatorConf struct {
 	EvaluatorVersionID int64
+	EvaluatorID        int64  // 评估器ID（用于匹配回填 evaluator_version_id）
+	Version            string // 评估器版本号（用于匹配回填 evaluator_version_id）
 	IngressConf        *EvaluatorIngressConf
+	RunConf            *EvaluatorRunConfig
+	ScoreWeight        *float64
 }
 
 func (e *EvaluatorConf) Valid(ctx context.Context) error {
@@ -249,8 +344,6 @@ type ExptCalculateStats struct {
 	SuccessItemCnt    int
 	ProcessingItemCnt int
 	TerminatedItemCnt int
-
-	IncompleteTurnIDs []*ItemTurnID
 }
 
 type ItemTurnID struct {
@@ -290,15 +383,26 @@ type VersionedEvalSetID struct {
 }
 
 type CreateEvalTargetParam struct {
-	SourceTargetID      *string
-	SourceTargetVersion *string
-	EvalTargetType      *EvalTargetType
-	BotInfoType         *CozeBotInfoType
-	BotPublishVersion   *string
+	SourceTargetID       *string
+	SourceTargetVersion  *string
+	EvalTargetType       *EvalTargetType
+	BotInfoType          *CozeBotInfoType
+	BotPublishVersion    *string
+	CustomEvalTarget     *CustomEvalTarget // 搜索对象返回的信息
+	Region               *Region
+	Env                  *string
+	OperationInstruction *string
 }
 
 func (c *CreateEvalTargetParam) IsNull() bool {
-	return c == nil || (c.SourceTargetID == nil && c.SourceTargetVersion == nil)
+	if c == nil {
+		return true
+	}
+	// 仅传 eval_target_type（如仅记录型 Online 评测对象）时也应走创建逻辑，不能仅依据 source 指针判断
+	if c.EvalTargetType != nil {
+		return false
+	}
+	return c.SourceTargetID == nil && c.SourceTargetVersion == nil
 }
 
 type InvokeExptReq struct {
@@ -310,4 +414,9 @@ type InvokeExptReq struct {
 	Items []*EvaluationSetItem
 
 	Ext map[string]string
+}
+
+type ExptRunLogItems struct {
+	ItemIDs  []int64
+	CreateAt *int64
 }

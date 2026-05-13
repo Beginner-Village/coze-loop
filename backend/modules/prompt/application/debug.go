@@ -226,11 +226,18 @@ func (p *PromptDebugApplicationImpl) doDebugStreaming(ctx context.Context, req *
 	prompt := convertor.PromptDTO2DO(req.Prompt)
 	// prompt hub span report
 	p.reportDebugPromptHubSpan(ctx, prompt)
+	// expand snippets
+	err = p.promptService.ExpandSnippets(ctx, prompt)
+	if err != nil {
+		return nil, err
+	}
 	// execute
 	resultStream := make(chan *entity.Reply)
 	errChan := make(chan error)
+	replyChan := make(chan *entity.Reply, 1)
 	goroutine.GoSafe(ctx, func() {
 		var executeErr error
+		var localReply *entity.Reply
 		defer func() {
 			e := recover()
 			if e != nil {
@@ -238,6 +245,8 @@ func (p *PromptDebugApplicationImpl) doDebugStreaming(ctx context.Context, req *
 			}
 			// 确保errChan和resultStream被关闭
 			close(resultStream)
+			replyChan <- localReply
+			close(replyChan)
 			if executeErr != nil {
 				errChan <- executeErr
 			}
@@ -248,7 +257,7 @@ func (p *PromptDebugApplicationImpl) doDebugStreaming(ctx context.Context, req *
 			logErr := p.saveDebugLog(context.WithoutCancel(ctx), saveDebugLogParam{
 				prompt:          prompt,
 				startTime:       startTime,
-				result:          aggregatedReply,
+				result:          localReply,
 				err:             executeErr,
 				singleStepDebug: req.GetSingleStepDebug(),
 			})
@@ -264,7 +273,7 @@ func (p *PromptDebugApplicationImpl) doDebugStreaming(ctx context.Context, req *
 		if executeErr != nil {
 			return
 		}
-		aggregatedReply, executeErr = p.promptService.ExecuteStreaming(ctx, service.ExecuteStreamingParam{
+		localReply, executeErr = p.promptService.ExecuteStreaming(ctx, service.ExecuteStreamingParam{
 			ExecuteParam: service.ExecuteParam{
 				Prompt:        prompt,
 				Messages:      messages,
@@ -284,6 +293,13 @@ func (p *PromptDebugApplicationImpl) doDebugStreaming(ctx context.Context, req *
 	for reply := range resultStream {
 		if reply == nil || reply.Item == nil {
 			continue
+		}
+		// Convert base64 files to download URLs
+		if reply.Item.Message != nil {
+			if err := p.promptService.MConvertBase64DataURLToFileURL(ctx, []*entity.Message{reply.Item.Message}, req.Prompt.GetWorkspaceID()); err != nil {
+				logs.CtxError(ctx, "failed to convert base64 to file URLs: %v", err)
+				return nil, err
+			}
 		}
 		chunk := &debug.DebugStreamingResponse{
 			Delta:         convertor.MessageDO2DTO(reply.Item.Message),
@@ -306,6 +322,7 @@ func (p *PromptDebugApplicationImpl) doDebugStreaming(ctx context.Context, req *
 			return nil, err
 		}
 	}
+	aggregatedReply = <-replyChan
 	select { //nolint:staticcheck
 	case err, ok = <-errChan:
 		if !ok {
@@ -413,7 +430,7 @@ func (p *PromptDebugApplicationImpl) SaveDebugContext(ctx context.Context, req *
 
 func (p *PromptDebugApplicationImpl) GetDebugContext(ctx context.Context, req *debug.GetDebugContextRequest) (r *debug.GetDebugContextResponse, err error) {
 	r = debug.NewGetDebugContextResponse()
-	err = p.auth.MCheckPromptPermission(ctx, req.GetWorkspaceID(), []int64{req.GetPromptID()}, consts.ActionLoopPromptDebug)
+	err = p.auth.MCheckPromptPermission(ctx, req.GetWorkspaceID(), []int64{req.GetPromptID()}, consts.ActionLoopPromptRead)
 	if err != nil {
 		return nil, err
 	}
@@ -513,7 +530,7 @@ func (p *PromptDebugApplicationImpl) mCompleteDebugContextMultiModalFileURL(ctx 
 
 func (p *PromptDebugApplicationImpl) ListDebugHistory(ctx context.Context, req *debug.ListDebugHistoryRequest) (r *debug.ListDebugHistoryResponse, err error) {
 	r = debug.NewListDebugHistoryResponse()
-	err = p.auth.MCheckPromptPermission(ctx, req.GetWorkspaceID(), []int64{req.GetPromptID()}, consts.ActionLoopPromptDebug)
+	err = p.auth.MCheckPromptPermission(ctx, req.GetWorkspaceID(), []int64{req.GetPromptID()}, consts.ActionLoopPromptRead)
 	if err != nil {
 		return nil, err
 	}

@@ -14,6 +14,9 @@ import (
 	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/evaluation/eval_target"
 	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/evaluation/evaluator"
 	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/evaluation/expt"
+	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/evaluation/openapi"
+	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/evaluation/spi"
+	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/trajectory"
 )
 
 var (
@@ -21,6 +24,9 @@ var (
 	_ = eval_target.KitexUnusedProtection
 	_ = evaluator.KitexUnusedProtection
 	_ = expt.KitexUnusedProtection
+	_ = openapi.KitexUnusedProtection
+	_ = spi.KitexUnusedProtection
+	_ = trajectory.KitexUnusedProtection
 )
 
 // unused protection

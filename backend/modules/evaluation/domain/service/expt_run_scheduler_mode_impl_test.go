@@ -14,6 +14,7 @@ import (
 	"go.uber.org/mock/gomock"
 
 	idgenmocks "github.com/coze-dev/coze-loop/backend/infra/idgen/mocks"
+	lockMocks "github.com/coze-dev/coze-loop/backend/infra/lock/mocks"
 	"github.com/coze-dev/coze-loop/backend/infra/middleware/session"
 	idemmocks "github.com/coze-dev/coze-loop/backend/modules/evaluation/domain/component/idem/mocks"
 	configmocks "github.com/coze-dev/coze-loop/backend/modules/evaluation/domain/component/mocks"
@@ -77,38 +78,6 @@ func TestExptSubmitExec_ScheduleStart(t *testing.T) {
 	}
 }
 
-func TestExptSubmitExec_ScheduleEnd(t *testing.T) {
-	testCases := []struct {
-		name       string
-		event      *entity.ExptScheduleEvent
-		expt       *entity.Experiment
-		toSubmit   int
-		incomplete int
-		wantErr    bool
-	}{
-		{
-			name:       "正常流程",
-			event:      &entity.ExptScheduleEvent{},
-			expt:       &entity.Experiment{},
-			toSubmit:   0,
-			incomplete: 0,
-			wantErr:    false,
-		},
-	}
-
-	exec := &ExptSubmitExec{}
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			err := exec.ScheduleEnd(context.Background(), tc.event, tc.expt, tc.toSubmit, tc.incomplete)
-			if tc.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
 func TestExptSubmitExec_ExptEnd(t *testing.T) {
 	testCases := []struct {
 		name       string
@@ -125,7 +94,7 @@ func TestExptSubmitExec_ExptEnd(t *testing.T) {
 			mockSetup: func(f *exptSubmitExecFields) {
 				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil)
 				f.manager.EXPECT().CompleteRun(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
-				f.manager.EXPECT().CompleteExpt(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				f.manager.EXPECT().CompleteExpt(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 				f.configer.EXPECT().GetExptExecConf(gomock.Any(), gomock.Any()).Return(&entity.ExptExecConf{ZombieIntervalSecond: 1})
 				f.idem.EXPECT().Set(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 			},
@@ -162,7 +131,7 @@ func TestExptSubmitExec_ExptEnd(t *testing.T) {
 			mockSetup: func(f *exptSubmitExecFields) {
 				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil)
 				f.manager.EXPECT().CompleteRun(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
-				f.manager.EXPECT().CompleteExpt(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("exptrerr"))
+				f.manager.EXPECT().CompleteExpt(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("exptrerr"))
 			},
 			event:     &entity.ExptScheduleEvent{ExptID: 1, ExptRunID: 2, SpaceID: 3, ExptRunMode: 1, Session: &entity.Session{UserID: "u1"}},
 			expt:      &entity.Experiment{},
@@ -221,14 +190,6 @@ func TestExptSubmitExec_NextTick(t *testing.T) {
 		wantErr   bool
 		assertErr func(t *testing.T, err error)
 	}{
-		{
-			name:      "nextTick=false 不触发",
-			nextTick:  false,
-			mockSetup: nil,
-			event:     &entity.ExptScheduleEvent{SpaceID: 1},
-			wantErr:   false,
-			assertErr: func(t *testing.T, err error) { assert.NoError(t, err) },
-		},
 		{
 			name:     "nextTick=true 正常发布",
 			nextTick: true,
@@ -334,6 +295,8 @@ func TestExptSubmitExec_ExptStart(t *testing.T) {
 		configer                 *configmocks.MockIConfiger
 		publisher                *eventmocks.MockExptEventPublisher
 		resultSvc                *svcmocks.MockExptResultService
+		evaluatorRecordService   *svcmocks.MockEvaluatorRecordService
+		templateManager          *svcmocks.MockIExptTemplateManager
 	}
 
 	type args struct {
@@ -364,10 +327,16 @@ func TestExptSubmitExec_ExptStart(t *testing.T) {
 			},
 			prepareMock: func(f *fields, ctrl *gomock.Controller, args args) {
 				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil).Times(1)
+				// 新逻辑中，当 ExptTemplateMeta 为空时，会从 exptRepo.GetByID 重新拉取实验，用于后续模板关联处理。
+				// 这里统一返回传入的 mockExpt，避免出现未预期的 GetByID 调用导致的 panic。
+				f.exptRepo.EXPECT().
+					GetByID(gomock.Any(), args.event.ExptID, args.event.SpaceID).
+					Return(args.expt, nil).
+					Times(1)
 				f.evaluationSetItemService.EXPECT().ListEvaluationSetItems(gomock.Any(), gomock.Any()).Return([]*entity.EvaluationSetItem{
 					{ItemID: 1, Turns: []*entity.Turn{{ID: 1}}},
 					{ItemID: 2, Turns: []*entity.Turn{{ID: 2}}},
-				}, ptr.Of(int64(2)), nil, nil).Times(1)
+				}, ptr.Of(int64(2)), ptr.Of(int64(2)), nil, nil).Times(1)
 				f.idgenerator.EXPECT().GenMultiIDs(gomock.Any(), gomock.Any()).Return([]int64{1, 2, 3, 4}, nil).Times(1)
 				f.exptTurnResultRepo.EXPECT().BatchCreateNX(gomock.Any(), gomock.Any()).Return(nil).Times(1)
 				f.exptItemResultRepo.EXPECT().BatchCreateNX(gomock.Any(), gomock.Any()).Return(nil).Times(1)
@@ -446,6 +415,8 @@ func TestExptSubmitExec_ExptStart(t *testing.T) {
 				configer:                 configmocks.NewMockIConfiger(ctrl),
 				publisher:                eventmocks.NewMockExptEventPublisher(ctrl),
 				resultSvc:                svcmocks.NewMockExptResultService(ctrl),
+				evaluatorRecordService:   svcmocks.NewMockEvaluatorRecordService(ctrl),
+				templateManager:          svcmocks.NewMockIExptTemplateManager(ctrl),
 			}
 
 			if tt.prepareMock != nil {
@@ -464,6 +435,8 @@ func TestExptSubmitExec_ExptStart(t *testing.T) {
 				configer:                 f.configer,
 				publisher:                f.publisher,
 				resultSvc:                f.resultSvc,
+				evaluatorRecordService:   f.evaluatorRecordService,
+				templateManager:          f.templateManager,
 			}
 
 			err := e.ExptStart(tt.args.ctx, tt.args.event, tt.args.expt)
@@ -564,14 +537,12 @@ func TestExptSubmitExec_ScanEvalItems(t *testing.T) {
 			},
 			prepareMock: func(f *fields, ctrl *gomock.Controller, args args) {
 				f.configer.EXPECT().GetExptExecConf(gomock.Any(), gomock.Any()).Return(&entity.ExptExecConf{ExptItemEvalConf: &entity.ExptItemEvalConf{ConcurNum: 3}}).Times(1)
-				f.exptItemResultRepo.EXPECT().ScanItemRunLogs(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]*entity.ExptItemResultRunLog{
+				f.exptItemResultRepo.EXPECT().ScanItemRunLogs(gomock.Any(), int64(1), int64(2), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]*entity.ExptItemResultRunLog{
 					{ItemID: 1, Status: int32(entity.ItemRunState_Processing)},
-				}, int64(1), nil).Times(1)
+					{ItemID: 3, Status: int32(entity.ItemRunState_Success), ResultState: int32(entity.ExptItemResultStateLogged)},
+				}, int64(0), nil).Times(1)
 				f.exptItemResultRepo.EXPECT().ScanItemRunLogs(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]*entity.ExptItemResultRunLog{
 					{ItemID: 2, Status: int32(entity.ItemRunState_Queueing)},
-				}, int64(1), nil).Times(1)
-				f.exptItemResultRepo.EXPECT().ScanItemRunLogs(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]*entity.ExptItemResultRunLog{
-					{ItemID: 3, Status: int32(entity.ItemRunState_Success)},
 				}, int64(1), nil).Times(1)
 			},
 			wantToSubmit: []*entity.ExptEvalItem{
@@ -609,6 +580,36 @@ func TestExptSubmitExec_ScanEvalItems(t *testing.T) {
 				assert.Error(t, err)
 				assert.Contains(t, err.Error(), "scan error")
 			},
+		},
+		{
+			name: "empty_incomplete_and_complete_then_to_submit_filled",
+			args: args{
+				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
+				event: &entity.ExptScheduleEvent{
+					ExptID:      1,
+					ExptRunID:   2,
+					SpaceID:     3,
+					ExptRunMode: 1,
+					Session:     &entity.Session{UserID: testUserID},
+				},
+				expt: mockExpt,
+			},
+			prepareMock: func(f *fields, ctrl *gomock.Controller, args args) {
+				f.configer.EXPECT().GetExptExecConf(gomock.Any(), gomock.Any()).Return(&entity.ExptExecConf{ExptItemEvalConf: &entity.ExptItemEvalConf{ConcurNum: 3}}).Times(1)
+				f.exptItemResultRepo.EXPECT().ScanItemRunLogs(gomock.Any(), int64(1), int64(2), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]*entity.ExptItemResultRunLog{}, int64(0), nil).Times(1)
+				f.exptItemResultRepo.EXPECT().ScanItemRunLogs(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]*entity.ExptItemResultRunLog{
+					{ItemID: 1, Status: int32(entity.ItemRunState_Queueing)},
+					{ItemID: 2, Status: int32(entity.ItemRunState_Queueing)},
+				}, int64(1), nil).Times(1)
+			},
+			wantToSubmit: []*entity.ExptEvalItem{
+				{ExptID: 1, EvalSetVersionID: 1, ItemID: 1, State: entity.ItemRunState_Queueing},
+				{ExptID: 1, EvalSetVersionID: 1, ItemID: 2, State: entity.ItemRunState_Queueing},
+			},
+			wantIncomplete: []*entity.ExptEvalItem{},
+			wantComplete:   []*entity.ExptEvalItem{},
+			wantErr:        false,
+			assertErr:      func(t *testing.T, err error) { assert.NoError(t, err) },
 		},
 	}
 
@@ -990,14 +991,12 @@ func TestExptFailRetryExec_ScanEvalItems(t *testing.T) {
 			},
 			prepareMock: func(f *exptFailRetryExecFields, ctrl *gomock.Controller, args args) {
 				f.configer.EXPECT().GetExptExecConf(gomock.Any(), gomock.Any()).Return(&entity.ExptExecConf{ExptItemEvalConf: &entity.ExptItemEvalConf{ConcurNum: 3}}).Times(1)
-				f.exptItemResultRepo.EXPECT().ScanItemRunLogs(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]*entity.ExptItemResultRunLog{
+				f.exptItemResultRepo.EXPECT().ScanItemRunLogs(gomock.Any(), int64(1), int64(2), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]*entity.ExptItemResultRunLog{
 					{ItemID: 1, Status: int32(entity.ItemRunState_Processing)},
-				}, int64(1), nil).Times(1)
+					{ItemID: 3, Status: int32(entity.ItemRunState_Success), ResultState: int32(entity.ExptItemResultStateLogged)},
+				}, int64(0), nil).Times(1)
 				f.exptItemResultRepo.EXPECT().ScanItemRunLogs(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]*entity.ExptItemResultRunLog{
 					{ItemID: 2, Status: int32(entity.ItemRunState_Queueing)},
-				}, int64(1), nil).Times(1)
-				f.exptItemResultRepo.EXPECT().ScanItemRunLogs(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]*entity.ExptItemResultRunLog{
-					{ItemID: 3, Status: int32(entity.ItemRunState_Success)},
 				}, int64(1), nil).Times(1)
 			},
 			wantToSubmit: []*entity.ExptEvalItem{
@@ -1163,8 +1162,9 @@ func TestExptFailRetryExec_ExptEnd(t *testing.T) {
 			},
 			prepareMock: func(f *exptFailRetryExecFields, ctrl *gomock.Controller, args args) {
 				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil).Times(1)
-				f.manager.EXPECT().CompleteRun(gomock.Any(), args.event.ExptID, args.event.ExptRunID, args.event.ExptRunMode, args.event.SpaceID, args.event.Session, gomock.Any()).Return(nil).Times(1)
-				f.manager.EXPECT().CompleteExpt(gomock.Any(), args.event.ExptID, args.event.SpaceID, args.event.Session, gomock.Any()).Return(nil).Times(1)
+				// CompleteRun: ctx, exptID, exptRunID, spaceID, session, WithCID, WithCompleteInterval (7个参数)
+				f.manager.EXPECT().CompleteRun(gomock.Any(), args.event.ExptID, args.event.ExptRunID, args.event.SpaceID, args.event.Session, gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.manager.EXPECT().CompleteExpt(gomock.Any(), args.event.ExptID, gomock.Any(), args.event.SpaceID, args.event.Session, gomock.Any(), gomock.Any()).Return(nil).Times(1)
 				f.configer.EXPECT().GetExptExecConf(gomock.Any(), args.event.SpaceID).Return(&entity.ExptExecConf{ZombieIntervalSecond: 100}).Times(1)
 				f.idem.EXPECT().Set(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
 			},
@@ -1258,7 +1258,8 @@ func TestExptFailRetryExec_ExptEnd(t *testing.T) {
 			},
 			prepareMock: func(f *exptFailRetryExecFields, ctrl *gomock.Controller, args args) {
 				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil).Times(1)
-				f.manager.EXPECT().CompleteRun(gomock.Any(), args.event.ExptID, args.event.ExptRunID, args.event.ExptRunMode, args.event.SpaceID, args.event.Session, gomock.Any()).Return(errors.New("test error")).Times(1)
+				// CompleteRun: ctx, exptID, exptRunID, spaceID, session, WithCID, WithCompleteInterval (7个参数)
+				f.manager.EXPECT().CompleteRun(gomock.Any(), args.event.ExptID, args.event.ExptRunID, args.event.SpaceID, args.event.Session, gomock.Any(), gomock.Any()).Return(errors.New("test error")).Times(1)
 			},
 			wantNextTick: false,
 			wantErr:      true,
@@ -1281,8 +1282,9 @@ func TestExptFailRetryExec_ExptEnd(t *testing.T) {
 			},
 			prepareMock: func(f *exptFailRetryExecFields, ctrl *gomock.Controller, args args) {
 				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil).Times(1)
-				f.manager.EXPECT().CompleteRun(gomock.Any(), args.event.ExptID, args.event.ExptRunID, args.event.ExptRunMode, args.event.SpaceID, args.event.Session, gomock.Any()).Return(nil).Times(1)
-				f.manager.EXPECT().CompleteExpt(gomock.Any(), args.event.ExptID, args.event.SpaceID, args.event.Session, gomock.Any()).Return(errors.New("complete expt error")).Times(1)
+				// CompleteRun: ctx, exptID, exptRunID, spaceID, session, WithCID, WithCompleteInterval (7个参数)
+				f.manager.EXPECT().CompleteRun(gomock.Any(), args.event.ExptID, args.event.ExptRunID, args.event.SpaceID, args.event.Session, gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.manager.EXPECT().CompleteExpt(gomock.Any(), args.event.ExptID, gomock.Any(), args.event.SpaceID, args.event.Session, gomock.Any(), gomock.Any()).Return(errors.New("complete expt error")).Times(1)
 			},
 			wantNextTick: false,
 			wantErr:      true,
@@ -1567,14 +1569,12 @@ func TestExptAppendExec_ScanEvalItems(t *testing.T) {
 			},
 			prepareMock: func(f *fields, ctrl *gomock.Controller, args args) {
 				f.configer.EXPECT().GetExptExecConf(gomock.Any(), gomock.Any()).Return(&entity.ExptExecConf{ExptItemEvalConf: &entity.ExptItemEvalConf{ConcurNum: 3}}).Times(1)
-				f.exptItemResultRepo.EXPECT().ScanItemRunLogs(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]*entity.ExptItemResultRunLog{
+				f.exptItemResultRepo.EXPECT().ScanItemRunLogs(gomock.Any(), int64(1), int64(2), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]*entity.ExptItemResultRunLog{
 					{ItemID: 1, Status: int32(entity.ItemRunState_Processing)},
-				}, int64(1), nil).Times(1)
+					{ItemID: 3, Status: int32(entity.ItemRunState_Success), ResultState: int32(entity.ExptItemResultStateLogged)},
+				}, int64(0), nil).Times(1)
 				f.exptItemResultRepo.EXPECT().ScanItemRunLogs(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]*entity.ExptItemResultRunLog{
 					{ItemID: 2, Status: int32(entity.ItemRunState_Queueing)},
-				}, int64(1), nil).Times(1)
-				f.exptItemResultRepo.EXPECT().ScanItemRunLogs(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]*entity.ExptItemResultRunLog{
-					{ItemID: 3, Status: int32(entity.ItemRunState_Success)},
 				}, int64(1), nil).Times(1)
 			},
 			wantToSubmit: []*entity.ExptEvalItem{
@@ -1666,11 +1666,20 @@ func TestExptAppendExec_ScanEvalItems(t *testing.T) {
 func TestExptAppendExec_ExptEnd(t *testing.T) {
 	testUserID := "test_user_id_123"
 
+	mockExptWithEvalSet := &entity.Experiment{
+		ID: 1, SpaceID: 3, Status: entity.ExptStatus_Draining,
+		EvalConf: &entity.EvaluationConfiguration{},
+		EvalSet: &entity.EvaluationSet{
+			EvaluationSetVersion: &entity.EvaluationSetVersion{ID: 1},
+		},
+	}
+
 	type fields struct {
 		manager            *svcmocks.MockIExptManager
 		exptItemResultRepo *mock_repo.MockIExptItemResultRepo
 		idem               *idemmocks.MockIdempotentService
 		configer           *configmocks.MockIConfiger
+		mutex              *lockMocks.MockILocker
 	}
 
 	type args struct {
@@ -1699,10 +1708,20 @@ func TestExptAppendExec_ExptEnd(t *testing.T) {
 				incomplete: 0,
 			},
 			prepareMock: func(f *fields, ctrl *gomock.Controller, args args) {
+				f.mutex.EXPECT().LockBackoff(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(true, nil).Times(1)
+				f.mutex.EXPECT().UnlockForce(gomock.Any(), gomock.Any()).Return(true, nil).Times(1)
+				f.mutex.EXPECT().Unlock(gomock.Any()).Return(true, nil).Times(1)
+				f.manager.EXPECT().GetDetail(gomock.Any(), args.event.ExptID, args.event.SpaceID, gomock.Any()).Return(mockExptWithEvalSet, nil).Times(1)
+				execConf := &entity.ExptExecConf{
+					ZombieIntervalSecond: 100,
+					ExptItemEvalConf:     &entity.ExptItemEvalConf{ConcurNum: 1},
+				}
+				f.configer.EXPECT().GetExptExecConf(gomock.Any(), args.event.SpaceID).Return(execConf).AnyTimes()
+				f.exptItemResultRepo.EXPECT().ScanItemRunLogs(gomock.Any(), args.event.ExptID, args.event.ExptRunID, gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]*entity.ExptItemResultRunLog{}, int64(0), nil).Times(1)
+				f.exptItemResultRepo.EXPECT().ScanItemRunLogs(gomock.Any(), args.event.ExptID, args.event.ExptRunID, gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]*entity.ExptItemResultRunLog{}, int64(0), nil).Times(1)
 				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil).Times(1)
-				f.manager.EXPECT().CompleteRun(gomock.Any(), args.event.ExptID, args.event.ExptRunID, args.event.ExptRunMode, args.event.SpaceID, args.event.Session, gomock.Any()).Return(nil).Times(1)
-				f.manager.EXPECT().CompleteExpt(gomock.Any(), args.event.ExptID, args.event.SpaceID, args.event.Session, gomock.Any()).Return(nil).Times(1)
-				f.configer.EXPECT().GetExptExecConf(gomock.Any(), args.event.SpaceID).Return(&entity.ExptExecConf{ZombieIntervalSecond: 100}).Times(1)
+				f.manager.EXPECT().CompleteRun(gomock.Any(), args.event.ExptID, args.event.ExptRunID, args.event.SpaceID, args.event.Session, gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.manager.EXPECT().CompleteExpt(gomock.Any(), args.event.ExptID, gomock.Any(), args.event.SpaceID, args.event.Session, gomock.Any(), gomock.Any()).Return(nil).Times(1)
 				f.idem.EXPECT().Set(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
 			},
 			wantNextTick: false,
@@ -1718,7 +1737,18 @@ func TestExptAppendExec_ExptEnd(t *testing.T) {
 				toSubmit:   1,
 				incomplete: 1,
 			},
-			prepareMock:  func(f *fields, ctrl *gomock.Controller, args args) {},
+			prepareMock: func(f *fields, ctrl *gomock.Controller, args args) {
+				f.mutex.EXPECT().LockBackoff(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(true, nil).Times(1)
+				f.mutex.EXPECT().Unlock(gomock.Any()).Return(true, nil).Times(1)
+				f.manager.EXPECT().GetDetail(gomock.Any(), args.event.ExptID, args.event.SpaceID, gomock.Any()).Return(mockExptWithEvalSet, nil).Times(1)
+				f.configer.EXPECT().GetExptExecConf(gomock.Any(), args.event.SpaceID).Return(&entity.ExptExecConf{ExptItemEvalConf: &entity.ExptItemEvalConf{ConcurNum: 2}}).AnyTimes()
+				f.exptItemResultRepo.EXPECT().ScanItemRunLogs(gomock.Any(), args.event.ExptID, args.event.ExptRunID, gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]*entity.ExptItemResultRunLog{
+					{ItemID: 1, Status: int32(entity.ItemRunState_Processing)},
+				}, int64(0), nil).Times(1)
+				f.exptItemResultRepo.EXPECT().ScanItemRunLogs(gomock.Any(), args.event.ExptID, args.event.ExptRunID, gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]*entity.ExptItemResultRunLog{
+					{ItemID: 2, Status: int32(entity.ItemRunState_Queueing)},
+				}, int64(1), nil).Times(1)
+			},
 			wantNextTick: true,
 			wantErr:      false,
 			assertErr:    func(t *testing.T, err error) { assert.NoError(t, err) },
@@ -1733,6 +1763,13 @@ func TestExptAppendExec_ExptEnd(t *testing.T) {
 				incomplete: 0,
 			},
 			prepareMock: func(f *fields, ctrl *gomock.Controller, args args) {
+				f.mutex.EXPECT().LockBackoff(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(true, nil).Times(1)
+				f.mutex.EXPECT().UnlockForce(gomock.Any(), gomock.Any()).Return(true, nil).Times(1)
+				f.mutex.EXPECT().Unlock(gomock.Any()).Return(true, nil).Times(1)
+				f.manager.EXPECT().GetDetail(gomock.Any(), args.event.ExptID, args.event.SpaceID, gomock.Any()).Return(mockExptWithEvalSet, nil).Times(1)
+				f.configer.EXPECT().GetExptExecConf(gomock.Any(), args.event.SpaceID).Return(&entity.ExptExecConf{ExptItemEvalConf: &entity.ExptItemEvalConf{ConcurNum: 1}}).AnyTimes()
+				f.exptItemResultRepo.EXPECT().ScanItemRunLogs(gomock.Any(), args.event.ExptID, args.event.ExptRunID, gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]*entity.ExptItemResultRunLog{}, int64(0), nil).Times(1)
+				f.exptItemResultRepo.EXPECT().ScanItemRunLogs(gomock.Any(), args.event.ExptID, args.event.ExptRunID, gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]*entity.ExptItemResultRunLog{}, int64(0), nil).Times(1)
 				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(true, nil).Times(1)
 			},
 			wantNextTick: false,
@@ -1751,6 +1788,7 @@ func TestExptAppendExec_ExptEnd(t *testing.T) {
 				exptItemResultRepo: mock_repo.NewMockIExptItemResultRepo(ctrl),
 				idem:               idemmocks.NewMockIdempotentService(ctrl),
 				configer:           configmocks.NewMockIConfiger(ctrl),
+				mutex:              lockMocks.NewMockILocker(ctrl),
 			}
 
 			if tt.prepareMock != nil {
@@ -1762,6 +1800,7 @@ func TestExptAppendExec_ExptEnd(t *testing.T) {
 				exptItemResultRepo: f.exptItemResultRepo,
 				idem:               f.idem,
 				configer:           f.configer,
+				mutex:              f.mutex,
 			}
 
 			gotNextTick, err := svc.ExptEnd(tt.args.ctx, tt.args.event, tt.args.expt, tt.args.toSubmit, tt.args.incomplete)
@@ -1862,96 +1901,6 @@ func TestExptAppendExec_ScheduleStart(t *testing.T) {
 	}
 }
 
-func TestExptAppendExec_ScheduleEnd(t *testing.T) {
-	testUserID := "test_user_id_123"
-
-	type fields struct {
-		manager            *svcmocks.MockIExptManager
-		exptRepo           *mock_repo.MockIExperimentRepo
-		exptItemResultRepo *mock_repo.MockIExptItemResultRepo
-		idem               *idemmocks.MockIdempotentService
-		configer           *configmocks.MockIConfiger
-	}
-
-	type args struct {
-		ctx        context.Context
-		event      *entity.ExptScheduleEvent
-		expt       *entity.Experiment
-		toSubmit   int
-		incomplete int
-	}
-
-	tests := []struct {
-		name        string
-		prepareMock func(f *fields, ctrl *gomock.Controller, args args)
-		args        args
-		wantErr     bool
-		assertErr   func(t *testing.T, err error)
-	}{
-		{
-			name: "正常流程-无数据未完成",
-			args: args{
-				ctx:        session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
-				event:      &entity.ExptScheduleEvent{ExptID: 1, ExptRunID: 2, SpaceID: 3, ExptRunMode: 1, Session: &entity.Session{UserID: testUserID}},
-				expt:       &entity.Experiment{ID: 1, SpaceID: 3, Status: entity.ExptStatus_Processing},
-				toSubmit:   0,
-				incomplete: 0,
-			},
-			prepareMock: func(f *fields, ctrl *gomock.Controller, args args) {
-				f.manager.EXPECT().PendRun(gomock.Any(), args.event.ExptID, args.event.ExptRunID, args.event.SpaceID, args.event.Session).Return(nil).Times(1)
-				f.manager.EXPECT().PendExpt(gomock.Any(), args.event.ExptID, args.event.SpaceID, args.event.Session).Return(nil).Times(1)
-			},
-			wantErr:   false,
-			assertErr: func(t *testing.T, err error) { assert.NoError(t, err) },
-		},
-		{
-			name: "正常流程-已完成",
-			args: args{
-				ctx:        session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
-				event:      &entity.ExptScheduleEvent{ExptID: 1, ExptRunID: 2, SpaceID: 3, ExptRunMode: 1, Session: &entity.Session{UserID: testUserID}},
-				expt:       &entity.Experiment{ID: 1, SpaceID: 3, Status: entity.ExptStatus_Success},
-				toSubmit:   0,
-				incomplete: 0,
-			},
-			prepareMock: func(f *fields, ctrl *gomock.Controller, args args) {},
-			wantErr:     false,
-			assertErr:   func(t *testing.T, err error) { assert.NoError(t, err) },
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctrl := gomock.NewController(t)
-			defer ctrl.Finish()
-
-			f := &fields{
-				manager:            svcmocks.NewMockIExptManager(ctrl),
-				exptRepo:           mock_repo.NewMockIExperimentRepo(ctrl),
-				exptItemResultRepo: mock_repo.NewMockIExptItemResultRepo(ctrl),
-				idem:               idemmocks.NewMockIdempotentService(ctrl),
-				configer:           configmocks.NewMockIConfiger(ctrl),
-			}
-
-			if tt.prepareMock != nil {
-				tt.prepareMock(f, ctrl, tt.args)
-			}
-
-			svc := &ExptAppendExec{
-				manager:            f.manager,
-				exptRepo:           f.exptRepo,
-				exptItemResultRepo: f.exptItemResultRepo,
-				idem:               f.idem,
-				configer:           f.configer,
-			}
-
-			err := svc.ScheduleEnd(tt.args.ctx, tt.args.event, tt.args.expt, tt.args.toSubmit, tt.args.incomplete)
-			if tt.assertErr != nil {
-				tt.assertErr(t, err)
-			}
-		})
-	}
-}
-
 func TestExptAppendExec_NextTick(t *testing.T) {
 	testUserID := "test_user_id_123"
 	type fields struct {
@@ -1989,20 +1938,6 @@ func TestExptAppendExec_NextTick(t *testing.T) {
 				// 显式指定调用次数为 1 次
 				f.configer.EXPECT().GetExptExecConf(gomock.Any(), args.event.SpaceID).Return(&entity.ExptExecConf{DaemonIntervalSecond: 5}).Times(1)
 				f.publisher.EXPECT().PublishExptScheduleEvent(gomock.Any(), args.event, gomock.Any()).Return(nil).Times(1)
-			},
-			wantErr:   false,
-			assertErr: func(t *testing.T, err error) { assert.NoError(t, err) },
-		},
-		{
-			name: "正常流程-不需要下一次调度",
-			args: args{
-				ctx:      session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
-				event:    &entity.ExptScheduleEvent{ExptID: 1, ExptRunID: 2, SpaceID: 3, ExptRunMode: 1, Session: &entity.Session{UserID: testUserID}},
-				nextTick: false,
-			},
-			prepareMock: func(f *fields, ctrl *gomock.Controller, args args) {
-				// 不需要下一次调度时，不应该调用 GetExptExecConf 和 PublishExptScheduleEvent
-				// 这里不设置预期调用
 			},
 			wantErr:   false,
 			assertErr: func(t *testing.T, err error) { assert.NoError(t, err) },
@@ -2065,6 +2000,9 @@ func TestNewSchedulerModeFactory(t *testing.T) {
 	publisher := eventmocks.NewMockExptEventPublisher(ctrl)
 	evaluatorRecordService := svcmocks.NewMockEvaluatorRecordService(ctrl)
 	resultService := svcmocks.NewMockExptResultService(ctrl)
+	templateManager := svcmocks.NewMockIExptTemplateManager(ctrl)
+	mockExptRunLogRepo := mock_repo.NewMockIExptRunLogRepo(ctrl)
+	mutex := lockMocks.NewMockILocker(ctrl)
 
 	factory := NewSchedulerModeFactory(
 		manager,
@@ -2079,6 +2017,9 @@ func TestNewSchedulerModeFactory(t *testing.T) {
 		publisher,
 		evaluatorRecordService,
 		resultService,
+		templateManager,
+		mockExptRunLogRepo,
+		mutex,
 	)
 
 	tests := []struct {
@@ -2127,6 +2068,645 @@ func TestNewSchedulerModeFactory(t *testing.T) {
 	}
 }
 
+func TestExptTrialRunExec_Mode(t *testing.T) {
+	exec := &ExptTrialRunExec{ExptSubmitExec: &ExptSubmitExec{}}
+	assert.Equal(t, entity.EvaluationModeTrialRun, exec.Mode())
+}
+
+func TestNewExptTrialRunMode(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	manager := svcmocks.NewMockIExptManager(ctrl)
+	itemRepo := mock_repo.NewMockIExptItemResultRepo(ctrl)
+	statsRepo := mock_repo.NewMockIExptStatsRepo(ctrl)
+	turnRepo := mock_repo.NewMockIExptTurnResultRepo(ctrl)
+	idgen := idgenmocks.NewMockIIDGenerator(ctrl)
+	evalSetItemSvc := svcmocks.NewMockEvaluationSetItemService(ctrl)
+	exptRepo := mock_repo.NewMockIExperimentRepo(ctrl)
+	idem := idemmocks.NewMockIdempotentService(ctrl)
+	configer := configmocks.NewMockIConfiger(ctrl)
+	publisher := eventmocks.NewMockExptEventPublisher(ctrl)
+	evalRecordSvc := svcmocks.NewMockEvaluatorRecordService(ctrl)
+	resultSvc := svcmocks.NewMockExptResultService(ctrl)
+	templateMgr := svcmocks.NewMockIExptTemplateManager(ctrl)
+
+	exec := NewExptTrialRunMode(manager, itemRepo, statsRepo, turnRepo, idgen, evalSetItemSvc, exptRepo, idem, configer, publisher, evalRecordSvc, resultSvc, templateMgr)
+	assert.NotNil(t, exec)
+	assert.NotNil(t, exec.ExptSubmitExec)
+	assert.Equal(t, entity.EvaluationModeTrialRun, exec.Mode())
+}
+
+func TestExptTrialRunExec_ExptStart(t *testing.T) {
+	type trialFields struct {
+		manager                  *svcmocks.MockIExptManager
+		exptItemResultRepo       *mock_repo.MockIExptItemResultRepo
+		exptTurnResultRepo       *mock_repo.MockIExptTurnResultRepo
+		exptStatsRepo            *mock_repo.MockIExptStatsRepo
+		idgenerator              *idgenmocks.MockIIDGenerator
+		evaluationSetItemService *svcmocks.MockEvaluationSetItemService
+		exptRepo                 *mock_repo.MockIExperimentRepo
+		idem                     *idemmocks.MockIdempotentService
+		configer                 *configmocks.MockIConfiger
+		publisher                *eventmocks.MockExptEventPublisher
+		resultSvc                *svcmocks.MockExptResultService
+		evaluatorRecordService   *svcmocks.MockEvaluatorRecordService
+		templateManager          *svcmocks.MockIExptTemplateManager
+	}
+
+	newTrialFields := func(ctrl *gomock.Controller) *trialFields {
+		return &trialFields{
+			manager:                  svcmocks.NewMockIExptManager(ctrl),
+			exptItemResultRepo:       mock_repo.NewMockIExptItemResultRepo(ctrl),
+			exptTurnResultRepo:       mock_repo.NewMockIExptTurnResultRepo(ctrl),
+			exptStatsRepo:            mock_repo.NewMockIExptStatsRepo(ctrl),
+			idgenerator:              idgenmocks.NewMockIIDGenerator(ctrl),
+			evaluationSetItemService: svcmocks.NewMockEvaluationSetItemService(ctrl),
+			exptRepo:                 mock_repo.NewMockIExperimentRepo(ctrl),
+			idem:                     idemmocks.NewMockIdempotentService(ctrl),
+			configer:                 configmocks.NewMockIConfiger(ctrl),
+			publisher:                eventmocks.NewMockExptEventPublisher(ctrl),
+			resultSvc:                svcmocks.NewMockExptResultService(ctrl),
+			evaluatorRecordService:   svcmocks.NewMockEvaluatorRecordService(ctrl),
+			templateManager:          svcmocks.NewMockIExptTemplateManager(ctrl),
+		}
+	}
+
+	buildExec := func(f *trialFields) *ExptTrialRunExec {
+		return &ExptTrialRunExec{
+			ExptSubmitExec: &ExptSubmitExec{
+				manager:                  f.manager,
+				exptItemResultRepo:       f.exptItemResultRepo,
+				exptTurnResultRepo:       f.exptTurnResultRepo,
+				exptStatsRepo:            f.exptStatsRepo,
+				idgenerator:              f.idgenerator,
+				evaluationSetItemService: f.evaluationSetItemService,
+				exptRepo:                 f.exptRepo,
+				idem:                     f.idem,
+				configer:                 f.configer,
+				publisher:                f.publisher,
+				resultSvc:                f.resultSvc,
+				evaluatorRecordService:   f.evaluatorRecordService,
+				templateManager:          f.templateManager,
+			},
+		}
+	}
+
+	baseEvent := &entity.ExptScheduleEvent{
+		ExptID:    1,
+		ExptRunID: 2,
+		SpaceID:   3,
+		Session:   &entity.Session{UserID: "u1"},
+	}
+
+	tests := []struct {
+		name        string
+		expt        *entity.Experiment
+		prepareMock func(f *trialFields)
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name: "nil ExptSubmitExec returns nil",
+			expt: &entity.Experiment{TrialRunItemCount: 5},
+			prepareMock: func(f *trialFields) {
+			},
+			wantErr: false,
+		},
+		{
+			name: "TrialRunItemCount <= 0 delegates to ExptSubmitExec.ExptStart",
+			expt: &entity.Experiment{
+				TrialRunItemCount: 0,
+				EvalSet:           &entity.EvaluationSet{ID: 10, EvaluationSetVersion: &entity.EvaluationSetVersion{ID: 20}},
+			},
+			prepareMock: func(f *trialFields) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(true, nil)
+			},
+			wantErr: false,
+		},
+		{
+			name: "idem already exists returns nil",
+			expt: &entity.Experiment{
+				TrialRunItemCount: 5,
+				EvalSet:           &entity.EvaluationSet{ID: 10, EvaluationSetVersion: &entity.EvaluationSetVersion{ID: 20}},
+			},
+			prepareMock: func(f *trialFields) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(true, nil)
+			},
+			wantErr: false,
+		},
+		{
+			name: "idem check error",
+			expt: &entity.Experiment{
+				TrialRunItemCount: 5,
+				EvalSet:           &entity.EvaluationSet{ID: 10, EvaluationSetVersion: &entity.EvaluationSetVersion{ID: 20}},
+			},
+			prepareMock: func(f *trialFields) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, errors.New("idem err"))
+			},
+			wantErr:     true,
+			errContains: "idem err",
+		},
+		{
+			name: "ListEvaluationSetItems error",
+			expt: &entity.Experiment{
+				TrialRunItemCount: 5,
+				EvalSet:           &entity.EvaluationSet{ID: 10, EvaluationSetVersion: &entity.EvaluationSetVersion{ID: 20}},
+			},
+			prepareMock: func(f *trialFields) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil)
+				f.evaluationSetItemService.EXPECT().ListEvaluationSetItems(gomock.Any(), gomock.Any()).
+					Return(nil, nil, nil, nil, errors.New("list items err"))
+			},
+			wantErr:     true,
+			errContains: "list items err",
+		},
+		{
+			name: "GenMultiIDs error",
+			expt: &entity.Experiment{
+				TrialRunItemCount: 5,
+				EvalSet:           &entity.EvaluationSet{ID: 10, EvaluationSetVersion: &entity.EvaluationSetVersion{ID: 20}},
+			},
+			prepareMock: func(f *trialFields) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil)
+				f.evaluationSetItemService.EXPECT().ListEvaluationSetItems(gomock.Any(), gomock.Any()).
+					Return([]*entity.EvaluationSetItem{
+						{ItemID: 1, Turns: []*entity.Turn{{ID: 1}}},
+					}, ptr.Of(int64(1)), nil, nil, nil)
+				f.idgenerator.EXPECT().GenMultiIDs(gomock.Any(), 2).Return(nil, errors.New("idgen err"))
+			},
+			wantErr:     true,
+			errContains: "idgen err",
+		},
+		{
+			name: "success with TrialRunItemCount=2 items limited",
+			expt: &entity.Experiment{
+				TrialRunItemCount: 2,
+				EvalSet:           &entity.EvaluationSet{ID: 10, EvaluationSetVersion: &entity.EvaluationSetVersion{ID: 20}},
+				ExptTemplateMeta:  &entity.ExptTemplateMeta{ID: 100},
+			},
+			prepareMock: func(f *trialFields) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil)
+				f.evaluationSetItemService.EXPECT().ListEvaluationSetItems(gomock.Any(), gomock.Any()).
+					Return([]*entity.EvaluationSetItem{
+						{ItemID: 1, Turns: []*entity.Turn{{ID: 10}}},
+						{ItemID: 2, Turns: []*entity.Turn{{ID: 20}}},
+						{ItemID: 3, Turns: []*entity.Turn{{ID: 30}}},
+					}, ptr.Of(int64(3)), nil, nil, nil)
+				f.idgenerator.EXPECT().GenMultiIDs(gomock.Any(), 4).Return([]int64{101, 102, 103, 104}, nil)
+				f.exptTurnResultRepo.EXPECT().BatchCreateNX(gomock.Any(), gomock.Any()).Return(nil)
+				f.exptItemResultRepo.EXPECT().BatchCreateNX(gomock.Any(), gomock.Any()).Return(nil)
+				f.idgenerator.EXPECT().GenMultiIDs(gomock.Any(), gomock.Any()).Return([]int64{201, 202}, nil)
+				f.exptItemResultRepo.EXPECT().BatchCreateNXRunLogs(gomock.Any(), gomock.Any()).Return(nil)
+				f.resultSvc.EXPECT().UpsertExptTurnResultFilter(gomock.Any(), int64(3), int64(1), gomock.Any()).Return(nil)
+				f.exptStatsRepo.EXPECT().UpdateByExptID(gomock.Any(), int64(1), int64(3), gomock.Any()).Return(nil)
+				f.exptRepo.EXPECT().Update(gomock.Any(), gomock.Any()).Return(nil)
+				f.templateManager.EXPECT().UpdateExptInfo(gomock.Any(), int64(100), int64(3), int64(1), entity.ExptStatus_Processing, gomock.Any(), gomock.Any()).Return(nil)
+				f.configer.EXPECT().GetExptExecConf(gomock.Any(), int64(3)).Return(&entity.ExptExecConf{ZombieIntervalSecond: 1})
+				f.idem.EXPECT().Set(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+			},
+			wantErr: false,
+		},
+		{
+			name: "UpdateByExptID error",
+			expt: &entity.Experiment{
+				TrialRunItemCount: 1,
+				EvalSet:           &entity.EvaluationSet{ID: 10, EvaluationSetVersion: &entity.EvaluationSetVersion{ID: 20}},
+			},
+			prepareMock: func(f *trialFields) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil)
+				f.evaluationSetItemService.EXPECT().ListEvaluationSetItems(gomock.Any(), gomock.Any()).
+					Return([]*entity.EvaluationSetItem{
+						{ItemID: 1, Turns: []*entity.Turn{{ID: 10}}},
+					}, ptr.Of(int64(1)), nil, nil, nil)
+				f.idgenerator.EXPECT().GenMultiIDs(gomock.Any(), 2).Return([]int64{101, 102}, nil)
+				f.exptTurnResultRepo.EXPECT().BatchCreateNX(gomock.Any(), gomock.Any()).Return(nil)
+				f.exptItemResultRepo.EXPECT().BatchCreateNX(gomock.Any(), gomock.Any()).Return(nil)
+				f.idgenerator.EXPECT().GenMultiIDs(gomock.Any(), gomock.Any()).Return([]int64{201}, nil)
+				f.exptItemResultRepo.EXPECT().BatchCreateNXRunLogs(gomock.Any(), gomock.Any()).Return(nil)
+				f.resultSvc.EXPECT().UpsertExptTurnResultFilter(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				f.exptStatsRepo.EXPECT().UpdateByExptID(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("stats err"))
+			},
+			wantErr:     true,
+			errContains: "stats err",
+		},
+		{
+			name: "exptRepo Update error",
+			expt: &entity.Experiment{
+				TrialRunItemCount: 1,
+				EvalSet:           &entity.EvaluationSet{ID: 10, EvaluationSetVersion: &entity.EvaluationSetVersion{ID: 20}},
+			},
+			prepareMock: func(f *trialFields) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil)
+				f.evaluationSetItemService.EXPECT().ListEvaluationSetItems(gomock.Any(), gomock.Any()).
+					Return([]*entity.EvaluationSetItem{
+						{ItemID: 1, Turns: []*entity.Turn{{ID: 10}}},
+					}, ptr.Of(int64(1)), nil, nil, nil)
+				f.idgenerator.EXPECT().GenMultiIDs(gomock.Any(), 2).Return([]int64{101, 102}, nil)
+				f.exptTurnResultRepo.EXPECT().BatchCreateNX(gomock.Any(), gomock.Any()).Return(nil)
+				f.exptItemResultRepo.EXPECT().BatchCreateNX(gomock.Any(), gomock.Any()).Return(nil)
+				f.idgenerator.EXPECT().GenMultiIDs(gomock.Any(), gomock.Any()).Return([]int64{201}, nil)
+				f.exptItemResultRepo.EXPECT().BatchCreateNXRunLogs(gomock.Any(), gomock.Any()).Return(nil)
+				f.resultSvc.EXPECT().UpsertExptTurnResultFilter(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				f.exptStatsRepo.EXPECT().UpdateByExptID(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				f.exptRepo.EXPECT().Update(gomock.Any(), gomock.Any()).Return(errors.New("update err"))
+			},
+			wantErr:     true,
+			errContains: "update err",
+		},
+		{
+			name: "template update from exptRepo.GetByID",
+			expt: &entity.Experiment{
+				TrialRunItemCount: 1,
+				EvalSet:           &entity.EvaluationSet{ID: 10, EvaluationSetVersion: &entity.EvaluationSetVersion{ID: 20}},
+				ExptTemplateMeta:  nil,
+			},
+			prepareMock: func(f *trialFields) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil)
+				f.evaluationSetItemService.EXPECT().ListEvaluationSetItems(gomock.Any(), gomock.Any()).
+					Return([]*entity.EvaluationSetItem{
+						{ItemID: 1, Turns: []*entity.Turn{{ID: 10}}},
+					}, ptr.Of(int64(1)), nil, nil, nil)
+				f.idgenerator.EXPECT().GenMultiIDs(gomock.Any(), 2).Return([]int64{101, 102}, nil)
+				f.exptTurnResultRepo.EXPECT().BatchCreateNX(gomock.Any(), gomock.Any()).Return(nil)
+				f.exptItemResultRepo.EXPECT().BatchCreateNX(gomock.Any(), gomock.Any()).Return(nil)
+				f.idgenerator.EXPECT().GenMultiIDs(gomock.Any(), gomock.Any()).Return([]int64{201}, nil)
+				f.exptItemResultRepo.EXPECT().BatchCreateNXRunLogs(gomock.Any(), gomock.Any()).Return(nil)
+				f.resultSvc.EXPECT().UpsertExptTurnResultFilter(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				f.exptStatsRepo.EXPECT().UpdateByExptID(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				f.exptRepo.EXPECT().Update(gomock.Any(), gomock.Any()).Return(nil)
+				f.exptRepo.EXPECT().GetByID(gomock.Any(), int64(1), int64(3)).Return(&entity.Experiment{
+					ExptTemplateMeta: &entity.ExptTemplateMeta{ID: 200},
+				}, nil)
+				f.templateManager.EXPECT().UpdateExptInfo(gomock.Any(), int64(200), int64(3), int64(1), entity.ExptStatus_Processing, gomock.Any(), gomock.Any()).Return(nil)
+				f.configer.EXPECT().GetExptExecConf(gomock.Any(), int64(3)).Return(&entity.ExptExecConf{ZombieIntervalSecond: 1})
+				f.idem.EXPECT().Set(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+			},
+			wantErr: false,
+		},
+		{
+			name: "empty items returns immediately",
+			expt: &entity.Experiment{
+				TrialRunItemCount: 5,
+				EvalSet:           &entity.EvaluationSet{ID: 10, EvaluationSetVersion: &entity.EvaluationSetVersion{ID: 20}},
+			},
+			prepareMock: func(f *trialFields) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil)
+				f.evaluationSetItemService.EXPECT().ListEvaluationSetItems(gomock.Any(), gomock.Any()).
+					Return([]*entity.EvaluationSetItem{}, ptr.Of(int64(0)), nil, nil, nil)
+				f.idgenerator.EXPECT().GenMultiIDs(gomock.Any(), 0).Return([]int64{}, nil)
+				f.exptTurnResultRepo.EXPECT().BatchCreateNX(gomock.Any(), gomock.Any()).Return(nil)
+				f.exptItemResultRepo.EXPECT().BatchCreateNX(gomock.Any(), gomock.Any()).Return(nil)
+				f.idgenerator.EXPECT().GenMultiIDs(gomock.Any(), gomock.Any()).Return([]int64{}, nil)
+				f.exptItemResultRepo.EXPECT().BatchCreateNXRunLogs(gomock.Any(), gomock.Any()).Return(nil)
+				f.resultSvc.EXPECT().UpsertExptTurnResultFilter(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				f.exptStatsRepo.EXPECT().UpdateByExptID(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				f.exptRepo.EXPECT().Update(gomock.Any(), gomock.Any()).Return(nil)
+				f.exptRepo.EXPECT().GetByID(gomock.Any(), gomock.Any(), gomock.Any()).Return(&entity.Experiment{}, nil)
+				f.configer.EXPECT().GetExptExecConf(gomock.Any(), gomock.Any()).Return(&entity.ExptExecConf{ZombieIntervalSecond: 1})
+				f.idem.EXPECT().Set(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			if tt.name == "nil ExptSubmitExec returns nil" {
+				exec := &ExptTrialRunExec{ExptSubmitExec: nil}
+				err := exec.ExptStart(context.Background(), baseEvent, tt.expt)
+				assert.NoError(t, err)
+				return
+			}
+
+			f := newTrialFields(ctrl)
+			tt.prepareMock(f)
+			exec := buildExec(f)
+
+			err := exec.ExptStart(context.Background(), baseEvent, tt.expt)
+			if tt.wantErr {
+				assert.Error(t, err)
+				if tt.errContains != "" {
+					assert.Contains(t, err.Error(), tt.errContains)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestExptSubmitExec_createItemTurnResults_errors(t *testing.T) {
+	type fields struct {
+		exptItemResultRepo *mock_repo.MockIExptItemResultRepo
+		exptTurnResultRepo *mock_repo.MockIExptTurnResultRepo
+		idgenerator        *idgenmocks.MockIIDGenerator
+	}
+
+	eirs := []*entity.ExptItemResult{
+		{ID: 100, SpaceID: 3, ExptID: 1, ExptRunID: 2, ItemID: 10, Status: entity.ItemRunState_Queueing},
+	}
+	etrs := []*entity.ExptTurnResult{
+		{ID: 200, SpaceID: 3, ExptID: 1, ExptRunID: 2, ItemID: 10, TurnID: 20, Status: int32(entity.TurnRunState_Queueing)},
+	}
+
+	tests := []struct {
+		name        string
+		prepareMock func(f *fields)
+		assertErr   func(t *testing.T, err error)
+	}{
+		{
+			name: "BatchCreateNX_turn_results_fail",
+			prepareMock: func(f *fields) {
+				f.exptTurnResultRepo.EXPECT().BatchCreateNX(gomock.Any(), gomock.Any()).Return(errors.New("turn batch err"))
+			},
+			assertErr: func(t *testing.T, err error) {
+				assert.ErrorContains(t, err, "turn batch err")
+			},
+		},
+		{
+			name: "BatchCreateNX_item_results_fail",
+			prepareMock: func(f *fields) {
+				f.exptTurnResultRepo.EXPECT().BatchCreateNX(gomock.Any(), gomock.Any()).Return(nil)
+				f.exptItemResultRepo.EXPECT().BatchCreateNX(gomock.Any(), gomock.Any()).Return(errors.New("item batch err"))
+			},
+			assertErr: func(t *testing.T, err error) {
+				assert.ErrorContains(t, err, "item batch err")
+			},
+		},
+		{
+			name: "GenMultiIDs_fail",
+			prepareMock: func(f *fields) {
+				f.exptTurnResultRepo.EXPECT().BatchCreateNX(gomock.Any(), gomock.Any()).Return(nil)
+				f.exptItemResultRepo.EXPECT().BatchCreateNX(gomock.Any(), gomock.Any()).Return(nil)
+				f.idgenerator.EXPECT().GenMultiIDs(gomock.Any(), gomock.Any()).Return(nil, errors.New("gen id err"))
+			},
+			assertErr: func(t *testing.T, err error) {
+				assert.ErrorContains(t, err, "gen id err")
+			},
+		},
+		{
+			name: "BatchCreateNXRunLogs_fail",
+			prepareMock: func(f *fields) {
+				f.exptTurnResultRepo.EXPECT().BatchCreateNX(gomock.Any(), gomock.Any()).Return(nil)
+				f.exptItemResultRepo.EXPECT().BatchCreateNX(gomock.Any(), gomock.Any()).Return(nil)
+				f.idgenerator.EXPECT().GenMultiIDs(gomock.Any(), gomock.Any()).Return([]int64{999}, nil)
+				f.exptItemResultRepo.EXPECT().BatchCreateNXRunLogs(gomock.Any(), gomock.Any()).Return(errors.New("run logs err"))
+			},
+			assertErr: func(t *testing.T, err error) {
+				assert.ErrorContains(t, err, "run logs err")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			f := &fields{
+				exptItemResultRepo: mock_repo.NewMockIExptItemResultRepo(ctrl),
+				exptTurnResultRepo: mock_repo.NewMockIExptTurnResultRepo(ctrl),
+				idgenerator:        idgenmocks.NewMockIIDGenerator(ctrl),
+			}
+			tt.prepareMock(f)
+
+			e := &ExptSubmitExec{
+				exptItemResultRepo: f.exptItemResultRepo,
+				exptTurnResultRepo: f.exptTurnResultRepo,
+				idgenerator:        f.idgenerator,
+			}
+
+			err := e.createItemTurnResults(context.Background(), eirs, etrs, nil)
+			tt.assertErr(t, err)
+		})
+	}
+}
+
+func TestExptSubmitExec_ExptStart_error_scenarios(t *testing.T) {
+	testUserID := "test_user_id_123"
+	mockExpt := &entity.Experiment{
+		ID:      1,
+		SpaceID: 3,
+		EvalSet: &entity.EvaluationSet{
+			ID: 1, SpaceID: 3,
+			EvaluationSetVersion: &entity.EvaluationSetVersion{ID: 1, SpaceID: 3, EvaluationSetID: 1},
+		},
+	}
+
+	type fields struct {
+		manager                  *svcmocks.MockIExptManager
+		exptItemResultRepo       *mock_repo.MockIExptItemResultRepo
+		exptTurnResultRepo       *mock_repo.MockIExptTurnResultRepo
+		exptStatsRepo            *mock_repo.MockIExptStatsRepo
+		idgenerator              *idgenmocks.MockIIDGenerator
+		evaluationSetItemService *svcmocks.MockEvaluationSetItemService
+		exptRepo                 *mock_repo.MockIExperimentRepo
+		idem                     *idemmocks.MockIdempotentService
+		configer                 *configmocks.MockIConfiger
+		publisher                *eventmocks.MockExptEventPublisher
+		resultSvc                *svcmocks.MockExptResultService
+		evaluatorRecordService   *svcmocks.MockEvaluatorRecordService
+		templateManager          *svcmocks.MockIExptTemplateManager
+	}
+
+	type args struct {
+		ctx   context.Context
+		event *entity.ExptScheduleEvent
+		expt  *entity.Experiment
+	}
+
+	tests := []struct {
+		name        string
+		prepareMock func(f *fields, ctrl *gomock.Controller, args args)
+		args        args
+		assertErr   func(t *testing.T, err error)
+	}{
+		{
+			name: "ListEvaluationSetItems_error",
+			args: args{
+				ctx: context.Background(),
+				event: &entity.ExptScheduleEvent{
+					ExptID: 1, ExptRunID: 2, SpaceID: 3, ExptRunMode: 1,
+					Session: &entity.Session{UserID: testUserID},
+				},
+				expt: mockExpt,
+			},
+			prepareMock: func(f *fields, ctrl *gomock.Controller, args args) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil)
+				f.evaluationSetItemService.EXPECT().ListEvaluationSetItems(gomock.Any(), gomock.Any()).
+					Return(nil, nil, nil, nil, errors.New("list items err"))
+			},
+			assertErr: func(t *testing.T, err error) {
+				assert.ErrorContains(t, err, "list items err")
+			},
+		},
+		{
+			name: "GenMultiIDs_error",
+			args: args{
+				ctx: context.Background(),
+				event: &entity.ExptScheduleEvent{
+					ExptID: 1, ExptRunID: 2, SpaceID: 3, ExptRunMode: 1,
+					Session: &entity.Session{UserID: testUserID},
+				},
+				expt: mockExpt,
+			},
+			prepareMock: func(f *fields, ctrl *gomock.Controller, args args) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil)
+				f.evaluationSetItemService.EXPECT().ListEvaluationSetItems(gomock.Any(), gomock.Any()).
+					Return([]*entity.EvaluationSetItem{
+						{ItemID: 1, Turns: []*entity.Turn{{ID: 1}}},
+					}, ptr.Of(int64(1)), ptr.Of(int64(1)), nil, nil)
+				f.idgenerator.EXPECT().GenMultiIDs(gomock.Any(), gomock.Any()).Return(nil, errors.New("gen ids err"))
+			},
+			assertErr: func(t *testing.T, err error) {
+				assert.ErrorContains(t, err, "gen ids err")
+			},
+		},
+		{
+			name: "UpdateByExptID_error",
+			args: args{
+				ctx: context.Background(),
+				event: &entity.ExptScheduleEvent{
+					ExptID: 1, ExptRunID: 2, SpaceID: 3, ExptRunMode: 1,
+					Session: &entity.Session{UserID: testUserID},
+				},
+				expt: mockExpt,
+			},
+			prepareMock: func(f *fields, ctrl *gomock.Controller, args args) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil)
+				f.evaluationSetItemService.EXPECT().ListEvaluationSetItems(gomock.Any(), gomock.Any()).
+					Return([]*entity.EvaluationSetItem{
+						{ItemID: 1, Turns: []*entity.Turn{{ID: 1}}},
+					}, ptr.Of(int64(1)), ptr.Of(int64(1)), nil, nil)
+				f.idgenerator.EXPECT().GenMultiIDs(gomock.Any(), gomock.Any()).Return([]int64{1, 2}, nil)
+				f.exptTurnResultRepo.EXPECT().BatchCreateNX(gomock.Any(), gomock.Any()).Return(nil)
+				f.exptItemResultRepo.EXPECT().BatchCreateNX(gomock.Any(), gomock.Any()).Return(nil)
+				f.idgenerator.EXPECT().GenMultiIDs(gomock.Any(), gomock.Any()).Return([]int64{3}, nil)
+				f.exptItemResultRepo.EXPECT().BatchCreateNXRunLogs(gomock.Any(), gomock.Any()).Return(nil)
+				f.resultSvc.EXPECT().UpsertExptTurnResultFilter(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				f.exptStatsRepo.EXPECT().UpdateByExptID(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+					Return(errors.New("update stats err"))
+			},
+			assertErr: func(t *testing.T, err error) {
+				assert.ErrorContains(t, err, "update stats err")
+			},
+		},
+		{
+			name: "exptRepo_Update_error",
+			args: args{
+				ctx: context.Background(),
+				event: &entity.ExptScheduleEvent{
+					ExptID: 1, ExptRunID: 2, SpaceID: 3, ExptRunMode: 1,
+					Session: &entity.Session{UserID: testUserID},
+				},
+				expt: mockExpt,
+			},
+			prepareMock: func(f *fields, ctrl *gomock.Controller, args args) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil)
+				f.evaluationSetItemService.EXPECT().ListEvaluationSetItems(gomock.Any(), gomock.Any()).
+					Return([]*entity.EvaluationSetItem{
+						{ItemID: 1, Turns: []*entity.Turn{{ID: 1}}},
+					}, ptr.Of(int64(1)), ptr.Of(int64(1)), nil, nil)
+				f.idgenerator.EXPECT().GenMultiIDs(gomock.Any(), gomock.Any()).Return([]int64{1, 2}, nil)
+				f.exptTurnResultRepo.EXPECT().BatchCreateNX(gomock.Any(), gomock.Any()).Return(nil)
+				f.exptItemResultRepo.EXPECT().BatchCreateNX(gomock.Any(), gomock.Any()).Return(nil)
+				f.idgenerator.EXPECT().GenMultiIDs(gomock.Any(), gomock.Any()).Return([]int64{3}, nil)
+				f.exptItemResultRepo.EXPECT().BatchCreateNXRunLogs(gomock.Any(), gomock.Any()).Return(nil)
+				f.resultSvc.EXPECT().UpsertExptTurnResultFilter(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				f.exptStatsRepo.EXPECT().UpdateByExptID(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				f.exptRepo.EXPECT().Update(gomock.Any(), gomock.Any()).Return(errors.New("update expt err"))
+			},
+			assertErr: func(t *testing.T, err error) {
+				assert.ErrorContains(t, err, "update expt err")
+			},
+		},
+		{
+			name: "templateManager_UpdateExptInfo_called_when_ExptTemplateMeta_set",
+			args: args{
+				ctx: context.Background(),
+				event: &entity.ExptScheduleEvent{
+					ExptID: 1, ExptRunID: 2, SpaceID: 3, ExptRunMode: 1,
+					Session: &entity.Session{UserID: testUserID},
+				},
+				expt: func() *entity.Experiment {
+					e := *mockExpt
+					e.ExptTemplateMeta = &entity.ExptTemplateMeta{ID: 42}
+					return &e
+				}(),
+			},
+			prepareMock: func(f *fields, ctrl *gomock.Controller, args args) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil)
+				f.evaluationSetItemService.EXPECT().ListEvaluationSetItems(gomock.Any(), gomock.Any()).
+					Return([]*entity.EvaluationSetItem{
+						{ItemID: 1, Turns: []*entity.Turn{{ID: 1}}},
+					}, ptr.Of(int64(1)), ptr.Of(int64(1)), nil, nil)
+				f.idgenerator.EXPECT().GenMultiIDs(gomock.Any(), gomock.Any()).Return([]int64{1, 2}, nil)
+				f.exptTurnResultRepo.EXPECT().BatchCreateNX(gomock.Any(), gomock.Any()).Return(nil)
+				f.exptItemResultRepo.EXPECT().BatchCreateNX(gomock.Any(), gomock.Any()).Return(nil)
+				f.idgenerator.EXPECT().GenMultiIDs(gomock.Any(), gomock.Any()).Return([]int64{3}, nil)
+				f.exptItemResultRepo.EXPECT().BatchCreateNXRunLogs(gomock.Any(), gomock.Any()).Return(nil)
+				f.resultSvc.EXPECT().UpsertExptTurnResultFilter(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				f.exptStatsRepo.EXPECT().UpdateByExptID(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				f.exptRepo.EXPECT().Update(gomock.Any(), gomock.Any()).Return(nil)
+				f.templateManager.EXPECT().UpdateExptInfo(gomock.Any(), int64(42), int64(3), int64(1), entity.ExptStatus_Processing, int64(0), gomock.Nil()).Return(nil)
+				f.configer.EXPECT().GetExptExecConf(gomock.Any(), gomock.Any()).Return(&entity.ExptExecConf{ZombieIntervalSecond: 1})
+				f.idem.EXPECT().Set(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+			},
+			assertErr: func(t *testing.T, err error) {
+				assert.NoError(t, err)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			f := &fields{
+				manager:                  svcmocks.NewMockIExptManager(ctrl),
+				exptItemResultRepo:       mock_repo.NewMockIExptItemResultRepo(ctrl),
+				exptTurnResultRepo:       mock_repo.NewMockIExptTurnResultRepo(ctrl),
+				exptStatsRepo:            mock_repo.NewMockIExptStatsRepo(ctrl),
+				idgenerator:              idgenmocks.NewMockIIDGenerator(ctrl),
+				evaluationSetItemService: svcmocks.NewMockEvaluationSetItemService(ctrl),
+				exptRepo:                 mock_repo.NewMockIExperimentRepo(ctrl),
+				idem:                     idemmocks.NewMockIdempotentService(ctrl),
+				configer:                 configmocks.NewMockIConfiger(ctrl),
+				publisher:                eventmocks.NewMockExptEventPublisher(ctrl),
+				resultSvc:                svcmocks.NewMockExptResultService(ctrl),
+				evaluatorRecordService:   svcmocks.NewMockEvaluatorRecordService(ctrl),
+				templateManager:          svcmocks.NewMockIExptTemplateManager(ctrl),
+			}
+
+			tt.prepareMock(f, ctrl, tt.args)
+
+			e := &ExptSubmitExec{
+				manager:                  f.manager,
+				exptItemResultRepo:       f.exptItemResultRepo,
+				exptTurnResultRepo:       f.exptTurnResultRepo,
+				exptStatsRepo:            f.exptStatsRepo,
+				idgenerator:              f.idgenerator,
+				evaluationSetItemService: f.evaluationSetItemService,
+				exptRepo:                 f.exptRepo,
+				idem:                     f.idem,
+				configer:                 f.configer,
+				publisher:                f.publisher,
+				resultSvc:                f.resultSvc,
+				evaluatorRecordService:   f.evaluatorRecordService,
+				templateManager:          f.templateManager,
+			}
+
+			err := e.ExptStart(tt.args.ctx, tt.args.event, tt.args.expt)
+			tt.assertErr(t, err)
+		})
+	}
+}
+
 func TestNewExptSubmitMode(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
@@ -2142,8 +2722,9 @@ func TestNewExptSubmitMode(t *testing.T) {
 	publisher := eventmocks.NewMockExptEventPublisher(ctrl)
 	evaluatorRecordService := svcmocks.NewMockEvaluatorRecordService(ctrl)
 	resultSvc := svcmocks.NewMockExptResultService(ctrl)
+	templateManager := svcmocks.NewMockIExptTemplateManager(ctrl)
 
-	exec := NewExptSubmitMode(manager, exptItemResultRepo, exptStatsRepo, exptTurnResultRepo, idgenerator, evaluationSetItemService, exptRepo, idem, configer, publisher, evaluatorRecordService, resultSvc)
+	exec := NewExptSubmitMode(manager, exptItemResultRepo, exptStatsRepo, exptTurnResultRepo, idgenerator, evaluationSetItemService, exptRepo, idem, configer, publisher, evaluatorRecordService, resultSvc, templateManager)
 	assert.NotNil(t, exec)
 	assert.Equal(t, manager, exec.manager)
 	assert.Equal(t, exptItemResultRepo, exec.exptItemResultRepo)
@@ -2170,8 +2751,9 @@ func TestNewExptFailRetryMode(t *testing.T) {
 	configer := configmocks.NewMockIConfiger(ctrl)
 	publisher := eventmocks.NewMockExptEventPublisher(ctrl)
 	evaluatorRecordService := svcmocks.NewMockEvaluatorRecordService(ctrl)
+	templateManager := svcmocks.NewMockIExptTemplateManager(ctrl)
 
-	exec := NewExptFailRetryMode(manager, exptItemResultRepo, exptStatsRepo, exptTurnResultRepo, idgenerator, exptRepo, idem, configer, publisher, evaluatorRecordService)
+	exec := NewExptFailRetryMode(manager, exptItemResultRepo, exptStatsRepo, exptTurnResultRepo, idgenerator, exptRepo, idem, configer, publisher, evaluatorRecordService, templateManager)
 	assert.NotNil(t, exec)
 	assert.Equal(t, manager, exec.manager)
 	assert.Equal(t, exptItemResultRepo, exec.exptItemResultRepo)
@@ -2198,8 +2780,10 @@ func TestNewExptAppendMode(t *testing.T) {
 	configer := configmocks.NewMockIConfiger(ctrl)
 	publisher := eventmocks.NewMockExptEventPublisher(ctrl)
 	evaluatorRecordService := svcmocks.NewMockEvaluatorRecordService(ctrl)
+	templateManager := svcmocks.NewMockIExptTemplateManager(ctrl)
+	mutex := lockMocks.NewMockILocker(ctrl)
 
-	exec := NewExptAppendMode(manager, exptItemResultRepo, exptStatsRepo, exptTurnResultRepo, idgenerator, evaluationSetItemService, exptRepo, idem, configer, publisher, evaluatorRecordService)
+	exec := NewExptAppendMode(manager, exptItemResultRepo, exptStatsRepo, exptTurnResultRepo, idgenerator, evaluationSetItemService, exptRepo, idem, configer, publisher, evaluatorRecordService, templateManager, mutex)
 	assert.NotNil(t, exec)
 	assert.Equal(t, manager, exec.manager)
 	assert.Equal(t, exptItemResultRepo, exec.exptItemResultRepo)
@@ -2339,7 +2923,7 @@ func TestExptBaseExec_publishResult(t *testing.T) {
 				event: &entity.ExptScheduleEvent{},
 			},
 			prepareMock: func(f *fields, ctrl *gomock.Controller, args args) {
-				f.evaluatorRecordService.EXPECT().BatchGetEvaluatorRecord(gomock.Any(), []int64{101}, true).Return(nil, errors.New("db error"))
+				f.evaluatorRecordService.EXPECT().BatchGetEvaluatorRecord(gomock.Any(), []int64{101}, true, false).Return(nil, errors.New("db error"))
 			},
 			wantErr: true,
 			assertErr: func(t *testing.T, err error) {
@@ -2356,7 +2940,7 @@ func TestExptBaseExec_publishResult(t *testing.T) {
 				event: &entity.ExptScheduleEvent{},
 			},
 			prepareMock: func(f *fields, ctrl *gomock.Controller, args args) {
-				f.evaluatorRecordService.EXPECT().BatchGetEvaluatorRecord(gomock.Any(), []int64{101}, true).Return([]*entity.EvaluatorRecord{
+				f.evaluatorRecordService.EXPECT().BatchGetEvaluatorRecord(gomock.Any(), []int64{101}, true, false).Return([]*entity.EvaluatorRecord{
 					{ID: 101, Status: entity.EvaluatorRunStatusSuccess},
 				}, nil)
 				f.publisher.EXPECT().PublishExptOnlineEvalResult(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("publish error"))
@@ -2378,7 +2962,7 @@ func TestExptBaseExec_publishResult(t *testing.T) {
 				event: &entity.ExptScheduleEvent{},
 			},
 			prepareMock: func(f *fields, ctrl *gomock.Controller, args args) {
-				f.evaluatorRecordService.EXPECT().BatchGetEvaluatorRecord(gomock.Any(), []int64{101, 102, 103}, true).Return([]*entity.EvaluatorRecord{
+				f.evaluatorRecordService.EXPECT().BatchGetEvaluatorRecord(gomock.Any(), []int64{101, 102, 103}, true, false).Return([]*entity.EvaluatorRecord{
 					{
 						ID:     101,
 						Status: entity.EvaluatorRunStatusSuccess,
@@ -2444,6 +3028,1999 @@ func TestExptBaseExec_publishResult(t *testing.T) {
 				}
 			} else {
 				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+type exptRetryAllExecFields struct {
+	manager                  *svcmocks.MockIExptManager
+	exptItemResultRepo       *mock_repo.MockIExptItemResultRepo
+	exptStatsRepo            *mock_repo.MockIExptStatsRepo
+	exptTurnResultRepo       *mock_repo.MockIExptTurnResultRepo
+	idgenerator              *idgenmocks.MockIIDGenerator
+	evaluationSetItemService *svcmocks.MockEvaluationSetItemService
+	exptRepo                 *mock_repo.MockIExperimentRepo
+	idem                     *idemmocks.MockIdempotentService
+	configer                 *configmocks.MockIConfiger
+	publisher                *eventmocks.MockExptEventPublisher
+	evaluatorRecordService   *svcmocks.MockEvaluatorRecordService
+	templateManager          *svcmocks.MockIExptTemplateManager
+}
+
+type exptRetryItemsExecFields struct {
+	manager                  *svcmocks.MockIExptManager
+	exptItemResultRepo       *mock_repo.MockIExptItemResultRepo
+	exptStatsRepo            *mock_repo.MockIExptStatsRepo
+	exptTurnResultRepo       *mock_repo.MockIExptTurnResultRepo
+	idgenerator              *idgenmocks.MockIIDGenerator
+	evaluationSetItemService *svcmocks.MockEvaluationSetItemService
+	exptRepo                 *mock_repo.MockIExperimentRepo
+	idem                     *idemmocks.MockIdempotentService
+	configer                 *configmocks.MockIConfiger
+	publisher                *eventmocks.MockExptEventPublisher
+	evaluatorRecordService   *svcmocks.MockEvaluatorRecordService
+	templateManager          *svcmocks.MockIExptTemplateManager
+	exptRunLogRepo           *mock_repo.MockIExptRunLogRepo
+}
+
+func buildRetryAllExecFields(ctrl *gomock.Controller) *exptRetryAllExecFields {
+	return &exptRetryAllExecFields{
+		manager:                  svcmocks.NewMockIExptManager(ctrl),
+		exptItemResultRepo:       mock_repo.NewMockIExptItemResultRepo(ctrl),
+		exptStatsRepo:            mock_repo.NewMockIExptStatsRepo(ctrl),
+		exptTurnResultRepo:       mock_repo.NewMockIExptTurnResultRepo(ctrl),
+		idgenerator:              idgenmocks.NewMockIIDGenerator(ctrl),
+		evaluationSetItemService: svcmocks.NewMockEvaluationSetItemService(ctrl),
+		exptRepo:                 mock_repo.NewMockIExperimentRepo(ctrl),
+		idem:                     idemmocks.NewMockIdempotentService(ctrl),
+		configer:                 configmocks.NewMockIConfiger(ctrl),
+		publisher:                eventmocks.NewMockExptEventPublisher(ctrl),
+		evaluatorRecordService:   svcmocks.NewMockEvaluatorRecordService(ctrl),
+		templateManager:          svcmocks.NewMockIExptTemplateManager(ctrl),
+	}
+}
+
+func buildRetryItemsExecFields(ctrl *gomock.Controller) *exptRetryItemsExecFields {
+	return &exptRetryItemsExecFields{
+		manager:                  svcmocks.NewMockIExptManager(ctrl),
+		exptItemResultRepo:       mock_repo.NewMockIExptItemResultRepo(ctrl),
+		exptStatsRepo:            mock_repo.NewMockIExptStatsRepo(ctrl),
+		exptTurnResultRepo:       mock_repo.NewMockIExptTurnResultRepo(ctrl),
+		idgenerator:              idgenmocks.NewMockIIDGenerator(ctrl),
+		evaluationSetItemService: svcmocks.NewMockEvaluationSetItemService(ctrl),
+		exptRepo:                 mock_repo.NewMockIExperimentRepo(ctrl),
+		idem:                     idemmocks.NewMockIdempotentService(ctrl),
+		configer:                 configmocks.NewMockIConfiger(ctrl),
+		publisher:                eventmocks.NewMockExptEventPublisher(ctrl),
+		evaluatorRecordService:   svcmocks.NewMockEvaluatorRecordService(ctrl),
+		templateManager:          svcmocks.NewMockIExptTemplateManager(ctrl),
+		exptRunLogRepo:           mock_repo.NewMockIExptRunLogRepo(ctrl),
+	}
+}
+
+func buildMockExpt() *entity.Experiment {
+	return &entity.Experiment{
+		ID:                  1,
+		SpaceID:             3,
+		CreatedBy:           "created_by",
+		Name:                "created_by",
+		Description:         "description",
+		EvalSetVersionID:    1,
+		EvalSetID:           1,
+		TargetType:          1,
+		TargetVersionID:     1,
+		TargetID:            1,
+		EvaluatorVersionRef: []*entity.ExptEvaluatorVersionRef{{EvaluatorID: 1, EvaluatorVersionID: 1}},
+		EvalConf: &entity.EvaluationConfiguration{ConnectorConf: entity.Connector{
+			TargetConf: &entity.TargetConf{TargetVersionID: 1, IngressConf: &entity.TargetIngressConf{
+				EvalSetAdapter: &entity.FieldAdapter{FieldConfs: []*entity.FieldConf{{FieldName: "field_name", FromField: "from_field"}}},
+			}},
+			EvaluatorsConf: &entity.EvaluatorsConf{EvaluatorConcurNum: ptr.Of(1), EvaluatorConf: []*entity.EvaluatorConf{
+				{
+					EvaluatorVersionID: 1,
+					IngressConf:        &entity.EvaluatorIngressConf{EvalSetAdapter: &entity.FieldAdapter{FieldConfs: []*entity.FieldConf{{FieldName: "field_name", FromField: "from_field"}}}},
+				},
+			}},
+		}},
+		Target: &entity.EvalTarget{ID: 1, SpaceID: 3, SourceTargetID: "source_target_id", EvalTargetType: 1, EvalTargetVersion: &entity.EvalTargetVersion{ID: 1, OutputSchema: []*entity.ArgsSchema{{Key: ptr.Of("key")}}}, BaseInfo: &entity.BaseInfo{}},
+		EvalSet: &entity.EvaluationSet{
+			ID: 1, SpaceID: 3, Name: "name", Description: "description", Status: 0, Spec: nil, Features: nil, ItemCount: 0, ChangeUncommitted: false,
+			EvaluationSetVersion: &entity.EvaluationSetVersion{ID: 1, AppID: 0, SpaceID: 3, EvaluationSetID: 1, Version: "version", VersionNum: 0, Description: "description", EvaluationSetSchema: nil, ItemCount: 0, BaseInfo: nil},
+			LatestVersion:        "", NextVersionNum: 0, BaseInfo: nil, BizCategory: strconv.Itoa(1),
+		},
+		Evaluators:      []*entity.Evaluator{{}},
+		Status:          0,
+		StatusMessage:   "",
+		LatestRunID:     0,
+		CreditCost:      0,
+		StartAt:         nil,
+		EndAt:           nil,
+		ExptType:        1,
+		MaxAliveTime:    0,
+		SourceType:      0,
+		SourceID:        "",
+		Stats:           nil,
+		AggregateResult: nil,
+	}
+}
+
+func TestExptRetryAllExec_Mode(t *testing.T) {
+	exec := &ExptRetryAllExec{}
+	assert.Equal(t, entity.EvaluationModeRetryAll, exec.Mode())
+}
+
+func TestExptRetryAllExec_ScheduleStart(t *testing.T) {
+	tests := []struct {
+		name    string
+		expt    *entity.Experiment
+		event   *entity.ExptScheduleEvent
+		wantErr bool
+	}{
+		{
+			name:    "normal_flow",
+			expt:    &entity.Experiment{},
+			event:   &entity.ExptScheduleEvent{},
+			wantErr: false,
+		},
+	}
+
+	exec := &ExptRetryAllExec{}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := exec.ScheduleStart(context.Background(), tc.event, tc.expt)
+			if tc.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestExptRetryAllExec_ExptStart(t *testing.T) {
+	testUserID := "test_user_id_123"
+	mockExpt := buildMockExpt()
+
+	type args struct {
+		ctx   context.Context
+		event *entity.ExptScheduleEvent
+		expt  *entity.Experiment
+	}
+
+	tests := []struct {
+		name        string
+		prepareMock func(f *exptRetryAllExecFields, args args)
+		args        args
+		wantErr     bool
+		assertErr   func(t *testing.T, err error)
+	}{
+		{
+			name: "idem_already_exist",
+			args: args{
+				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
+				event: &entity.ExptScheduleEvent{
+					ExptID:      1,
+					ExptRunID:   2,
+					SpaceID:     3,
+					ExptRunMode: entity.EvaluationModeRetryAll,
+					Session:     &entity.Session{UserID: testUserID},
+				},
+				expt: mockExpt,
+			},
+			prepareMock: func(f *exptRetryAllExecFields, args args) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(true, nil).Times(1)
+			},
+			wantErr:   false,
+			assertErr: func(t *testing.T, err error) { assert.NoError(t, err) },
+		},
+		{
+			name: "idem_check_error",
+			args: args{
+				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
+				event: &entity.ExptScheduleEvent{
+					ExptID:      1,
+					ExptRunID:   2,
+					SpaceID:     3,
+					ExptRunMode: entity.EvaluationModeRetryAll,
+					Session:     &entity.Session{UserID: testUserID},
+				},
+				expt: mockExpt,
+			},
+			prepareMock: func(f *exptRetryAllExecFields, args args) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, errors.New("idem error")).Times(1)
+			},
+			wantErr: true,
+			assertErr: func(t *testing.T, err error) {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "idem error")
+			},
+		},
+		{
+			name: "list_eval_set_items_error",
+			args: args{
+				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
+				event: &entity.ExptScheduleEvent{
+					ExptID:      1,
+					ExptRunID:   2,
+					SpaceID:     3,
+					ExptRunMode: entity.EvaluationModeRetryAll,
+					Session:     &entity.Session{UserID: testUserID},
+				},
+				expt: mockExpt,
+			},
+			prepareMock: func(f *exptRetryAllExecFields, args args) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil).Times(1)
+				f.evaluationSetItemService.EXPECT().ListEvaluationSetItems(gomock.Any(), gomock.Any()).Return(nil, nil, nil, nil, errors.New("list error")).Times(1)
+			},
+			wantErr: true,
+			assertErr: func(t *testing.T, err error) {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "list error")
+			},
+		},
+		{
+			name: "gen_multi_ids_error",
+			args: args{
+				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
+				event: &entity.ExptScheduleEvent{
+					ExptID:      1,
+					ExptRunID:   2,
+					SpaceID:     3,
+					ExptRunMode: entity.EvaluationModeRetryAll,
+					Session:     &entity.Session{UserID: testUserID},
+				},
+				expt: mockExpt,
+			},
+			prepareMock: func(f *exptRetryAllExecFields, args args) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil).Times(1)
+				total := int64(1)
+				mockItems := []*entity.EvaluationSetItem{
+					{ItemID: 100, Turns: []*entity.Turn{{ID: 1000}}},
+				}
+				f.evaluationSetItemService.EXPECT().ListEvaluationSetItems(gomock.Any(), gomock.Any()).Return(mockItems, &total, nil, nil, nil).Times(1)
+				f.idgenerator.EXPECT().GenMultiIDs(gomock.Any(), gomock.Any()).Return(nil, errors.New("gen id error")).Times(1)
+			},
+			wantErr: true,
+			assertErr: func(t *testing.T, err error) {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "gen id error")
+			},
+		},
+		{
+			name: "update_items_result_error",
+			args: args{
+				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
+				event: &entity.ExptScheduleEvent{
+					ExptID:      1,
+					ExptRunID:   2,
+					SpaceID:     3,
+					ExptRunMode: entity.EvaluationModeRetryAll,
+					Session:     &entity.Session{UserID: testUserID},
+				},
+				expt: mockExpt,
+			},
+			prepareMock: func(f *exptRetryAllExecFields, args args) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil).Times(1)
+				total := int64(1)
+				mockItems := []*entity.EvaluationSetItem{
+					{ItemID: 100, Turns: []*entity.Turn{{ID: 1000}}},
+				}
+				f.evaluationSetItemService.EXPECT().ListEvaluationSetItems(gomock.Any(), gomock.Any()).Return(mockItems, &total, nil, nil, nil).Times(1)
+				f.idgenerator.EXPECT().GenMultiIDs(gomock.Any(), gomock.Any()).Return([]int64{1, 2}, nil).Times(1)
+				f.exptItemResultRepo.EXPECT().UpdateItemsResult(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("update error")).Times(1)
+			},
+			wantErr: true,
+			assertErr: func(t *testing.T, err error) {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "update error")
+			},
+		},
+		{
+			name: "update_turn_results_error",
+			args: args{
+				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
+				event: &entity.ExptScheduleEvent{
+					ExptID:      1,
+					ExptRunID:   2,
+					SpaceID:     3,
+					ExptRunMode: entity.EvaluationModeRetryAll,
+					Session:     &entity.Session{UserID: testUserID},
+				},
+				expt: mockExpt,
+			},
+			prepareMock: func(f *exptRetryAllExecFields, args args) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil).Times(1)
+				total := int64(1)
+				mockItems := []*entity.EvaluationSetItem{
+					{ItemID: 100, Turns: []*entity.Turn{{ID: 1000}}},
+				}
+				f.evaluationSetItemService.EXPECT().ListEvaluationSetItems(gomock.Any(), gomock.Any()).Return(mockItems, &total, nil, nil, nil).Times(1)
+				f.idgenerator.EXPECT().GenMultiIDs(gomock.Any(), gomock.Any()).Return([]int64{1, 2}, nil).Times(1)
+				f.exptItemResultRepo.EXPECT().UpdateItemsResult(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.exptTurnResultRepo.EXPECT().UpdateTurnResults(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("update turn error")).Times(1)
+			},
+			wantErr: true,
+			assertErr: func(t *testing.T, err error) {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "update turn error")
+			},
+		},
+		{
+			name: "batch_create_run_logs_error",
+			args: args{
+				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
+				event: &entity.ExptScheduleEvent{
+					ExptID:      1,
+					ExptRunID:   2,
+					SpaceID:     3,
+					ExptRunMode: entity.EvaluationModeRetryAll,
+					Session:     &entity.Session{UserID: testUserID},
+				},
+				expt: mockExpt,
+			},
+			prepareMock: func(f *exptRetryAllExecFields, args args) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil).Times(1)
+				total := int64(1)
+				mockItems := []*entity.EvaluationSetItem{
+					{ItemID: 100, Turns: []*entity.Turn{{ID: 1000}}},
+				}
+				f.evaluationSetItemService.EXPECT().ListEvaluationSetItems(gomock.Any(), gomock.Any()).Return(mockItems, &total, nil, nil, nil).Times(1)
+				f.idgenerator.EXPECT().GenMultiIDs(gomock.Any(), gomock.Any()).Return([]int64{1, 2}, nil).Times(1)
+				f.exptItemResultRepo.EXPECT().UpdateItemsResult(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.exptTurnResultRepo.EXPECT().UpdateTurnResults(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.exptItemResultRepo.EXPECT().BatchCreateNXRunLogs(gomock.Any(), gomock.Any()).Return(errors.New("batch create error")).Times(1)
+			},
+			wantErr: true,
+			assertErr: func(t *testing.T, err error) {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "batch create error")
+			},
+		},
+		{
+			name: "get_expt_stats_error",
+			args: args{
+				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
+				event: &entity.ExptScheduleEvent{
+					ExptID:      1,
+					ExptRunID:   2,
+					SpaceID:     3,
+					ExptRunMode: entity.EvaluationModeRetryAll,
+					Session:     &entity.Session{UserID: testUserID},
+				},
+				expt: mockExpt,
+			},
+			prepareMock: func(f *exptRetryAllExecFields, args args) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil).Times(1)
+				total := int64(1)
+				mockItems := []*entity.EvaluationSetItem{
+					{ItemID: 100, Turns: []*entity.Turn{{ID: 1000}}},
+				}
+				f.evaluationSetItemService.EXPECT().ListEvaluationSetItems(gomock.Any(), gomock.Any()).Return(mockItems, &total, nil, nil, nil).Times(1)
+				f.idgenerator.EXPECT().GenMultiIDs(gomock.Any(), gomock.Any()).Return([]int64{1, 2}, nil).Times(1)
+				f.exptItemResultRepo.EXPECT().UpdateItemsResult(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.exptTurnResultRepo.EXPECT().UpdateTurnResults(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.exptItemResultRepo.EXPECT().BatchCreateNXRunLogs(gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.exptStatsRepo.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errors.New("get stats error")).Times(1)
+			},
+			wantErr: true,
+			assertErr: func(t *testing.T, err error) {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "get stats error")
+			},
+		},
+		{
+			name: "save_expt_stats_error",
+			args: args{
+				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
+				event: &entity.ExptScheduleEvent{
+					ExptID:      1,
+					ExptRunID:   2,
+					SpaceID:     3,
+					ExptRunMode: entity.EvaluationModeRetryAll,
+					Session:     &entity.Session{UserID: testUserID},
+				},
+				expt: mockExpt,
+			},
+			prepareMock: func(f *exptRetryAllExecFields, args args) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil).Times(1)
+				total := int64(1)
+				mockItems := []*entity.EvaluationSetItem{
+					{ItemID: 100, Turns: []*entity.Turn{{ID: 1000}}},
+				}
+				f.evaluationSetItemService.EXPECT().ListEvaluationSetItems(gomock.Any(), gomock.Any()).Return(mockItems, &total, nil, nil, nil).Times(1)
+				f.idgenerator.EXPECT().GenMultiIDs(gomock.Any(), gomock.Any()).Return([]int64{1, 2}, nil).Times(1)
+				f.exptItemResultRepo.EXPECT().UpdateItemsResult(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.exptTurnResultRepo.EXPECT().UpdateTurnResults(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.exptItemResultRepo.EXPECT().BatchCreateNXRunLogs(gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.exptStatsRepo.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any()).Return(&entity.ExptStats{
+					PendingItemCnt:    5,
+					FailItemCnt:       3,
+					TerminatedItemCnt: 2,
+					ProcessingItemCnt: 1,
+					SuccessItemCnt:    4,
+				}, nil).Times(1)
+				f.exptStatsRepo.EXPECT().Save(gomock.Any(), gomock.Any()).Return(errors.New("save stats error")).Times(1)
+			},
+			wantErr: true,
+			assertErr: func(t *testing.T, err error) {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "save stats error")
+			},
+		},
+		{
+			name: "update_expt_error",
+			args: args{
+				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
+				event: &entity.ExptScheduleEvent{
+					ExptID:      1,
+					ExptRunID:   2,
+					SpaceID:     3,
+					ExptRunMode: entity.EvaluationModeRetryAll,
+					Session:     &entity.Session{UserID: testUserID},
+				},
+				expt: mockExpt,
+			},
+			prepareMock: func(f *exptRetryAllExecFields, args args) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil).Times(1)
+				total := int64(1)
+				mockItems := []*entity.EvaluationSetItem{
+					{ItemID: 100, Turns: []*entity.Turn{{ID: 1000}}},
+				}
+				f.evaluationSetItemService.EXPECT().ListEvaluationSetItems(gomock.Any(), gomock.Any()).Return(mockItems, &total, nil, nil, nil).Times(1)
+				f.idgenerator.EXPECT().GenMultiIDs(gomock.Any(), gomock.Any()).Return([]int64{1, 2}, nil).Times(1)
+				f.exptItemResultRepo.EXPECT().UpdateItemsResult(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.exptTurnResultRepo.EXPECT().UpdateTurnResults(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.exptItemResultRepo.EXPECT().BatchCreateNXRunLogs(gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.exptStatsRepo.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any()).Return(&entity.ExptStats{
+					PendingItemCnt:    5,
+					FailItemCnt:       3,
+					TerminatedItemCnt: 2,
+					ProcessingItemCnt: 1,
+					SuccessItemCnt:    4,
+				}, nil).Times(1)
+				f.exptStatsRepo.EXPECT().Save(gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.exptRepo.EXPECT().Update(gomock.Any(), gomock.Any()).Return(errors.New("update expt error")).Times(1)
+			},
+			wantErr: true,
+			assertErr: func(t *testing.T, err error) {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "update expt error")
+			},
+		},
+		{
+			name: "idem_set_error",
+			args: args{
+				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
+				event: &entity.ExptScheduleEvent{
+					ExptID:      1,
+					ExptRunID:   2,
+					SpaceID:     3,
+					ExptRunMode: entity.EvaluationModeRetryAll,
+					Session:     &entity.Session{UserID: testUserID},
+				},
+				expt: mockExpt,
+			},
+			prepareMock: func(f *exptRetryAllExecFields, args args) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil).Times(1)
+				total := int64(1)
+				mockItems := []*entity.EvaluationSetItem{
+					{ItemID: 100, Turns: []*entity.Turn{{ID: 1000}}},
+				}
+				f.evaluationSetItemService.EXPECT().ListEvaluationSetItems(gomock.Any(), gomock.Any()).Return(mockItems, &total, nil, nil, nil).Times(1)
+				f.idgenerator.EXPECT().GenMultiIDs(gomock.Any(), gomock.Any()).Return([]int64{1, 2}, nil).Times(1)
+				f.exptItemResultRepo.EXPECT().UpdateItemsResult(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.exptTurnResultRepo.EXPECT().UpdateTurnResults(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.exptItemResultRepo.EXPECT().BatchCreateNXRunLogs(gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.exptStatsRepo.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any()).Return(&entity.ExptStats{
+					PendingItemCnt:    5,
+					FailItemCnt:       3,
+					TerminatedItemCnt: 2,
+					ProcessingItemCnt: 1,
+					SuccessItemCnt:    4,
+				}, nil).Times(1)
+				f.exptStatsRepo.EXPECT().Save(gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.exptRepo.EXPECT().Update(gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.configer.EXPECT().GetExptExecConf(gomock.Any(), gomock.Any()).Return(&entity.ExptExecConf{ZombieIntervalSecond: 10}).Times(1)
+				f.idem.EXPECT().Set(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("idem set error")).Times(1)
+			},
+			wantErr: true,
+			assertErr: func(t *testing.T, err error) {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "idem set error")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			f := buildRetryAllExecFields(ctrl)
+			if tt.prepareMock != nil {
+				tt.prepareMock(f, tt.args)
+			}
+
+			e := &ExptRetryAllExec{
+				manager:                  f.manager,
+				exptItemResultRepo:       f.exptItemResultRepo,
+				exptStatsRepo:            f.exptStatsRepo,
+				exptTurnResultRepo:       f.exptTurnResultRepo,
+				idgenerator:              f.idgenerator,
+				evaluationSetItemService: f.evaluationSetItemService,
+				exptRepo:                 f.exptRepo,
+				idem:                     f.idem,
+				configer:                 f.configer,
+				publisher:                f.publisher,
+				evaluatorRecordService:   f.evaluatorRecordService,
+				templateManager:          f.templateManager,
+			}
+
+			err := e.ExptStart(tt.args.ctx, tt.args.event, tt.args.expt)
+			if tt.assertErr != nil {
+				tt.assertErr(t, err)
+			}
+		})
+	}
+}
+
+func TestExptRetryAllExec_ScanEvalItems(t *testing.T) {
+	testUserID := "test_user_id_123"
+	mockExpt := buildMockExpt()
+
+	type args struct {
+		ctx   context.Context
+		event *entity.ExptScheduleEvent
+		expt  *entity.Experiment
+	}
+
+	tests := []struct {
+		name           string
+		prepareMock    func(f *exptRetryAllExecFields, args args)
+		args           args
+		wantToSubmit   []*entity.ExptEvalItem
+		wantIncomplete []*entity.ExptEvalItem
+		wantComplete   []*entity.ExptEvalItem
+		wantErr        bool
+		assertErr      func(t *testing.T, err error)
+	}{
+		{
+			name: "normal_flow",
+			args: args{
+				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
+				event: &entity.ExptScheduleEvent{
+					ExptID:      1,
+					ExptRunID:   2,
+					SpaceID:     3,
+					ExptRunMode: entity.EvaluationModeRetryAll,
+					Session:     &entity.Session{UserID: testUserID},
+				},
+				expt: mockExpt,
+			},
+			prepareMock: func(f *exptRetryAllExecFields, args args) {
+				f.configer.EXPECT().GetExptExecConf(gomock.Any(), gomock.Any()).Return(&entity.ExptExecConf{ExptItemEvalConf: &entity.ExptItemEvalConf{ConcurNum: 3}}).Times(1)
+				f.exptItemResultRepo.EXPECT().ScanItemRunLogs(gomock.Any(), int64(1), int64(2), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]*entity.ExptItemResultRunLog{
+					{ItemID: 1, Status: int32(entity.ItemRunState_Processing)},
+				}, int64(0), nil).Times(1)
+				f.exptItemResultRepo.EXPECT().ScanItemRunLogs(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]*entity.ExptItemResultRunLog{
+					{ItemID: 2, Status: int32(entity.ItemRunState_Queueing)},
+				}, int64(1), nil).Times(1)
+			},
+			wantToSubmit: []*entity.ExptEvalItem{
+				{ExptID: 1, EvalSetVersionID: 1, ItemID: 2, State: entity.ItemRunState_Queueing},
+			},
+			wantIncomplete: []*entity.ExptEvalItem{
+				{ExptID: 1, EvalSetVersionID: 1, ItemID: 1, State: entity.ItemRunState_Processing},
+			},
+			wantComplete: []*entity.ExptEvalItem{},
+			wantErr:      false,
+			assertErr:    func(t *testing.T, err error) { assert.NoError(t, err) },
+		},
+		{
+			name: "scan_error",
+			args: args{
+				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
+				event: &entity.ExptScheduleEvent{
+					ExptID:      1,
+					ExptRunID:   2,
+					SpaceID:     3,
+					ExptRunMode: entity.EvaluationModeRetryAll,
+					Session:     &entity.Session{UserID: testUserID},
+				},
+				expt: mockExpt,
+			},
+			prepareMock: func(f *exptRetryAllExecFields, args args) {
+				f.exptItemResultRepo.EXPECT().ScanItemRunLogs(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, int64(0), errors.New("scan error")).Times(1)
+			},
+			wantErr: true,
+			assertErr: func(t *testing.T, err error) {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "scan error")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			f := buildRetryAllExecFields(ctrl)
+			if tt.prepareMock != nil {
+				tt.prepareMock(f, tt.args)
+			}
+
+			e := &ExptRetryAllExec{
+				manager:                  f.manager,
+				exptItemResultRepo:       f.exptItemResultRepo,
+				exptStatsRepo:            f.exptStatsRepo,
+				exptTurnResultRepo:       f.exptTurnResultRepo,
+				idgenerator:              f.idgenerator,
+				evaluationSetItemService: f.evaluationSetItemService,
+				exptRepo:                 f.exptRepo,
+				idem:                     f.idem,
+				configer:                 f.configer,
+				publisher:                f.publisher,
+				evaluatorRecordService:   f.evaluatorRecordService,
+				templateManager:          f.templateManager,
+			}
+
+			toSubmit, incomplete, complete, err := e.ScanEvalItems(tt.args.ctx, tt.args.event, tt.args.expt)
+			if tt.assertErr != nil {
+				tt.assertErr(t, err)
+			}
+			if !tt.wantErr {
+				assert.Equal(t, tt.wantToSubmit, toSubmit)
+				assert.Equal(t, tt.wantIncomplete, incomplete)
+				assert.Equal(t, tt.wantComplete, complete)
+			}
+		})
+	}
+}
+
+func TestExptRetryAllExec_ExptEnd(t *testing.T) {
+	testUserID := "test_user_id_123"
+	mockExpt := buildMockExpt()
+
+	type args struct {
+		ctx        context.Context
+		event      *entity.ExptScheduleEvent
+		expt       *entity.Experiment
+		toSubmit   int
+		incomplete int
+	}
+
+	tests := []struct {
+		name         string
+		prepareMock  func(f *exptRetryAllExecFields, args args)
+		args         args
+		wantNextTick bool
+		wantErr      bool
+		assertErr    func(t *testing.T, err error)
+	}{
+		{
+			name: "all_completed",
+			args: args{
+				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
+				event: &entity.ExptScheduleEvent{
+					ExptID:      1,
+					ExptRunID:   2,
+					SpaceID:     3,
+					ExptRunMode: entity.EvaluationModeRetryAll,
+					Session:     &entity.Session{UserID: testUserID},
+				},
+				expt:       mockExpt,
+				toSubmit:   0,
+				incomplete: 0,
+			},
+			prepareMock: func(f *exptRetryAllExecFields, args args) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil).Times(1)
+				f.manager.EXPECT().CompleteRun(gomock.Any(), args.event.ExptID, args.event.ExptRunID, args.event.SpaceID, args.event.Session, gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.manager.EXPECT().CompleteExpt(gomock.Any(), args.event.ExptID, gomock.Any(), args.event.SpaceID, args.event.Session, gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.configer.EXPECT().GetExptExecConf(gomock.Any(), args.event.SpaceID).Return(&entity.ExptExecConf{ZombieIntervalSecond: 100}).Times(1)
+				f.idem.EXPECT().Set(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
+			},
+			wantNextTick: false,
+			wantErr:      false,
+			assertErr:    func(t *testing.T, err error) { assert.NoError(t, err) },
+		},
+		{
+			name: "still_pending",
+			args: args{
+				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
+				event: &entity.ExptScheduleEvent{
+					ExptID:      1,
+					ExptRunID:   2,
+					SpaceID:     3,
+					ExptRunMode: entity.EvaluationModeRetryAll,
+					Session:     &entity.Session{UserID: testUserID},
+				},
+				expt:       mockExpt,
+				toSubmit:   1,
+				incomplete: 1,
+			},
+			prepareMock:  func(f *exptRetryAllExecFields, args args) {},
+			wantNextTick: true,
+			wantErr:      false,
+			assertErr:    func(t *testing.T, err error) { assert.NoError(t, err) },
+		},
+		{
+			name: "idem_already_exist",
+			args: args{
+				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
+				event: &entity.ExptScheduleEvent{
+					ExptID:      1,
+					ExptRunID:   2,
+					SpaceID:     3,
+					ExptRunMode: entity.EvaluationModeRetryAll,
+					Session:     &entity.Session{UserID: testUserID},
+				},
+				expt:       mockExpt,
+				toSubmit:   0,
+				incomplete: 0,
+			},
+			prepareMock: func(f *exptRetryAllExecFields, args args) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(true, nil).Times(1)
+			},
+			wantNextTick: false,
+			wantErr:      false,
+			assertErr:    func(t *testing.T, err error) { assert.NoError(t, err) },
+		},
+		{
+			name: "idem_check_error",
+			args: args{
+				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
+				event: &entity.ExptScheduleEvent{
+					ExptID:      1,
+					ExptRunID:   2,
+					SpaceID:     3,
+					ExptRunMode: entity.EvaluationModeRetryAll,
+					Session:     &entity.Session{UserID: testUserID},
+				},
+				expt:       mockExpt,
+				toSubmit:   0,
+				incomplete: 0,
+			},
+			prepareMock: func(f *exptRetryAllExecFields, args args) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, errors.New("idem error")).Times(1)
+			},
+			wantNextTick: false,
+			wantErr:      true,
+			assertErr: func(t *testing.T, err error) {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "idem error")
+			},
+		},
+		{
+			name: "complete_run_error",
+			args: args{
+				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
+				event: &entity.ExptScheduleEvent{
+					ExptID:      1,
+					ExptRunID:   2,
+					SpaceID:     3,
+					ExptRunMode: entity.EvaluationModeRetryAll,
+					Session:     &entity.Session{UserID: testUserID},
+				},
+				expt:       mockExpt,
+				toSubmit:   0,
+				incomplete: 0,
+			},
+			prepareMock: func(f *exptRetryAllExecFields, args args) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil).Times(1)
+				f.manager.EXPECT().CompleteRun(gomock.Any(), args.event.ExptID, args.event.ExptRunID, args.event.SpaceID, args.event.Session, gomock.Any(), gomock.Any()).Return(errors.New("complete run error")).Times(1)
+			},
+			wantNextTick: false,
+			wantErr:      true,
+			assertErr: func(t *testing.T, err error) {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "complete run error")
+			},
+		},
+		{
+			name: "complete_expt_error",
+			args: args{
+				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
+				event: &entity.ExptScheduleEvent{
+					ExptID:      1,
+					ExptRunID:   2,
+					SpaceID:     3,
+					ExptRunMode: entity.EvaluationModeRetryAll,
+					Session:     &entity.Session{UserID: testUserID},
+				},
+				expt:       mockExpt,
+				toSubmit:   0,
+				incomplete: 0,
+			},
+			prepareMock: func(f *exptRetryAllExecFields, args args) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil).Times(1)
+				f.manager.EXPECT().CompleteRun(gomock.Any(), args.event.ExptID, args.event.ExptRunID, args.event.SpaceID, args.event.Session, gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.manager.EXPECT().CompleteExpt(gomock.Any(), args.event.ExptID, gomock.Any(), args.event.SpaceID, args.event.Session, gomock.Any(), gomock.Any()).Return(errors.New("complete expt error")).Times(1)
+			},
+			wantNextTick: false,
+			wantErr:      true,
+			assertErr: func(t *testing.T, err error) {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "complete expt error")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			f := buildRetryAllExecFields(ctrl)
+			if tt.prepareMock != nil {
+				tt.prepareMock(f, tt.args)
+			}
+
+			e := &ExptRetryAllExec{
+				manager:                  f.manager,
+				exptItemResultRepo:       f.exptItemResultRepo,
+				exptStatsRepo:            f.exptStatsRepo,
+				exptTurnResultRepo:       f.exptTurnResultRepo,
+				idgenerator:              f.idgenerator,
+				evaluationSetItemService: f.evaluationSetItemService,
+				exptRepo:                 f.exptRepo,
+				idem:                     f.idem,
+				configer:                 f.configer,
+				publisher:                f.publisher,
+				evaluatorRecordService:   f.evaluatorRecordService,
+				templateManager:          f.templateManager,
+			}
+
+			nextTick, err := e.ExptEnd(tt.args.ctx, tt.args.event, tt.args.expt, tt.args.toSubmit, tt.args.incomplete)
+			if tt.assertErr != nil {
+				tt.assertErr(t, err)
+			}
+			assert.Equal(t, tt.wantNextTick, nextTick)
+		})
+	}
+}
+
+func TestExptRetryAllExec_NextTick(t *testing.T) {
+	testUserID := "test_user_id_123"
+
+	tests := []struct {
+		name        string
+		nextTick    bool
+		prepareMock func(f *exptRetryAllExecFields)
+		event       *entity.ExptScheduleEvent
+		wantErr     bool
+		assertErr   func(t *testing.T, err error)
+	}{
+		{
+			name:     "nextTick_true_publish_success",
+			nextTick: true,
+			prepareMock: func(f *exptRetryAllExecFields) {
+				f.configer.EXPECT().GetExptExecConf(gomock.Any(), int64(1)).Return(&entity.ExptExecConf{DaemonIntervalSecond: 1})
+				f.publisher.EXPECT().PublishExptScheduleEvent(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+			},
+			event:     &entity.ExptScheduleEvent{SpaceID: 1, Session: &entity.Session{UserID: testUserID}},
+			wantErr:   false,
+			assertErr: func(t *testing.T, err error) { assert.NoError(t, err) },
+		},
+		{
+			name:     "nextTick_true_publish_error",
+			nextTick: true,
+			prepareMock: func(f *exptRetryAllExecFields) {
+				f.configer.EXPECT().GetExptExecConf(gomock.Any(), int64(1)).Return(&entity.ExptExecConf{DaemonIntervalSecond: 1})
+				f.publisher.EXPECT().PublishExptScheduleEvent(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("publish error"))
+			},
+			event:   &entity.ExptScheduleEvent{SpaceID: 1, Session: &entity.Session{UserID: testUserID}},
+			wantErr: true,
+			assertErr: func(t *testing.T, err error) {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "publish error")
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			f := buildRetryAllExecFields(ctrl)
+			if tc.prepareMock != nil {
+				tc.prepareMock(f)
+			}
+
+			exec := &ExptRetryAllExec{
+				configer:  f.configer,
+				publisher: f.publisher,
+			}
+
+			err := exec.NextTick(context.Background(), tc.event, tc.nextTick)
+			if tc.assertErr != nil {
+				tc.assertErr(t, err)
+			}
+		})
+	}
+}
+
+func TestExptRetryAllExec_PublishResult(t *testing.T) {
+	tests := []struct {
+		name        string
+		prepareMock func(f *exptRetryAllExecFields)
+		event       *entity.ExptScheduleEvent
+		refs        []*entity.ExptTurnEvaluatorResultRef
+		wantErr     bool
+	}{
+		{
+			name: "offline_expt_skip_publish",
+			event: &entity.ExptScheduleEvent{
+				ExptType: entity.ExptType_Offline,
+			},
+			refs:    nil,
+			wantErr: false,
+		},
+		{
+			name: "online_expt_empty_refs",
+			event: &entity.ExptScheduleEvent{
+				ExptType: entity.ExptType_Online,
+			},
+			refs:    []*entity.ExptTurnEvaluatorResultRef{},
+			wantErr: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			f := buildRetryAllExecFields(ctrl)
+			if tc.prepareMock != nil {
+				tc.prepareMock(f)
+			}
+
+			exec := &ExptRetryAllExec{
+				manager:                f.manager,
+				idem:                   f.idem,
+				configer:               f.configer,
+				exptItemResultRepo:     f.exptItemResultRepo,
+				publisher:              f.publisher,
+				evaluatorRecordService: f.evaluatorRecordService,
+			}
+
+			err := exec.PublishResult(context.Background(), tc.refs, tc.event)
+			if tc.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestExptRetryItemsExec_Mode(t *testing.T) {
+	exec := &ExptRetryItemsExec{}
+	assert.Equal(t, entity.EvaluationModeRetryItems, exec.Mode())
+}
+
+func TestExptRetryItemsExec_ExptStart(t *testing.T) {
+	testUserID := "test_user_id_123"
+	mockExpt := buildMockExpt()
+
+	type args struct {
+		ctx   context.Context
+		event *entity.ExptScheduleEvent
+		expt  *entity.Experiment
+	}
+
+	tests := []struct {
+		name        string
+		prepareMock func(f *exptRetryItemsExecFields, args args)
+		args        args
+		wantErr     bool
+		assertErr   func(t *testing.T, err error)
+	}{
+		{
+			name: "idem_already_exist",
+			args: args{
+				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
+				event: &entity.ExptScheduleEvent{
+					ExptID:             1,
+					ExptRunID:          2,
+					SpaceID:            3,
+					ExptRunMode:        entity.EvaluationModeRetryItems,
+					Session:            &entity.Session{UserID: testUserID},
+					ExecEvalSetItemIDs: []int64{1, 2},
+				},
+				expt: mockExpt,
+			},
+			prepareMock: func(f *exptRetryItemsExecFields, args args) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(true, nil).Times(1)
+			},
+			wantErr:   false,
+			assertErr: func(t *testing.T, err error) { assert.NoError(t, err) },
+		},
+		{
+			name: "idem_check_error",
+			args: args{
+				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
+				event: &entity.ExptScheduleEvent{
+					ExptID:             1,
+					ExptRunID:          2,
+					SpaceID:            3,
+					ExptRunMode:        entity.EvaluationModeRetryItems,
+					Session:            &entity.Session{UserID: testUserID},
+					ExecEvalSetItemIDs: []int64{1, 2},
+				},
+				expt: mockExpt,
+			},
+			prepareMock: func(f *exptRetryItemsExecFields, args args) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, errors.New("idem error")).Times(1)
+			},
+			wantErr: true,
+			assertErr: func(t *testing.T, err error) {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "idem error")
+			},
+		},
+		{
+			name: "get_expt_stats_error",
+			args: args{
+				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
+				event: &entity.ExptScheduleEvent{
+					ExptID:             1,
+					ExptRunID:          2,
+					SpaceID:            3,
+					ExptRunMode:        entity.EvaluationModeRetryItems,
+					Session:            &entity.Session{UserID: testUserID},
+					ExecEvalSetItemIDs: []int64{1, 2},
+				},
+				expt: mockExpt,
+			},
+			prepareMock: func(f *exptRetryItemsExecFields, args args) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil).Times(1)
+				f.exptStatsRepo.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errors.New("stats error")).Times(1)
+			},
+			wantErr: true,
+			assertErr: func(t *testing.T, err error) {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "stats error")
+			},
+		},
+		{
+			name: "batch_get_eval_set_items_error",
+			args: args{
+				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
+				event: &entity.ExptScheduleEvent{
+					ExptID:             1,
+					ExptRunID:          2,
+					SpaceID:            3,
+					ExptRunMode:        entity.EvaluationModeRetryItems,
+					Session:            &entity.Session{UserID: testUserID},
+					ExecEvalSetItemIDs: []int64{1, 2},
+				},
+				expt: mockExpt,
+			},
+			prepareMock: func(f *exptRetryItemsExecFields, args args) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil).Times(1)
+				f.exptStatsRepo.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any()).Return(&entity.ExptStats{}, nil).Times(1)
+				f.evaluationSetItemService.EXPECT().BatchGetEvaluationSetItems(gomock.Any(), gomock.Any()).Return(nil, errors.New("batch get error")).Times(1)
+			},
+			wantErr: true,
+			assertErr: func(t *testing.T, err error) {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "batch get error")
+			},
+		},
+		{
+			name: "gen_multi_ids_error_retry_items",
+			args: args{
+				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
+				event: &entity.ExptScheduleEvent{
+					ExptID:             1,
+					ExptRunID:          2,
+					SpaceID:            3,
+					ExptRunMode:        entity.EvaluationModeRetryItems,
+					Session:            &entity.Session{UserID: testUserID},
+					ExecEvalSetItemIDs: []int64{1, 2},
+				},
+				expt: mockExpt,
+			},
+			prepareMock: func(f *exptRetryItemsExecFields, args args) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil).Times(1)
+				f.exptStatsRepo.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any()).Return(&entity.ExptStats{}, nil).Times(1)
+				mockItems := []*entity.EvaluationSetItem{
+					{ItemID: 100, Turns: []*entity.Turn{{ID: 1000}}},
+				}
+				f.evaluationSetItemService.EXPECT().BatchGetEvaluationSetItems(gomock.Any(), gomock.Any()).Return(mockItems, nil).Times(1)
+				f.idgenerator.EXPECT().GenMultiIDs(gomock.Any(), gomock.Any()).Return(nil, errors.New("gen id error")).Times(1)
+			},
+			wantErr: true,
+			assertErr: func(t *testing.T, err error) {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "gen id error")
+			},
+		},
+		{
+			name: "mget_item_results_error",
+			args: args{
+				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
+				event: &entity.ExptScheduleEvent{
+					ExptID:             1,
+					ExptRunID:          2,
+					SpaceID:            3,
+					ExptRunMode:        entity.EvaluationModeRetryItems,
+					Session:            &entity.Session{UserID: testUserID},
+					ExecEvalSetItemIDs: []int64{1, 2},
+				},
+				expt: mockExpt,
+			},
+			prepareMock: func(f *exptRetryItemsExecFields, args args) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil).Times(1)
+				f.exptStatsRepo.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any()).Return(&entity.ExptStats{}, nil).Times(1)
+				mockItems := []*entity.EvaluationSetItem{
+					{ItemID: 100, Turns: []*entity.Turn{{ID: 1000}}},
+				}
+				f.evaluationSetItemService.EXPECT().BatchGetEvaluationSetItems(gomock.Any(), gomock.Any()).Return(mockItems, nil).Times(1)
+				f.idgenerator.EXPECT().GenMultiIDs(gomock.Any(), gomock.Any()).Return([]int64{1, 2}, nil).Times(1)
+				f.exptItemResultRepo.EXPECT().MGetItemResults(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errors.New("mget error")).Times(1)
+			},
+			wantErr: true,
+			assertErr: func(t *testing.T, err error) {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "mget error")
+			},
+		},
+		{
+			name: "update_items_result_error_retry_items",
+			args: args{
+				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
+				event: &entity.ExptScheduleEvent{
+					ExptID:             1,
+					ExptRunID:          2,
+					SpaceID:            3,
+					ExptRunMode:        entity.EvaluationModeRetryItems,
+					Session:            &entity.Session{UserID: testUserID},
+					ExecEvalSetItemIDs: []int64{1, 2},
+				},
+				expt: mockExpt,
+			},
+			prepareMock: func(f *exptRetryItemsExecFields, args args) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil).Times(1)
+				f.exptStatsRepo.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any()).Return(&entity.ExptStats{}, nil).Times(1)
+				mockItems := []*entity.EvaluationSetItem{
+					{ItemID: 100, Turns: []*entity.Turn{{ID: 1000}}},
+				}
+				f.evaluationSetItemService.EXPECT().BatchGetEvaluationSetItems(gomock.Any(), gomock.Any()).Return(mockItems, nil).Times(1)
+				f.idgenerator.EXPECT().GenMultiIDs(gomock.Any(), gomock.Any()).Return([]int64{1, 2}, nil).Times(1)
+				f.exptItemResultRepo.EXPECT().MGetItemResults(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]*entity.ExptItemResult{
+					{ItemID: 100, Status: entity.ItemRunState_Processing},
+				}, nil).Times(1)
+				f.exptItemResultRepo.EXPECT().UpdateItemsResult(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("update error")).Times(1)
+			},
+			wantErr: true,
+			assertErr: func(t *testing.T, err error) {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "update error")
+			},
+		},
+		{
+			name: "update_turn_results_error_retry_items",
+			args: args{
+				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
+				event: &entity.ExptScheduleEvent{
+					ExptID:             1,
+					ExptRunID:          2,
+					SpaceID:            3,
+					ExptRunMode:        entity.EvaluationModeRetryItems,
+					Session:            &entity.Session{UserID: testUserID},
+					ExecEvalSetItemIDs: []int64{1, 2},
+				},
+				expt: mockExpt,
+			},
+			prepareMock: func(f *exptRetryItemsExecFields, args args) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil).Times(1)
+				f.exptStatsRepo.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any()).Return(&entity.ExptStats{}, nil).Times(1)
+				mockItems := []*entity.EvaluationSetItem{
+					{ItemID: 100, Turns: []*entity.Turn{{ID: 1000}}},
+				}
+				f.evaluationSetItemService.EXPECT().BatchGetEvaluationSetItems(gomock.Any(), gomock.Any()).Return(mockItems, nil).Times(1)
+				f.idgenerator.EXPECT().GenMultiIDs(gomock.Any(), gomock.Any()).Return([]int64{1, 2}, nil).Times(1)
+				f.exptItemResultRepo.EXPECT().MGetItemResults(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]*entity.ExptItemResult{
+					{ItemID: 100, Status: entity.ItemRunState_Success},
+				}, nil).Times(1)
+				f.exptItemResultRepo.EXPECT().UpdateItemsResult(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.exptTurnResultRepo.EXPECT().UpdateTurnResults(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("update turn error")).Times(1)
+			},
+			wantErr: true,
+			assertErr: func(t *testing.T, err error) {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "update turn error")
+			},
+		},
+		{
+			name: "batch_create_run_logs_error_retry_items",
+			args: args{
+				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
+				event: &entity.ExptScheduleEvent{
+					ExptID:             1,
+					ExptRunID:          2,
+					SpaceID:            3,
+					ExptRunMode:        entity.EvaluationModeRetryItems,
+					Session:            &entity.Session{UserID: testUserID},
+					ExecEvalSetItemIDs: []int64{1, 2},
+				},
+				expt: mockExpt,
+			},
+			prepareMock: func(f *exptRetryItemsExecFields, args args) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil).Times(1)
+				f.exptStatsRepo.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any()).Return(&entity.ExptStats{}, nil).Times(1)
+				mockItems := []*entity.EvaluationSetItem{
+					{ItemID: 100, Turns: []*entity.Turn{{ID: 1000}}},
+				}
+				f.evaluationSetItemService.EXPECT().BatchGetEvaluationSetItems(gomock.Any(), gomock.Any()).Return(mockItems, nil).Times(1)
+				f.idgenerator.EXPECT().GenMultiIDs(gomock.Any(), gomock.Any()).Return([]int64{1, 2}, nil).Times(1)
+				f.exptItemResultRepo.EXPECT().MGetItemResults(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]*entity.ExptItemResult{
+					{ItemID: 100, Status: entity.ItemRunState_Fail},
+				}, nil).Times(1)
+				f.exptItemResultRepo.EXPECT().UpdateItemsResult(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.exptTurnResultRepo.EXPECT().UpdateTurnResults(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.exptItemResultRepo.EXPECT().BatchCreateNXRunLogs(gomock.Any(), gomock.Any()).Return(errors.New("batch create error")).Times(1)
+			},
+			wantErr: true,
+			assertErr: func(t *testing.T, err error) {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "batch create error")
+			},
+		},
+		{
+			name: "save_expt_stats_error_retry_items",
+			args: args{
+				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
+				event: &entity.ExptScheduleEvent{
+					ExptID:             1,
+					ExptRunID:          2,
+					SpaceID:            3,
+					ExptRunMode:        entity.EvaluationModeRetryItems,
+					Session:            &entity.Session{UserID: testUserID},
+					ExecEvalSetItemIDs: []int64{1, 2},
+				},
+				expt: mockExpt,
+			},
+			prepareMock: func(f *exptRetryItemsExecFields, args args) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil).Times(1)
+				f.exptStatsRepo.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any()).Return(&entity.ExptStats{}, nil).Times(1)
+				mockItems := []*entity.EvaluationSetItem{
+					{ItemID: 100, Turns: []*entity.Turn{{ID: 1000}}},
+				}
+				f.evaluationSetItemService.EXPECT().BatchGetEvaluationSetItems(gomock.Any(), gomock.Any()).Return(mockItems, nil).Times(1)
+				f.idgenerator.EXPECT().GenMultiIDs(gomock.Any(), gomock.Any()).Return([]int64{1, 2}, nil).Times(1)
+				f.exptItemResultRepo.EXPECT().MGetItemResults(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]*entity.ExptItemResult{
+					{ItemID: 100, Status: entity.ItemRunState_Terminal},
+				}, nil).Times(1)
+				f.exptItemResultRepo.EXPECT().UpdateItemsResult(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.exptTurnResultRepo.EXPECT().UpdateTurnResults(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.exptItemResultRepo.EXPECT().BatchCreateNXRunLogs(gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.exptStatsRepo.EXPECT().Save(gomock.Any(), gomock.Any()).Return(errors.New("save stats error")).Times(1)
+			},
+			wantErr: true,
+			assertErr: func(t *testing.T, err error) {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "save stats error")
+			},
+		},
+		{
+			name: "update_expt_error_retry_items",
+			args: args{
+				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
+				event: &entity.ExptScheduleEvent{
+					ExptID:             1,
+					ExptRunID:          2,
+					SpaceID:            3,
+					ExptRunMode:        entity.EvaluationModeRetryItems,
+					Session:            &entity.Session{UserID: testUserID},
+					ExecEvalSetItemIDs: []int64{1, 2},
+				},
+				expt: mockExpt,
+			},
+			prepareMock: func(f *exptRetryItemsExecFields, args args) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil).Times(1)
+				f.exptStatsRepo.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any()).Return(&entity.ExptStats{}, nil).Times(1)
+				mockItems := []*entity.EvaluationSetItem{
+					{ItemID: 100, Turns: []*entity.Turn{{ID: 1000}}},
+				}
+				f.evaluationSetItemService.EXPECT().BatchGetEvaluationSetItems(gomock.Any(), gomock.Any()).Return(mockItems, nil).Times(1)
+				f.idgenerator.EXPECT().GenMultiIDs(gomock.Any(), gomock.Any()).Return([]int64{1, 2}, nil).Times(1)
+				f.exptItemResultRepo.EXPECT().MGetItemResults(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]*entity.ExptItemResult{
+					{ItemID: 100, Status: entity.ItemRunState_Queueing},
+				}, nil).Times(1)
+				f.exptItemResultRepo.EXPECT().UpdateItemsResult(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.exptTurnResultRepo.EXPECT().UpdateTurnResults(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.exptItemResultRepo.EXPECT().BatchCreateNXRunLogs(gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.exptStatsRepo.EXPECT().Save(gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.exptRepo.EXPECT().Update(gomock.Any(), gomock.Any()).Return(errors.New("update expt error")).Times(1)
+			},
+			wantErr: true,
+			assertErr: func(t *testing.T, err error) {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "update expt error")
+			},
+		},
+		{
+			name: "idem_set_error_retry_items",
+			args: args{
+				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
+				event: &entity.ExptScheduleEvent{
+					ExptID:             1,
+					ExptRunID:          2,
+					SpaceID:            3,
+					ExptRunMode:        entity.EvaluationModeRetryItems,
+					Session:            &entity.Session{UserID: testUserID},
+					ExecEvalSetItemIDs: []int64{1, 2},
+				},
+				expt: mockExpt,
+			},
+			prepareMock: func(f *exptRetryItemsExecFields, args args) {
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil).Times(1)
+				f.exptStatsRepo.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any()).Return(&entity.ExptStats{}, nil).Times(1)
+				mockItems := []*entity.EvaluationSetItem{
+					{ItemID: 100, Turns: []*entity.Turn{{ID: 1000}}},
+				}
+				f.evaluationSetItemService.EXPECT().BatchGetEvaluationSetItems(gomock.Any(), gomock.Any()).Return(mockItems, nil).Times(1)
+				f.idgenerator.EXPECT().GenMultiIDs(gomock.Any(), gomock.Any()).Return([]int64{1, 2}, nil).Times(1)
+				f.exptItemResultRepo.EXPECT().MGetItemResults(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]*entity.ExptItemResult{}, nil).Times(1)
+				f.exptItemResultRepo.EXPECT().UpdateItemsResult(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.exptTurnResultRepo.EXPECT().UpdateTurnResults(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.exptItemResultRepo.EXPECT().BatchCreateNXRunLogs(gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.exptStatsRepo.EXPECT().Save(gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.exptRepo.EXPECT().Update(gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.configer.EXPECT().GetExptExecConf(gomock.Any(), gomock.Any()).Return(&entity.ExptExecConf{ZombieIntervalSecond: 10}).Times(1)
+				f.idem.EXPECT().Set(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("idem set error")).Times(1)
+			},
+			wantErr: true,
+			assertErr: func(t *testing.T, err error) {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "idem set error")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			f := buildRetryItemsExecFields(ctrl)
+			if tt.prepareMock != nil {
+				tt.prepareMock(f, tt.args)
+			}
+
+			e := &ExptRetryItemsExec{
+				manager:                  f.manager,
+				exptItemResultRepo:       f.exptItemResultRepo,
+				exptStatsRepo:            f.exptStatsRepo,
+				exptTurnResultRepo:       f.exptTurnResultRepo,
+				idgenerator:              f.idgenerator,
+				evaluationSetItemService: f.evaluationSetItemService,
+				exptRepo:                 f.exptRepo,
+				idem:                     f.idem,
+				configer:                 f.configer,
+				publisher:                f.publisher,
+				evaluatorRecordService:   f.evaluatorRecordService,
+				templateManager:          f.templateManager,
+				exptRunLogRepo:           f.exptRunLogRepo,
+			}
+
+			err := e.ExptStart(tt.args.ctx, tt.args.event, tt.args.expt)
+			if tt.assertErr != nil {
+				tt.assertErr(t, err)
+			}
+		})
+	}
+}
+
+func TestExptRetryItemsExec_ScanEvalItems(t *testing.T) {
+	testUserID := "test_user_id_123"
+	mockExpt := buildMockExpt()
+
+	type args struct {
+		ctx   context.Context
+		event *entity.ExptScheduleEvent
+		expt  *entity.Experiment
+	}
+
+	tests := []struct {
+		name           string
+		prepareMock    func(f *exptRetryItemsExecFields, args args)
+		args           args
+		wantToSubmit   []*entity.ExptEvalItem
+		wantIncomplete []*entity.ExptEvalItem
+		wantComplete   []*entity.ExptEvalItem
+		wantErr        bool
+		assertErr      func(t *testing.T, err error)
+	}{
+		{
+			name: "normal_flow",
+			args: args{
+				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
+				event: &entity.ExptScheduleEvent{
+					ExptID:      1,
+					ExptRunID:   2,
+					SpaceID:     3,
+					ExptRunMode: entity.EvaluationModeRetryItems,
+					Session:     &entity.Session{UserID: testUserID},
+				},
+				expt: mockExpt,
+			},
+			prepareMock: func(f *exptRetryItemsExecFields, args args) {
+				f.configer.EXPECT().GetExptExecConf(gomock.Any(), gomock.Any()).Return(&entity.ExptExecConf{ExptItemEvalConf: &entity.ExptItemEvalConf{ConcurNum: 3}}).Times(1)
+				f.exptItemResultRepo.EXPECT().ScanItemRunLogs(gomock.Any(), int64(1), int64(2), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]*entity.ExptItemResultRunLog{
+					{ItemID: 1, Status: int32(entity.ItemRunState_Processing)},
+				}, int64(0), nil).Times(1)
+				f.exptItemResultRepo.EXPECT().ScanItemRunLogs(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]*entity.ExptItemResultRunLog{
+					{ItemID: 2, Status: int32(entity.ItemRunState_Queueing)},
+				}, int64(1), nil).Times(1)
+			},
+			wantToSubmit: []*entity.ExptEvalItem{
+				{ExptID: 1, EvalSetVersionID: 1, ItemID: 2, State: entity.ItemRunState_Queueing},
+			},
+			wantIncomplete: []*entity.ExptEvalItem{
+				{ExptID: 1, EvalSetVersionID: 1, ItemID: 1, State: entity.ItemRunState_Processing},
+			},
+			wantComplete: []*entity.ExptEvalItem{},
+			wantErr:      false,
+			assertErr:    func(t *testing.T, err error) { assert.NoError(t, err) },
+		},
+		{
+			name: "scan_error",
+			args: args{
+				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
+				event: &entity.ExptScheduleEvent{
+					ExptID:      1,
+					ExptRunID:   2,
+					SpaceID:     3,
+					ExptRunMode: entity.EvaluationModeRetryItems,
+					Session:     &entity.Session{UserID: testUserID},
+				},
+				expt: mockExpt,
+			},
+			prepareMock: func(f *exptRetryItemsExecFields, args args) {
+				f.exptItemResultRepo.EXPECT().ScanItemRunLogs(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, int64(0), errors.New("scan error")).Times(1)
+			},
+			wantErr: true,
+			assertErr: func(t *testing.T, err error) {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "scan error")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			f := buildRetryItemsExecFields(ctrl)
+			if tt.prepareMock != nil {
+				tt.prepareMock(f, tt.args)
+			}
+
+			e := &ExptRetryItemsExec{
+				manager:                  f.manager,
+				exptItemResultRepo:       f.exptItemResultRepo,
+				exptStatsRepo:            f.exptStatsRepo,
+				exptTurnResultRepo:       f.exptTurnResultRepo,
+				idgenerator:              f.idgenerator,
+				evaluationSetItemService: f.evaluationSetItemService,
+				exptRepo:                 f.exptRepo,
+				idem:                     f.idem,
+				configer:                 f.configer,
+				publisher:                f.publisher,
+				evaluatorRecordService:   f.evaluatorRecordService,
+				templateManager:          f.templateManager,
+				exptRunLogRepo:           f.exptRunLogRepo,
+			}
+
+			toSubmit, incomplete, complete, err := e.ScanEvalItems(tt.args.ctx, tt.args.event, tt.args.expt)
+			if tt.assertErr != nil {
+				tt.assertErr(t, err)
+			}
+			if !tt.wantErr {
+				assert.Equal(t, tt.wantToSubmit, toSubmit)
+				assert.Equal(t, tt.wantIncomplete, incomplete)
+				assert.Equal(t, tt.wantComplete, complete)
+			}
+		})
+	}
+}
+
+func TestExptRetryItemsExec_ExptEnd(t *testing.T) {
+	testUserID := "test_user_id_123"
+	mockExpt := buildMockExpt()
+
+	type args struct {
+		ctx        context.Context
+		event      *entity.ExptScheduleEvent
+		expt       *entity.Experiment
+		toSubmit   int
+		incomplete int
+	}
+
+	tests := []struct {
+		name         string
+		prepareMock  func(f *exptRetryItemsExecFields, args args)
+		args         args
+		wantNextTick bool
+		wantErr      bool
+		assertErr    func(t *testing.T, err error)
+	}{
+		{
+			name: "all_completed",
+			args: args{
+				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
+				event: &entity.ExptScheduleEvent{
+					ExptID:             1,
+					ExptRunID:          2,
+					SpaceID:            3,
+					ExptRunMode:        entity.EvaluationModeRetryItems,
+					Session:            &entity.Session{UserID: testUserID},
+					ExecEvalSetItemIDs: []int64{1},
+				},
+				expt:       mockExpt,
+				toSubmit:   0,
+				incomplete: 0,
+			},
+			prepareMock: func(f *exptRetryItemsExecFields, args args) {
+				f.manager.EXPECT().LockCompletingRun(gomock.Any(), args.event.ExptID, args.event.ExptRunID, args.event.SpaceID, args.event.Session).Return(nil).Times(1)
+				f.exptRunLogRepo.EXPECT().Get(gomock.Any(), args.event.ExptID, args.event.ExptRunID).Return(&entity.ExptRunLog{
+					ItemIds: []entity.ExptRunLogItems{{ItemIDs: []int64{1}}},
+				}, nil).Times(1)
+				f.idem.EXPECT().Exist(gomock.Any(), gomock.Any()).Return(false, nil).Times(1)
+				f.manager.EXPECT().CompleteRun(gomock.Any(), args.event.ExptID, args.event.ExptRunID, args.event.SpaceID, args.event.Session, gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.manager.EXPECT().CompleteExpt(gomock.Any(), args.event.ExptID, gomock.Any(), args.event.SpaceID, args.event.Session, gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.configer.EXPECT().GetExptExecConf(gomock.Any(), args.event.SpaceID).Return(&entity.ExptExecConf{ZombieIntervalSecond: 100}).Times(1)
+				f.idem.EXPECT().Set(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
+				f.manager.EXPECT().UnlockCompletingRun(gomock.Any(), args.event.ExptID, args.event.ExptRunID, args.event.SpaceID, args.event.Session).Return(nil).Times(1)
+			},
+			wantNextTick: false,
+			wantErr:      false,
+			assertErr:    func(t *testing.T, err error) { assert.NoError(t, err) },
+		},
+		{
+			name: "still_pending",
+			args: args{
+				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
+				event: &entity.ExptScheduleEvent{
+					ExptID:      1,
+					ExptRunID:   2,
+					SpaceID:     3,
+					ExptRunMode: entity.EvaluationModeRetryItems,
+					Session:     &entity.Session{UserID: testUserID},
+				},
+				expt:       mockExpt,
+				toSubmit:   1,
+				incomplete: 1,
+			},
+			prepareMock:  func(f *exptRetryItemsExecFields, args args) {},
+			wantNextTick: true,
+			wantErr:      false,
+			assertErr:    func(t *testing.T, err error) { assert.NoError(t, err) },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			f := buildRetryItemsExecFields(ctrl)
+			if tt.prepareMock != nil {
+				tt.prepareMock(f, tt.args)
+			}
+
+			e := &ExptRetryItemsExec{
+				manager:                  f.manager,
+				exptItemResultRepo:       f.exptItemResultRepo,
+				exptStatsRepo:            f.exptStatsRepo,
+				exptTurnResultRepo:       f.exptTurnResultRepo,
+				idgenerator:              f.idgenerator,
+				evaluationSetItemService: f.evaluationSetItemService,
+				exptRepo:                 f.exptRepo,
+				idem:                     f.idem,
+				configer:                 f.configer,
+				publisher:                f.publisher,
+				evaluatorRecordService:   f.evaluatorRecordService,
+				templateManager:          f.templateManager,
+				exptRunLogRepo:           f.exptRunLogRepo,
+			}
+
+			nextTick, err := e.ExptEnd(tt.args.ctx, tt.args.event, tt.args.expt, tt.args.toSubmit, tt.args.incomplete)
+			if tt.assertErr != nil {
+				tt.assertErr(t, err)
+			}
+			assert.Equal(t, tt.wantNextTick, nextTick)
+		})
+	}
+}
+
+func TestExptRetryItemsExec_ScheduleStart(t *testing.T) {
+	testUserID := "test_user_id_123"
+	mockExpt := buildMockExpt()
+
+	type args struct {
+		ctx   context.Context
+		event *entity.ExptScheduleEvent
+		expt  *entity.Experiment
+	}
+
+	tests := []struct {
+		name        string
+		prepareMock func(f *exptRetryItemsExecFields, args args)
+		args        args
+		wantErr     bool
+		assertErr   func(t *testing.T, err error)
+	}{
+		{
+			name: "get_run_log_error",
+			args: args{
+				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
+				event: &entity.ExptScheduleEvent{
+					ExptID:             1,
+					ExptRunID:          2,
+					SpaceID:            3,
+					ExptRunMode:        entity.EvaluationModeRetryItems,
+					Session:            &entity.Session{UserID: testUserID},
+					ExecEvalSetItemIDs: []int64{1, 2},
+				},
+				expt: mockExpt,
+			},
+			prepareMock: func(f *exptRetryItemsExecFields, args args) {
+				f.exptRunLogRepo.EXPECT().Get(gomock.Any(), args.event.ExptID, args.event.ExptRunID).Return(nil, errors.New("get error")).Times(1)
+			},
+			wantErr: true,
+			assertErr: func(t *testing.T, err error) {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "get error")
+			},
+		},
+		{
+			name: "schedule_start_with_absent_items_reset_error",
+			args: args{
+				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
+				event: &entity.ExptScheduleEvent{
+					ExptID:             1,
+					ExptRunID:          2,
+					SpaceID:            3,
+					ExptRunMode:        entity.EvaluationModeRetryItems,
+					Session:            &entity.Session{UserID: testUserID},
+					ExecEvalSetItemIDs: []int64{1},
+				},
+				expt: mockExpt,
+			},
+			prepareMock: func(f *exptRetryItemsExecFields, args args) {
+				f.exptRunLogRepo.EXPECT().Get(gomock.Any(), args.event.ExptID, args.event.ExptRunID).Return(&entity.ExptRunLog{
+					ItemIds: []entity.ExptRunLogItems{{ItemIDs: []int64{1, 2, 3}}},
+				}, nil).Times(1)
+				f.exptStatsRepo.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errors.New("stats error")).Times(1)
+			},
+			wantErr: true,
+			assertErr: func(t *testing.T, err error) {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "stats error")
+			},
+		},
+		{
+			name: "schedule_start_with_no_absent_items",
+			args: args{
+				ctx: session.WithCtxUser(context.Background(), &session.User{ID: testUserID}),
+				event: &entity.ExptScheduleEvent{
+					ExptID:             1,
+					ExptRunID:          2,
+					SpaceID:            3,
+					ExptRunMode:        entity.EvaluationModeRetryItems,
+					Session:            &entity.Session{UserID: testUserID},
+					ExecEvalSetItemIDs: []int64{1, 2},
+				},
+				expt: mockExpt,
+			},
+			prepareMock: func(f *exptRetryItemsExecFields, args args) {
+				f.exptRunLogRepo.EXPECT().Get(gomock.Any(), args.event.ExptID, args.event.ExptRunID).Return(&entity.ExptRunLog{
+					ItemIds: []entity.ExptRunLogItems{{ItemIDs: []int64{1, 2}}},
+				}, nil).Times(1)
+				f.exptStatsRepo.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any()).Return(&entity.ExptStats{}, nil).Times(1)
+				f.exptStatsRepo.EXPECT().Save(gomock.Any(), gomock.Any()).Return(nil).Times(1)
+			},
+			wantErr:   false,
+			assertErr: func(t *testing.T, err error) { assert.NoError(t, err) },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			f := buildRetryItemsExecFields(ctrl)
+			if tt.prepareMock != nil {
+				tt.prepareMock(f, tt.args)
+			}
+
+			e := &ExptRetryItemsExec{
+				manager:                  f.manager,
+				exptItemResultRepo:       f.exptItemResultRepo,
+				exptStatsRepo:            f.exptStatsRepo,
+				exptTurnResultRepo:       f.exptTurnResultRepo,
+				idgenerator:              f.idgenerator,
+				evaluationSetItemService: f.evaluationSetItemService,
+				exptRepo:                 f.exptRepo,
+				idem:                     f.idem,
+				configer:                 f.configer,
+				publisher:                f.publisher,
+				evaluatorRecordService:   f.evaluatorRecordService,
+				templateManager:          f.templateManager,
+				exptRunLogRepo:           f.exptRunLogRepo,
+			}
+
+			err := e.ScheduleStart(tt.args.ctx, tt.args.event, tt.args.expt)
+			if tt.assertErr != nil {
+				tt.assertErr(t, err)
+			}
+		})
+	}
+}
+
+func TestExptRetryItemsExec_NextTick(t *testing.T) {
+	testUserID := "test_user_id_123"
+
+	tests := []struct {
+		name        string
+		nextTick    bool
+		prepareMock func(f *exptRetryItemsExecFields)
+		event       *entity.ExptScheduleEvent
+		wantErr     bool
+		assertErr   func(t *testing.T, err error)
+	}{
+		{
+			name:     "nextTick_true_publish_success",
+			nextTick: true,
+			prepareMock: func(f *exptRetryItemsExecFields) {
+				f.configer.EXPECT().GetExptExecConf(gomock.Any(), int64(1)).Return(&entity.ExptExecConf{DaemonIntervalSecond: 1})
+				f.publisher.EXPECT().PublishExptScheduleEvent(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+			},
+			event:     &entity.ExptScheduleEvent{SpaceID: 1, Session: &entity.Session{UserID: testUserID}},
+			wantErr:   false,
+			assertErr: func(t *testing.T, err error) { assert.NoError(t, err) },
+		},
+		{
+			name:     "nextTick_true_publish_error",
+			nextTick: true,
+			prepareMock: func(f *exptRetryItemsExecFields) {
+				f.configer.EXPECT().GetExptExecConf(gomock.Any(), int64(1)).Return(&entity.ExptExecConf{DaemonIntervalSecond: 1})
+				f.publisher.EXPECT().PublishExptScheduleEvent(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("publish error"))
+			},
+			event:   &entity.ExptScheduleEvent{SpaceID: 1, Session: &entity.Session{UserID: testUserID}},
+			wantErr: true,
+			assertErr: func(t *testing.T, err error) {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "publish error")
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			f := buildRetryItemsExecFields(ctrl)
+			if tc.prepareMock != nil {
+				tc.prepareMock(f)
+			}
+
+			exec := &ExptRetryItemsExec{
+				configer:  f.configer,
+				publisher: f.publisher,
+			}
+
+			err := exec.NextTick(context.Background(), tc.event, tc.nextTick)
+			if tc.assertErr != nil {
+				tc.assertErr(t, err)
+			}
+		})
+	}
+}
+
+func TestExptRetryItemsExec_PublishResult(t *testing.T) {
+	tests := []struct {
+		name        string
+		prepareMock func(f *exptRetryItemsExecFields)
+		event       *entity.ExptScheduleEvent
+		refs        []*entity.ExptTurnEvaluatorResultRef
+		wantErr     bool
+	}{
+		{
+			name: "offline_expt_skip_publish",
+			event: &entity.ExptScheduleEvent{
+				ExptType: entity.ExptType_Offline,
+			},
+			refs:    nil,
+			wantErr: false,
+		},
+		{
+			name: "online_expt_empty_refs",
+			event: &entity.ExptScheduleEvent{
+				ExptType: entity.ExptType_Online,
+			},
+			refs:    []*entity.ExptTurnEvaluatorResultRef{},
+			wantErr: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			f := buildRetryItemsExecFields(ctrl)
+			if tc.prepareMock != nil {
+				tc.prepareMock(f)
+			}
+
+			exec := &ExptRetryItemsExec{
+				manager:                f.manager,
+				idem:                   f.idem,
+				configer:               f.configer,
+				exptItemResultRepo:     f.exptItemResultRepo,
+				publisher:              f.publisher,
+				evaluatorRecordService: f.evaluatorRecordService,
+			}
+
+			err := exec.PublishResult(context.Background(), tc.refs, tc.event)
+			if tc.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestNewExptRetryAllExec(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	f := buildRetryAllExecFields(ctrl)
+
+	exec := NewExptRetryAllExec(
+		f.manager,
+		f.exptItemResultRepo,
+		f.exptStatsRepo,
+		f.exptTurnResultRepo,
+		f.idgenerator,
+		f.evaluationSetItemService,
+		f.exptRepo,
+		f.idem,
+		f.configer,
+		f.publisher,
+		f.evaluatorRecordService,
+		f.templateManager,
+	)
+
+	assert.NotNil(t, exec)
+	assert.Equal(t, f.manager, exec.manager)
+	assert.Equal(t, f.exptItemResultRepo, exec.exptItemResultRepo)
+	assert.Equal(t, f.exptStatsRepo, exec.exptStatsRepo)
+	assert.Equal(t, f.exptTurnResultRepo, exec.exptTurnResultRepo)
+	assert.Equal(t, f.idgenerator, exec.idgenerator)
+	assert.Equal(t, f.evaluationSetItemService, exec.evaluationSetItemService)
+	assert.Equal(t, f.exptRepo, exec.exptRepo)
+	assert.Equal(t, f.idem, exec.idem)
+	assert.Equal(t, f.configer, exec.configer)
+	assert.Equal(t, f.publisher, exec.publisher)
+}
+
+func TestNewExptRetryItemsExec(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	f := buildRetryItemsExecFields(ctrl)
+
+	exec := NewExptRetryItemsExec(
+		f.manager,
+		f.exptItemResultRepo,
+		f.exptStatsRepo,
+		f.exptTurnResultRepo,
+		f.idgenerator,
+		f.evaluationSetItemService,
+		f.exptRepo,
+		f.idem,
+		f.configer,
+		f.publisher,
+		f.evaluatorRecordService,
+		f.templateManager,
+		f.exptRunLogRepo,
+	)
+
+	assert.NotNil(t, exec)
+	assert.Equal(t, f.manager, exec.manager)
+	assert.Equal(t, f.exptItemResultRepo, exec.exptItemResultRepo)
+	assert.Equal(t, f.exptStatsRepo, exec.exptStatsRepo)
+	assert.Equal(t, f.exptTurnResultRepo, exec.exptTurnResultRepo)
+	assert.Equal(t, f.idgenerator, exec.idgenerator)
+	assert.Equal(t, f.evaluationSetItemService, exec.evaluationSetItemService)
+	assert.Equal(t, f.exptRepo, exec.exptRepo)
+	assert.Equal(t, f.idem, exec.idem)
+	assert.Equal(t, f.configer, exec.configer)
+	assert.Equal(t, f.publisher, exec.publisher)
+	assert.Equal(t, f.exptRunLogRepo, exec.exptRunLogRepo)
+}
+
+func TestSchedulerModeFactory_NewSchedulerMode_RetryAll(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	manager := svcmocks.NewMockIExptManager(ctrl)
+	exptItemResultRepo := mock_repo.NewMockIExptItemResultRepo(ctrl)
+	exptStatsRepo := mock_repo.NewMockIExptStatsRepo(ctrl)
+	exptTurnResultRepo := mock_repo.NewMockIExptTurnResultRepo(ctrl)
+	idgenerator := idgenmocks.NewMockIIDGenerator(ctrl)
+	evaluationSetItemService := svcmocks.NewMockEvaluationSetItemService(ctrl)
+	exptRepo := mock_repo.NewMockIExperimentRepo(ctrl)
+	idem := idemmocks.NewMockIdempotentService(ctrl)
+	configer := configmocks.NewMockIConfiger(ctrl)
+	publisher := eventmocks.NewMockExptEventPublisher(ctrl)
+	evaluatorRecordService := svcmocks.NewMockEvaluatorRecordService(ctrl)
+	resultService := svcmocks.NewMockExptResultService(ctrl)
+	templateManager := svcmocks.NewMockIExptTemplateManager(ctrl)
+	mockExptRunLogRepo := mock_repo.NewMockIExptRunLogRepo(ctrl)
+	mutex := lockMocks.NewMockILocker(ctrl)
+
+	factory := NewSchedulerModeFactory(
+		manager,
+		exptItemResultRepo,
+		exptStatsRepo,
+		exptTurnResultRepo,
+		idgenerator,
+		evaluationSetItemService,
+		exptRepo,
+		idem,
+		configer,
+		publisher,
+		evaluatorRecordService,
+		resultService,
+		templateManager,
+		mockExptRunLogRepo,
+		mutex,
+	)
+
+	tests := []struct {
+		name      string
+		mode      entity.ExptRunMode
+		wantType  interface{}
+		wantError bool
+	}{
+		{
+			name:      "retryAll_mode",
+			mode:      entity.EvaluationModeRetryAll,
+			wantType:  &ExptRetryAllExec{},
+			wantError: false,
+		},
+		{
+			name:      "retryItems_mode",
+			mode:      entity.EvaluationModeRetryItems,
+			wantType:  &ExptRetryItemsExec{},
+			wantError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mode, err := factory.NewSchedulerMode(tt.mode)
+			if tt.wantError {
+				assert.Error(t, err)
+				assert.Nil(t, mode)
+			} else {
+				assert.NoError(t, err)
+				assert.IsType(t, tt.wantType, mode)
 			}
 		})
 	}

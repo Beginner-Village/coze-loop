@@ -12,12 +12,15 @@ import (
 	"sync"
 	"time"
 
+	"github.com/coze-dev/coze-loop/backend/modules/evaluation/pkg/utils"
+
 	"github.com/bytedance/gg/gcond"
 	"github.com/bytedance/gg/gptr"
 	"github.com/bytedance/gg/gslice"
 
 	"github.com/coze-dev/coze-loop/backend/infra/idgen"
 	"github.com/coze-dev/coze-loop/backend/infra/platestwrite"
+	"github.com/coze-dev/coze-loop/backend/modules/evaluation/consts"
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/domain/component/metrics"
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/domain/component/rpc"
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/domain/entity"
@@ -25,6 +28,7 @@ import (
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/domain/repo"
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/pkg/contexts"
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/pkg/errno"
+	"github.com/coze-dev/coze-loop/backend/pkg/errorx"
 	"github.com/coze-dev/coze-loop/backend/pkg/json"
 	"github.com/coze-dev/coze-loop/backend/pkg/lang/goroutine"
 	"github.com/coze-dev/coze-loop/backend/pkg/lang/maps"
@@ -50,8 +54,10 @@ func NewExptResultService(
 	evaluationSetItemService EvaluationSetItemService,
 	publisher events.ExptEventPublisher,
 	tagRPCAdapter rpc.ITagRPCAdapter,
+	analysisService IEvaluationAnalysisService,
+	fileProvider rpc.IFileProvider,
 ) ExptResultService {
-	return ExptResultServiceImpl{
+	return &ExptResultServiceImpl{
 		ExptItemResultRepo:          exptItemResultRepo,
 		ExptTurnResultRepo:          exptTurnResultRepo,
 		ExptAnnotateRepo:            exptAnnotateRepo,
@@ -69,6 +75,8 @@ func NewExptResultService(
 		evaluationSetItemService:    evaluationSetItemService,
 		publisher:                   publisher,
 		tagRPCAdapter:               tagRPCAdapter,
+		analysisService:             analysisService,
+		fileProvider:                fileProvider,
 	}
 }
 
@@ -90,11 +98,13 @@ type ExptResultServiceImpl struct {
 	evaluatorService            EvaluatorService
 	evaluatorRecordService      EvaluatorRecordService
 	evaluationSetItemService    EvaluationSetItemService
+	fileProvider                rpc.IFileProvider
 
-	publisher events.ExptEventPublisher
+	publisher       events.ExptEventPublisher
+	analysisService IEvaluationAnalysisService
 }
 
-func (e ExptResultServiceImpl) GetExptItemTurnResults(ctx context.Context, exptID, itemID int64, spaceID int64, session *entity.Session) ([]*entity.ExptTurnResult, error) {
+func (e ExptResultServiceImpl) GetExptItemTurnResults(ctx context.Context, exptID, itemID, spaceID int64, session *entity.Session) ([]*entity.ExptTurnResult, error) {
 	turnResults, err := e.ExptTurnResultRepo.GetItemTurnResults(ctx, exptID, itemID, spaceID)
 	if err != nil {
 		return nil, err
@@ -114,7 +124,7 @@ func (e ExptResultServiceImpl) GetExptItemTurnResults(ctx context.Context, exptI
 		if turnEvaluatorVerIDToResultID[ref.ExptTurnResultID] == nil {
 			turnEvaluatorVerIDToResultID[ref.ExptTurnResultID] = make(map[int64]int64)
 		}
-		turnEvaluatorVerIDToResultID[ref.ExptTurnResultID][ref.EvaluatorVersionID] = ref.EvaluatorVersionID
+		turnEvaluatorVerIDToResultID[ref.ExptTurnResultID][ref.EvaluatorVersionID] = ref.EvaluatorResultID
 	}
 
 	res := make([]*entity.ExptTurnResult, 0, len(turnResults))
@@ -127,7 +137,7 @@ func (e ExptResultServiceImpl) GetExptItemTurnResults(ctx context.Context, exptI
 	return res, nil
 }
 
-func (e ExptResultServiceImpl) RecordItemRunLogs(ctx context.Context, exptID, exptRunID int64, itemID int64, spaceID int64) ([]*entity.ExptTurnEvaluatorResultRef, error) {
+func (e ExptResultServiceImpl) RecordItemRunLogs(ctx context.Context, exptID, exptRunID, itemID, spaceID int64) ([]*entity.ExptTurnEvaluatorResultRef, error) {
 	itemRunLog, err := e.ExptItemResultRepo.GetItemRunLog(ctx, exptID, exptRunID, itemID, spaceID)
 	if err != nil {
 		return nil, err
@@ -163,6 +173,23 @@ func (e ExptResultServiceImpl) RecordItemRunLogs(ctx context.Context, exptID, ex
 
 	logs.CtxInfo(ctx, "[ExptEval] expt item result with recording run_log, expt_id=%v, expt_run_id=%v, item_id=%v, cnt_op: %v", exptID, exptRunID, itemID, json.Jsonify(statsCntOp))
 
+	// 加载实验配置：仅在 EnableScoreWeight 为 true 时从 EvaluatorConf 构建权重；否则 scoreWeights 为空，calculateWeightedScore 按等权计算。
+	var scoreWeights map[int64]float64
+	expt, err := e.ExperimentRepo.GetByID(ctx, exptID, spaceID)
+	if err == nil && expt != nil &&
+		expt.EvalConf != nil && expt.EvalConf.ConnectorConf.EvaluatorsConf != nil &&
+		expt.EvalConf.ConnectorConf.EvaluatorsConf.EnableScoreWeight {
+		for _, ec := range expt.EvalConf.ConnectorConf.EvaluatorsConf.EvaluatorConf {
+			if ec == nil || ec.ScoreWeight == nil || *ec.ScoreWeight <= 0 {
+				continue
+			}
+			if scoreWeights == nil {
+				scoreWeights = make(map[int64]float64)
+			}
+			scoreWeights[ec.EvaluatorVersionID] = *ec.ScoreWeight
+		}
+	}
+
 	var (
 		turnEvaluatorRefs []*entity.ExptTurnEvaluatorResultRef
 		turn2Result       = gslice.ToMap(turnResults, func(t *entity.ExptTurnResult) (int64, *entity.ExptTurnResult) { return t.TurnID, t })
@@ -181,6 +208,34 @@ func (e ExptResultServiceImpl) RecordItemRunLogs(ctx context.Context, exptID, ex
 		result.ExptRunID = rl.ExptRunID
 
 		turnEvaluatorRefs = append(turnEvaluatorRefs, NewTurnEvaluatorResultRefs(0, result.ExptID, result.ID, spaceID, rl.EvaluatorResultIds)...)
+
+		// 计算并回写当前轮次的汇总得分（EnableScoreWeight 为 false 或未配置正权重时为等权平均）
+		if rl.EvaluatorResultIds != nil && len(rl.EvaluatorResultIds.EvalVerIDToResID) > 0 {
+			evaluatorResultIDs := make([]int64, 0, len(rl.EvaluatorResultIds.EvalVerIDToResID))
+			for _, resID := range rl.EvaluatorResultIds.EvalVerIDToResID {
+				evaluatorResultIDs = append(evaluatorResultIDs, resID)
+			}
+
+			if len(evaluatorResultIDs) > 0 {
+				records, err := e.evaluatorRecordService.BatchGetEvaluatorRecord(ctx, evaluatorResultIDs, false, false)
+				if err != nil {
+					logs.CtxError(ctx, "[ExptEval] RecordItemRunLogs BatchGetEvaluatorRecord failed, expt_id=%v, expt_run_id=%v, item_id=%v, turn_id=%v, err=%v",
+						exptID, exptRunID, itemID, tid, err)
+				} else {
+					version2Record := make(map[int64]*entity.EvaluatorRecord, len(records))
+					for _, r := range records {
+						if r == nil {
+							continue
+						}
+						version2Record[r.EvaluatorVersionID] = r
+					}
+
+					if ws := calculateWeightedScore(version2Record, scoreWeights); ws != nil {
+						result.WeightedScore = ws
+					}
+				}
+			}
+		}
 	}
 
 	if len(turnEvaluatorRefs) > 0 {
@@ -242,9 +297,24 @@ func NewTurnEvaluatorResultRefs(id, exptID, turnResultID, spaceID int64, evaluat
 	return refs
 }
 
-func (e ExptResultServiceImpl) MGetExperimentResult(ctx context.Context, param *entity.MGetExperimentResultParam) (
-	columnEvaluators []*entity.ColumnEvaluator, exptColumnEvaluators []*entity.ExptColumnEvaluator, columnEvalSetFields []*entity.ColumnEvalSetField, columnAnnotations []*entity.ExptColumnAnnotation, itemResults []*entity.ItemResult, total int64, err error,
-) {
+func resolveLoadEvaluatorFullContent(param *entity.MGetExperimentResultParam) bool {
+	if param.LoadEvaluatorFullContent != nil {
+		return *param.LoadEvaluatorFullContent
+	}
+	return param.ExportFullContent
+}
+
+func resolveLoadEvalTargetFullContent(param *entity.MGetExperimentResultParam) bool {
+	if len(param.LoadEvalTargetOutputFieldKeys) > 0 {
+		return false
+	}
+	if param.LoadEvalTargetFullContent != nil {
+		return *param.LoadEvalTargetFullContent
+	}
+	return param.ExportFullContent
+}
+
+func (e ExptResultServiceImpl) MGetExperimentResult(ctx context.Context, param *entity.MGetExperimentResultParam) (res *entity.MGetExperimentReportResult, err error) {
 	var (
 		spaceID        = param.SpaceID
 		exptIDs        = param.ExptIDs
@@ -267,40 +337,73 @@ func (e ExptResultServiceImpl) MGetExperimentResult(ctx context.Context, param *
 		baseExptID = exptIDs[0]
 	}
 
-	baseExpt, err := e.ExperimentRepo.GetByID(ctx, baseExptID, spaceID)
-	if err != nil {
-		return nil, nil, nil, nil, nil, 0, err
-	}
-	baseExptEvalSetVersionID := baseExpt.EvalSetVersionID
+	allExptIDs := make([]int64, 0, len(exptIDs)+1)
+	allExptIDs = gslice.Uniq(append(append(allExptIDs, baseExptID), exptIDs...))
 
-	columnEvaluators, exptColumnEvaluators, err = e.getColumnEvaluators(ctx, spaceID, exptIDs)
+	exptList, err := e.ExperimentRepo.MGetByID(ctx, allExptIDs, spaceID)
 	if err != nil {
-		return nil, nil, nil, nil, nil, 0, err
+		return nil, err
 	}
 
-	columnEvalSetFields, err = e.getColumnEvalSetFields(ctx, spaceID, baseExpt.EvalSetID, baseExptEvalSetVersionID)
+	exptMap := gslice.ToMap(exptList, func(t *entity.Experiment) (int64, *entity.Experiment) { return t.ID, t })
+	sortedExpts := make([]*entity.Experiment, 0, len(exptList))
+	for _, id := range allExptIDs {
+		got := exptMap[id]
+		if got == nil {
+			return nil, errorx.New("expt %v not found", id)
+		}
+		sortedExpts = append(sortedExpts, got)
+	}
+	baseExpt := exptMap[baseExptID]
+
+	columnEvaluators, exptColumnEvaluators, err := e.getColumnEvaluators(ctx, spaceID, exptIDs)
 	if err != nil {
-		return nil, nil, nil, nil, nil, 0, err
+		return nil, err
 	}
 
-	columnAnnotations, err = e.getColumnAnnotations(ctx, spaceID, exptIDs)
+	columnEvalSetFields, err := e.getColumnEvalSetFields(ctx, spaceID, baseExpt.EvalSetID, baseExpt.EvalSetVersionID)
 	if err != nil {
-		return nil, nil, nil, nil, nil, 0, err
+		return nil, err
+	}
+
+	columnsEvalTarget, err := e.getExptColumnsEvalTarget(ctx, spaceID, sortedExpts, param.FullTrajectory)
+	if err != nil {
+		return nil, err
+	}
+
+	res = &entity.MGetExperimentReportResult{
+		ColumnEvaluators:      columnEvaluators,
+		ExptColumnEvaluators:  exptColumnEvaluators,
+		ColumnEvalSetFields:   columnEvalSetFields,
+		ExptColumnsEvalTarget: columnsEvalTarget,
 	}
 
 	if baseExpt.ExptType == entity.ExptType_Online && len(exptIDs) > 1 {
 		// 在线实验对比场景，不返回行级结果
-		return columnEvaluators, exptColumnEvaluators, columnEvalSetFields, nil, nil, 0, nil
+		return res, nil
 	}
 
-	// 获取baseline 该分页的turn_result
-	turnResultDAOs, itemID2ItemRunState, total, err := e.ListTurnResult(ctx, param, baseExpt)
+	columnAnnotations, err := e.getColumnAnnotations(ctx, spaceID, exptIDs)
 	if err != nil {
-		return nil, nil, nil, nil, nil, 0, err
+		return nil, err
+	}
+
+	res.ExptColumnAnnotations = columnAnnotations
+
+	// 获取baseline 该分页的turn_result
+	var itemID2ItemRunState map[int64]entity.ItemRunState
+	var total int64
+	if param.UseTurnListCursor && !param.UseAccelerator {
+		turnResultDAOs, itemID2ItemRunState, total, res.NextTurnListCursor, err = e.exportListTurnResultByCursor(ctx, param, baseExpt)
+	} else {
+		turnResultDAOs, itemID2ItemRunState, total, err = e.ListTurnResult(ctx, param, baseExpt)
+	}
+	if err != nil {
+		return nil, err
 	}
 
 	if len(turnResultDAOs) == 0 {
-		return columnEvaluators, exptColumnEvaluators, columnEvalSetFields, columnAnnotations, nil, 0, nil
+		return res, nil
 	}
 
 	itemIDMap := make(map[int64]bool)
@@ -312,17 +415,43 @@ func (e ExptResultServiceImpl) MGetExperimentResult(ctx context.Context, param *
 	})
 	itemResultDAOs, err := e.ExptItemResultRepo.BatchGet(ctx, spaceID, baseExptID, itemIDs)
 	if err != nil {
-		return nil, nil, nil, nil, nil, 0, err
+		return nil, err
 	}
 
-	payloadBuilder := NewPayloadBuilder(ctx, param, baseExptID, turnResultDAOs, itemResultDAOs, e.ExperimentRepo, e.ExptTurnResultRepo, e.ExptAnnotateRepo, e.evalTargetService, e.evaluatorRecordService, e.evaluationSetItemService, nil, nil, itemID2ItemRunState)
+	payloadBuilder := NewPayloadBuilder(ctx, param, baseExptID, turnResultDAOs, itemResultDAOs, e.ExperimentRepo, e.ExptTurnResultRepo, e.ExptAnnotateRepo, e.evalTargetService, e.evaluatorRecordService, e.evaluationSetItemService, e.analysisService, nil, nil, itemID2ItemRunState, e.fileProvider)
 
-	itemResults, err = payloadBuilder.BuildItemResults(ctx)
+	itemResults, err := payloadBuilder.BuildItemResults(ctx)
 	if err != nil {
-		return nil, nil, nil, nil, nil, 0, err
+		return nil, err
 	}
 
-	return columnEvaluators, exptColumnEvaluators, columnEvalSetFields, columnAnnotations, itemResults, total, nil
+	res.ItemResults = itemResults
+	res.Total = total
+	return res, nil
+}
+
+// exportListTurnResultByCursor 仅用于导出等场景：按库内顺序返回 turn，不做内存重排，与 ListTurnResult 游标语义一致。
+func (e ExptResultServiceImpl) exportListTurnResultByCursor(ctx context.Context, param *entity.MGetExperimentResultParam, expt *entity.Experiment) (
+	turnResultDAOs []*entity.ExptTurnResult,
+	itemID2ItemRunState map[int64]entity.ItemRunState,
+	totalTurn int64,
+	next *entity.ExptTurnResultListCursor,
+	err error,
+) {
+	var baseExptID int64
+	if param.BaseExptID != nil {
+		baseExptID = *param.BaseExptID
+	}
+	var filter *entity.ExptTurnResultFilter
+	if len(param.Filters) != 0 && param.Filters[baseExptID] != nil {
+		filter = param.Filters[baseExptID]
+	}
+	desc := expt.ExptType == entity.ExptType_Online
+	turnResultDAOs, totalTurn, next, err = e.ExptTurnResultRepo.ListTurnResultWithCursor(ctx, param.SpaceID, baseExptID, filter, param.TurnListCursor, param.Page.Limit(), desc)
+	if err != nil {
+		return nil, nil, 0, nil, err
+	}
+	return turnResultDAOs, nil, totalTurn, next, nil
 }
 
 func (e ExptResultServiceImpl) ListTurnResult(ctx context.Context, param *entity.MGetExperimentResultParam, expt *entity.Experiment) (turnResultDAOs []*entity.ExptTurnResult, itemID2ItemRunState map[int64]entity.ItemRunState, totalTurn int64, err error) {
@@ -349,6 +478,7 @@ func (e ExptResultServiceImpl) ListTurnResult(ctx context.Context, param *entity
 		filterAccelerator.SpaceID = spaceID
 		filterAccelerator.CreatedDate = ptr.From(expt.StartAt)
 		filterAccelerator.Page = param.Page
+		filterAccelerator.IsOnlineExpt = expt.ExptType == entity.ExptType_Online
 		errOccur := false
 		var itemIDs []int64
 		if !filterAccelerator.HasFilters() {
@@ -502,6 +632,83 @@ func (e ExptResultServiceImpl) ListTurnResult(ctx context.Context, param *entity
 	return turnResultDAOs, itemID2ItemRunState, total, nil
 }
 
+var (
+	// columnEvalTargetActualOutput = &entity.ColumnEvalTarget{
+	// 	Name:  consts.ReportColumnNameEvalTargetActualOutput,
+	// 	Label: gptr.Of(consts.ReportColumnLabelEvalTargetActualOutput),
+	// }
+	columnEvalTargetTrajectory = &entity.ColumnEvalTarget{
+		Name:  consts.ReportColumnNameEvalTargetTrajectory,
+		Label: gptr.Of(consts.ReportColumnLabelEvalTargetTrajectory),
+	}
+	columnsEvalTargetMtr = []*entity.ColumnEvalTarget{ // todo(@liushengyang): configuration-driven
+		{Name: consts.ReportColumnNameEvalTargetTotalLatency, DisplayName: consts.ReportColumnDisplayNameEvalTargetTotalLatency},
+		{Name: consts.ReportColumnNameEvalTargetInputTokens, DisplayName: consts.ReportColumnDisplayNameEvalTargetInputTokens},
+		{Name: consts.ReportColumnNameEvalTargetOutputTokens, DisplayName: consts.ReportColumnDisplayNameEvalTargetOutputTokens},
+		{Name: consts.ReportColumnNameEvalTargetTotalTokens, DisplayName: consts.ReportColumnDisplayNameEvalTargetTotalTokens},
+	}
+)
+
+func (e ExptResultServiceImpl) getExptColumnsEvalTarget(ctx context.Context, spaceID int64, expts []*entity.Experiment, fullTrajectory bool) ([]*entity.ExptColumnEvalTarget, error) {
+	// 查询评估对象信息
+	versionIDs := make([]int64, 0)
+	for _, expt := range expts {
+		if expt.ContainsEvalTarget() {
+			versionIDs = append(versionIDs, expt.TargetVersionID)
+		}
+	}
+	versionID2TargetInfo := make(map[int64]*entity.EvalTarget)
+	if len(versionIDs) > 0 {
+		targetInfos, err := e.evalTargetService.BatchGetEvalTargetVersion(ctx, spaceID, versionIDs, false)
+		if err != nil {
+			return nil, err
+		}
+		for _, info := range targetInfos {
+			if info.EvalTargetVersion == nil {
+				continue
+			}
+			versionID2TargetInfo[info.EvalTargetVersion.ID] = info
+		}
+	}
+	res := make([]*entity.ExptColumnEvalTarget, 0, len(expts))
+	for _, expt := range expts {
+		if !expt.ContainsEvalTarget() {
+			continue
+		}
+		columns := make([]*entity.ColumnEvalTarget, 0)
+		if info, ok := versionID2TargetInfo[expt.TargetVersionID]; ok {
+			if info.EvalTargetVersion != nil {
+				for _, s := range info.EvalTargetVersion.OutputSchema {
+					lable := consts.ReportColumnLabelEvalTargetActualOutput
+					if gptr.Indirect(s.Key) != consts.ReportColumnNameEvalTargetActualOutput {
+						lable = consts.ReportColumnLabelEvalTargetExtOutput
+					}
+					c := &entity.ColumnEvalTarget{
+						Name:       gptr.Indirect(s.Key),
+						TextSchema: s.JsonSchema,
+						Label:      gptr.Of(lable),
+					}
+					if len(s.SupportContentTypes) > 0 {
+						// 评测对象字段类型就一个，所以这里取第一个就可以
+						c.ContentType = gptr.Of(s.SupportContentTypes[0])
+					}
+					columns = append(columns, c)
+				}
+			}
+		}
+		// 当 fullTrajectory=true 且 TargetType 支持 trajectory 时，额外返回 trajectory 列
+		if expt.TargetType.SupptTrajectory() && (expt.EvalConf == nil || expt.EvalConf.EnableExtractTrajectory == nil || *expt.EvalConf.EnableExtractTrajectory) {
+			columns = append(columns, columnEvalTargetTrajectory)
+		}
+		columns = append(columns, columnsEvalTargetMtr...)
+		res = append(res, &entity.ExptColumnEvalTarget{
+			ExptID:  expt.ID,
+			Columns: columns,
+		})
+	}
+	return res, nil
+}
+
 // getColumnEvaluators 试验对比无需返回多试验的评估器合集,没有评估器的column,前端从实验接口获取评估器数据
 func (e ExptResultServiceImpl) getColumnEvaluators(ctx context.Context, spaceID int64, exptIDs []int64) ([]*entity.ColumnEvaluator, []*entity.ExptColumnEvaluator, error) {
 	evaluatorRef, err := e.ExperimentRepo.GetEvaluatorRefByExptIDs(ctx, exptIDs, spaceID)
@@ -532,18 +739,21 @@ func (e ExptResultServiceImpl) getColumnEvaluators(ctx context.Context, spaceID 
 
 	columnEvaluators := make([]*entity.ColumnEvaluator, 0)
 	for _, e := range evaluatorVersions {
-		evaluatorVersion := e.GetEvaluatorVersion()
-		if evaluatorVersion == nil || !gslice.Contains(evaluatorVersionIDs, evaluatorVersion.GetID()) {
+		if (e.EvaluatorType == entity.EvaluatorTypePrompt && e.PromptEvaluatorVersion == nil) ||
+			(e.EvaluatorType == entity.EvaluatorTypeCode && e.CodeEvaluatorVersion == nil) ||
+			(e.EvaluatorType == entity.EvaluatorTypeCustomRPC && e.CustomRPCEvaluatorVersion == nil) ||
+			!gslice.Contains(evaluatorVersionIDs, e.GetEvaluatorVersionID()) {
 			continue
 		}
 
 		columnEvaluator := &entity.ColumnEvaluator{
-			EvaluatorVersionID: evaluatorVersion.GetID(),
+			EvaluatorVersionID: e.GetEvaluatorVersionID(),
 			EvaluatorID:        e.ID,
 			EvaluatorType:      e.EvaluatorType,
 			Name:               gptr.Of(e.Name),
-			Version:            gptr.Of(e.GetEvaluatorVersion().GetVersion()),
+			Version:            gptr.Of(e.GetVersion()),
 			Description:        gptr.Of(e.Description),
+			Builtin:            gptr.Of(e.Builtin),
 		}
 		columnEvaluators = append(columnEvaluators, columnEvaluator)
 	}
@@ -576,7 +786,7 @@ func (e ExptResultServiceImpl) getColumnEvaluators(ctx context.Context, spaceID 
 	return columnEvaluators, exptColumnEvaluators, nil
 }
 
-func (e ExptResultServiceImpl) getColumnEvalSetFields(ctx context.Context, spaceID int64, evalSetID, evalSetVersionID int64) ([]*entity.ColumnEvalSetField, error) {
+func (e ExptResultServiceImpl) getColumnEvalSetFields(ctx context.Context, spaceID, evalSetID, evalSetVersionID int64) ([]*entity.ColumnEvalSetField, error) {
 	var version *entity.EvaluationSetVersion
 	if evalSetID == evalSetVersionID {
 		evalSet, err := e.evaluationSetService.GetEvaluationSet(ctx, gptr.Of(spaceID), evalSetID, gptr.Of(true))
@@ -605,6 +815,7 @@ func (e ExptResultServiceImpl) getColumnEvalSetFields(ctx context.Context, space
 			Description: gptr.Of(field.Description),
 			ContentType: field.ContentType,
 			TextSchema:  gptr.Of(field.TextSchema),
+			SchemaKey:   field.SchemaKey,
 		})
 	}
 
@@ -685,8 +896,21 @@ type PayloadBuilder struct {
 	EvaluationSetItemService                    EvaluationSetItemService
 	EvalTargetService                           IEvalTargetService
 	EvaluatorRecordService                      EvaluatorRecordService
+	AnalysisService                             IEvaluationAnalysisService
+	FileProvider                                rpc.IFileProvider
 	ExptTurnResultFilterKeyMappingEvaluatorMap  map[string]*entity.ExptTurnResultFilterKeyMapping
 	ExptTurnResultFilterKeyMappingAnnotationMap map[string]*entity.ExptTurnResultFilterKeyMapping
+
+	// 控制是否在构建 eval_target_result 时保留 trajectory 字段
+	FullTrajectory bool
+	// ExportFullContent 导出场景下从 TOS 加载完整字段内容（LoadEvaluatorFullContent/LoadEvalTargetFullContent 未设置时沿用）
+	ExportFullContent bool
+	// LoadEvaluatorFullContent 为 true 时从 TOS 加载 Evaluator input 大对象
+	LoadEvaluatorFullContent bool
+	// LoadEvalTargetFullContent 为 true 时从 TOS 加载 EvalTarget output 大对象
+	LoadEvalTargetFullContent bool
+	// LoadEvalTargetOutputFieldKeys 非空时仅按需加载指定 output 字段的完整内容
+	LoadEvalTargetOutputFieldKeys []string
 }
 
 func NewPayloadBuilder(ctx context.Context, param *entity.MGetExperimentResultParam, baselineExptID int64, baselineTurnResults []*entity.ExptTurnResult,
@@ -696,9 +920,11 @@ func NewPayloadBuilder(ctx context.Context, param *entity.MGetExperimentResultPa
 	evalTargetService IEvalTargetService,
 	evaluatorRecordService EvaluatorRecordService,
 	evaluationSetItemService EvaluationSetItemService,
+	analysisService IEvaluationAnalysisService,
 	exptTurnResultFilterKeyMappingEvaluatorMap map[string]*entity.ExptTurnResultFilterKeyMapping,
 	exptTurnResultFilterKeyMappingAnnotationMap map[string]*entity.ExptTurnResultFilterKeyMapping,
 	itemID2ItemRunState map[int64]entity.ItemRunState,
+	fileProvider rpc.IFileProvider,
 ) *PayloadBuilder {
 	builder := &PayloadBuilder{
 		BaselineExptID:           baselineExptID,
@@ -711,9 +937,16 @@ func NewPayloadBuilder(ctx context.Context, param *entity.MGetExperimentResultPa
 		EvaluationSetItemService: evaluationSetItemService,
 		EvalTargetService:        evalTargetService,
 		EvaluatorRecordService:   evaluatorRecordService,
+		AnalysisService:          analysisService,
 		ExptTurnResultFilterKeyMappingEvaluatorMap:  exptTurnResultFilterKeyMappingEvaluatorMap,
 		ExptTurnResultFilterKeyMappingAnnotationMap: exptTurnResultFilterKeyMappingAnnotationMap,
-		ExptAnnotateRepo: exptAnnotateRepo,
+		ExptAnnotateRepo:              exptAnnotateRepo,
+		FullTrajectory:                param.FullTrajectory,
+		ExportFullContent:             param.ExportFullContent,
+		LoadEvaluatorFullContent:      resolveLoadEvaluatorFullContent(param),
+		LoadEvalTargetFullContent:     resolveLoadEvalTargetFullContent(param),
+		LoadEvalTargetOutputFieldKeys: append([]string(nil), param.LoadEvalTargetOutputFieldKeys...),
+		FileProvider:                  fileProvider,
 	}
 
 	builder.ItemResults = make([]*entity.ItemResult, 0)
@@ -769,6 +1002,10 @@ func NewPayloadBuilder(ctx context.Context, param *entity.MGetExperimentResultPa
 			TurnResults: make([]*entity.TurnResult, 0),
 			ItemIndex:   gptr.Of(int64(itemResultPO.ItemIdx)),
 		}
+		// 填充 ext 字段，使用 expt_item_result 表里的 ext
+		if len(itemResultPO.Ext) > 0 {
+			itemResult.Ext = itemResultPO.Ext
+		}
 		if state, ok := itemID2ItemRunState[itemID]; ok {
 			itemResult.SystemInfo = &entity.ItemSystemInfo{
 				RunState: state,
@@ -815,6 +1052,7 @@ type ExptResultBuilder struct {
 	itemIDTurnID2Turn                      map[int64]map[int64]*entity.TurnEvalSet
 	turnResultID2ScoreCorrected            map[int64]bool
 	turnResultID2TagKeyID2AnnotateRecord   map[int64]map[int64]*entity.AnnotateRecord // turn_result_id -> tag_key_id -> annotate_record
+	itemIDTurnID2TrajectoryAnalysis        map[int64]map[int64]*entity.AnalysisRecord
 
 	// 错误信息
 	Err error
@@ -826,6 +1064,19 @@ type ExptResultBuilder struct {
 	evaluationSetItemService EvaluationSetItemService
 	evalTargetService        IEvalTargetService
 	evaluatorRecordService   EvaluatorRecordService
+	analysisService          IEvaluationAnalysisService
+	fileProvider             rpc.IFileProvider
+
+	// 控制是否保留 trajectory 字段
+	FullTrajectory bool
+	// ExportFullContent 导出场景下从 TOS 加载完整字段内容
+	ExportFullContent bool
+	// LoadEvaluatorFullContent 为 true 时从 TOS 加载 Evaluator input 大对象
+	LoadEvaluatorFullContent bool
+	// LoadEvalTargetFullContent 为 true 时从 TOS 加载 EvalTarget output 大对象
+	LoadEvalTargetFullContent bool
+	// LoadEvalTargetOutputFieldKeys 非空时仅按需加载指定 output 字段的完整内容
+	LoadEvalTargetOutputFieldKeys []string
 }
 
 // 1.确定当前分页下数据范围
@@ -836,17 +1087,24 @@ func (b *PayloadBuilder) BuildItemResults(ctx context.Context) ([]*entity.ItemRe
 	exptResultBuilders := make([]*ExptResultBuilder, 0)
 	for _, exptID := range b.ExptIDs {
 		exptResultBuilder := &ExptResultBuilder{
-			ExptID:                   exptID,
-			BaselineExptID:           b.BaselineExptID,
-			SpaceID:                  b.SpaceID,
-			ItemIDs:                  b.ItemIDs,
-			TurnIDMap:                b.TurnIDMap,
-			ExperimentRepo:           b.ExperimentRepo,
-			ExptTurnResultRepo:       b.ExptTurnResultRepo,
-			evalTargetService:        b.EvalTargetService,
-			evaluatorRecordService:   b.EvaluatorRecordService,
-			evaluationSetItemService: b.EvaluationSetItemService,
-			ExptAnnotateRepo:         b.ExptAnnotateRepo,
+			ExptID:                        exptID,
+			BaselineExptID:                b.BaselineExptID,
+			SpaceID:                       b.SpaceID,
+			ItemIDs:                       b.ItemIDs,
+			TurnIDMap:                     b.TurnIDMap,
+			ExperimentRepo:                b.ExperimentRepo,
+			ExptTurnResultRepo:            b.ExptTurnResultRepo,
+			evalTargetService:             b.EvalTargetService,
+			evaluatorRecordService:        b.EvaluatorRecordService,
+			evaluationSetItemService:      b.EvaluationSetItemService,
+			ExptAnnotateRepo:              b.ExptAnnotateRepo,
+			analysisService:               b.AnalysisService,
+			FullTrajectory:                b.FullTrajectory,
+			ExportFullContent:             b.ExportFullContent,
+			LoadEvaluatorFullContent:      b.LoadEvaluatorFullContent,
+			LoadEvalTargetFullContent:     b.LoadEvalTargetFullContent,
+			LoadEvalTargetOutputFieldKeys: append([]string(nil), b.LoadEvalTargetOutputFieldKeys...),
+			fileProvider:                  b.FileProvider,
 		}
 
 		if exptID == b.BaselineExptID {
@@ -874,13 +1132,15 @@ func (b *PayloadBuilder) BuildItemResults(ctx context.Context) ([]*entity.ItemRe
 	wg.Wait()
 	close(resultCh)
 
-	var exptResultBuildersWithResult []*ExptResultBuilder // 任务结果
-	var errors []error
+	var (
+		errors                []error
+		exptIDToResultBuilder = make(map[int64]*ExptResultBuilder)
+	)
 	for exptResultBuilder := range resultCh {
 		if exptResultBuilder.Err != nil {
 			errors = append(errors, fmt.Errorf("ExptID %d: %v", exptResultBuilder.ExptID, exptResultBuilder.Err))
 		} else {
-			exptResultBuildersWithResult = append(exptResultBuildersWithResult, exptResultBuilder)
+			exptIDToResultBuilder[exptResultBuilder.ExptID] = exptResultBuilder
 		}
 	}
 	if len(errors) > 0 {
@@ -888,7 +1148,13 @@ func (b *PayloadBuilder) BuildItemResults(ctx context.Context) ([]*entity.ItemRe
 		return nil, fmt.Errorf("build expt result fail, errors:%v", errors)
 	}
 
-	b.ExptResultBuilders = exptResultBuildersWithResult
+	resultedBuilders := make([]*ExptResultBuilder, 0, len(exptIDToResultBuilder))
+	for _, exptID := range b.ExptIDs {
+		if got := exptIDToResultBuilder[exptID]; got != nil {
+			resultedBuilders = append(resultedBuilders, exptIDToResultBuilder[exptID])
+		}
+	}
+	b.ExptResultBuilders = resultedBuilders
 
 	// 填充数据
 	err := b.fillItemResults(ctx)
@@ -902,18 +1168,24 @@ func (b *PayloadBuilder) BuildItemResults(ctx context.Context) ([]*entity.ItemRe
 func (b *PayloadBuilder) BuildTurnResultFilter(ctx context.Context) ([]*entity.ExptTurnResultFilterEntity, error) {
 	// 分实验获取数据
 	exptResultBuilder := &ExptResultBuilder{
-		ExptID:                   b.BaselineExptID,
-		BaselineExptID:           b.BaselineExptID,
-		SpaceID:                  b.SpaceID,
-		ItemIDs:                  b.ItemIDs,
-		TurnIDMap:                b.TurnIDMap,
-		ExperimentRepo:           b.ExperimentRepo,
-		ExptTurnResultRepo:       b.ExptTurnResultRepo,
-		evalTargetService:        b.EvalTargetService,
-		evaluatorRecordService:   b.EvaluatorRecordService,
-		evaluationSetItemService: b.EvaluationSetItemService,
-		turnResultDO:             b.BaseExptTurnResultDO,
-		ExptAnnotateRepo:         b.ExptAnnotateRepo,
+		ExptID:                        b.BaselineExptID,
+		BaselineExptID:                b.BaselineExptID,
+		SpaceID:                       b.SpaceID,
+		ItemIDs:                       b.ItemIDs,
+		TurnIDMap:                     b.TurnIDMap,
+		ExperimentRepo:                b.ExperimentRepo,
+		ExptTurnResultRepo:            b.ExptTurnResultRepo,
+		evalTargetService:             b.EvalTargetService,
+		evaluatorRecordService:        b.EvaluatorRecordService,
+		evaluationSetItemService:      b.EvaluationSetItemService,
+		turnResultDO:                  b.BaseExptTurnResultDO,
+		ExptAnnotateRepo:              b.ExptAnnotateRepo,
+		FullTrajectory:                b.FullTrajectory,
+		ExportFullContent:             b.ExportFullContent,
+		LoadEvaluatorFullContent:      b.LoadEvaluatorFullContent,
+		LoadEvalTargetFullContent:     b.LoadEvalTargetFullContent,
+		LoadEvalTargetOutputFieldKeys: append([]string(nil), b.LoadEvalTargetOutputFieldKeys...),
+		fileProvider:                  b.FileProvider,
 	}
 
 	exptDO, err := exptResultBuilder.ExperimentRepo.GetByID(ctx, exptResultBuilder.ExptID, exptResultBuilder.SpaceID)
@@ -952,8 +1224,12 @@ func (b *PayloadBuilder) BuildTurnResultFilter(ctx context.Context) ([]*entity.E
 
 	b.ExptResultBuilders = []*ExptResultBuilder{exptResultBuilder}
 
-	// 填充数据
-	err = b.fillExptTurnResultFilters(ctx, exptDO.StartAt, exptDO.EvalSetVersionID)
+	// 填充数据；在线实验：补充 eval_set_id，eval_set_version_id 写入 0
+	evalSetID, evalSetVersionID := exptDO.EvalSetID, exptDO.EvalSetVersionID
+	if exptDO.ExptType == entity.ExptType_Online {
+		evalSetVersionID = 0
+	}
+	err = b.fillExptTurnResultFilters(ctx, exptDO.StartAt, evalSetID, evalSetVersionID)
 	if err != nil {
 		return nil, err
 	}
@@ -961,7 +1237,7 @@ func (b *PayloadBuilder) BuildTurnResultFilter(ctx context.Context) ([]*entity.E
 	return b.ExptTurnResultFilters, nil
 }
 
-func (b *PayloadBuilder) fillExptTurnResultFilters(ctx context.Context, createdDate *time.Time, evalSetVersionID int64) error {
+func (b *PayloadBuilder) fillExptTurnResultFilters(ctx context.Context, createdDate *time.Time, evalSetID, evalSetVersionID int64) error {
 	exptResultBuilder := b.ExptResultBuilders[0]
 	b.ExptTurnResultFilters = make([]*entity.ExptTurnResultFilterEntity, 0)
 	itemID2ItemIdx := make(map[int64]*entity.ExptItemResult)
@@ -971,17 +1247,19 @@ func (b *PayloadBuilder) fillExptTurnResultFilters(ctx context.Context, createdD
 	updatedAt := time.Now()
 	for _, exptTurnResult := range b.BaseExptTurnResultDO {
 		exptTurnResultFilter := &entity.ExptTurnResultFilterEntity{
-			SpaceID:          b.SpaceID,
-			ExptID:           b.BaselineExptID,
-			ItemID:           exptTurnResult.ItemID,
-			TurnID:           exptTurnResult.TurnID,
-			EvalTargetData:   make(map[string]string),
-			EvaluatorScore:   make(map[string]float64),
-			AnnotationFloat:  make(map[string]float64),
-			AnnotationBool:   make(map[string]bool),
-			AnnotationString: make(map[string]string),
-			CreatedDate:      ptr.From(createdDate),
-			EvalSetVersionID: evalSetVersionID,
+			SpaceID:           b.SpaceID,
+			ExptID:            b.BaselineExptID,
+			ItemID:            exptTurnResult.ItemID,
+			TurnID:            exptTurnResult.TurnID,
+			EvalTargetData:    make(map[string]string),
+			EvaluatorScore:    make(map[string]float64),
+			AnnotationFloat:   make(map[string]float64),
+			AnnotationBool:    make(map[string]bool),
+			AnnotationString:  make(map[string]string),
+			EvalTargetMetrics: make(map[string]int64),
+			CreatedDate:       ptr.From(createdDate),
+			EvalSetID:         evalSetID,
+			EvalSetVersionID:  evalSetVersionID,
 		}
 		exptTurnResultFilter.ExptID = b.BaselineExptID
 		exptTurnResultFilter.SpaceID = b.SpaceID
@@ -1032,11 +1310,49 @@ func (b *PayloadBuilder) fillExptTurnResultFilters(ctx context.Context, createdD
 			for outputFieldKey, outputFieldValue := range evalTargetOutput.EvalTargetRecord.EvalTargetOutputData.OutputFields {
 				exptTurnResultFilter.EvalTargetData[outputFieldKey] = outputFieldValue.GetText()
 			}
+			// 填充 eval_target_metrics
+			if evalTargetOutput.EvalTargetRecord.EvalTargetOutputData.EvalTargetUsage != nil {
+				usage := evalTargetOutput.EvalTargetRecord.EvalTargetOutputData.EvalTargetUsage
+				exptTurnResultFilter.EvalTargetMetrics["input_tokens"] = usage.InputTokens
+				exptTurnResultFilter.EvalTargetMetrics["output_tokens"] = usage.OutputTokens
+				exptTurnResultFilter.EvalTargetMetrics["total_tokens"] = usage.TotalTokens
+			}
+			if evalTargetOutput.EvalTargetRecord.EvalTargetOutputData.TimeConsumingMS != nil {
+				exptTurnResultFilter.EvalTargetMetrics["total_latency"] = *evalTargetOutput.EvalTargetRecord.EvalTargetOutputData.TimeConsumingMS
+			}
 		}
 		evaluatorScoreCorrected, ok := exptResultBuilder.turnResultID2ScoreCorrected[exptTurnResult.ID]
 		if ok {
 			exptTurnResultFilter.EvaluatorScoreCorrected = evaluatorScoreCorrected
 		}
+		// 填充加权得分（行级未落库时按配置重算；EnableScoreWeight 为 false 时 scoreWeights 为空，走等权）
+		weightedScore := exptTurnResult.WeightedScore
+		if weightedScore == nil && len(evaluatorVersionID2Result) > 0 {
+			var scoreWeights map[int64]float64
+			exptDO := exptResultBuilder.exptDO
+			if exptDO != nil && exptDO.EvalConf != nil && exptDO.EvalConf.ConnectorConf.EvaluatorsConf != nil &&
+				exptDO.EvalConf.ConnectorConf.EvaluatorsConf.EnableScoreWeight {
+				for _, ec := range exptDO.EvalConf.ConnectorConf.EvaluatorsConf.EvaluatorConf {
+					if ec == nil || ec.ScoreWeight == nil || *ec.ScoreWeight <= 0 {
+						continue
+					}
+					if scoreWeights == nil {
+						scoreWeights = make(map[int64]float64)
+					}
+					scoreWeights[ec.EvaluatorVersionID] = *ec.ScoreWeight
+				}
+			}
+			evaluatorRecords := make(map[int64]*entity.EvaluatorRecord)
+			for evaluatorVersionID, record := range evaluatorVersionID2Result {
+				if record != nil {
+					evaluatorRecords[evaluatorVersionID] = record
+				}
+			}
+			if len(evaluatorRecords) > 0 {
+				weightedScore = calculateWeightedScore(evaluatorRecords, scoreWeights)
+			}
+		}
+		exptTurnResultFilter.EvaluatorWeightedScore = weightedScore
 		exptTurnResultFilter.UpdatedAt = updatedAt
 		b.ExptTurnResultFilters = append(b.ExptTurnResultFilters, exptTurnResultFilter)
 	}
@@ -1068,7 +1384,7 @@ func (b *PayloadBuilder) fillItemResults(ctx context.Context) error {
 				exptResult.Payload.TargetOutput = exptResultBuilder.getTurnTargetOutput(ctx, itemID, turnID)
 				exptResult.Payload.SystemInfo = exptResultBuilder.getTurnSystemInfo(ctx, itemID, turnID)
 				exptResult.Payload.AnnotateResult = exptResultBuilder.getTurnAnnotateRecord(ctx, itemID, turnID)
-
+				exptResult.Payload.AnalysisRecord = exptResultBuilder.getAnalysisRecord(ctx, itemID, turnID)
 				itemResult.TurnResults[j].ExperimentResults = append(itemResult.TurnResults[j].ExperimentResults, exptResult)
 			}
 		}
@@ -1136,6 +1452,10 @@ func (e *ExptResultBuilder) build(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	err = e.buildAnalysis(ctx)
+	if err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -1158,7 +1478,7 @@ func (e *ExptResultBuilder) buildEvaluatorResult(ctx context.Context) error {
 		evaluatorResultID2TurnResultID[turnEvaluatorResultRef.EvaluatorResultID] = turnEvaluatorResultRef.ExptTurnResultID
 	}
 
-	evaluatorRecords, err := e.evaluatorRecordService.BatchGetEvaluatorRecord(ctx, evaluatorResultIDs, false)
+	evaluatorRecords, err := e.evaluatorRecordService.BatchGetEvaluatorRecord(ctx, evaluatorResultIDs, false, e.LoadEvaluatorFullContent)
 	if err != nil {
 		return err
 	}
@@ -1170,6 +1490,37 @@ func (e *ExptResultBuilder) buildEvaluatorResult(ctx context.Context) error {
 		if !ok {
 			logs.CtxWarn(ctx, "turnEvaluatorResultRef not found, evaluatorRecordID: %v, turnResultID: %v", evaluatorRecord.ID, turnResultID)
 			continue
+		}
+
+		// 当 FullTrajectory=false 时，如果评估器输入里的 input_fields / evaluate_target_output_fields 中包含 trajectory，
+		// 同样做一次 JSON 预览剪裁 + 文本长度剪裁，避免评估器输入里携带超长轨迹。
+		if !e.FullTrajectory && evaluatorRecord.EvaluatorInputData != nil {
+			// 1) InputFields 中的 trajectory
+			if evaluatorRecord.EvaluatorInputData.InputFields != nil {
+				if trajectoryContent, ok := evaluatorRecord.EvaluatorInputData.InputFields[consts.EvalTargetOutputFieldKeyTrajectory]; ok && trajectoryContent != nil {
+					if trajectoryContent.Text != nil && len(*trajectoryContent.Text) > 0 {
+						preview := utils.GenerateJsonObjectPreview(*trajectoryContent.Text)
+						if preview != "" {
+							trajectoryContent.Text = gptr.Of(utils.GenerateTextPreview(preview))
+						} else {
+							trajectoryContent.Text = gptr.Of(utils.GenerateTextPreview(*trajectoryContent.Text))
+						}
+					}
+				}
+			}
+			// 2) EvaluateTargetOutputFields 中的 trajectory
+			if evaluatorRecord.EvaluatorInputData.EvaluateTargetOutputFields != nil {
+				if trajectoryContent, ok := evaluatorRecord.EvaluatorInputData.EvaluateTargetOutputFields[consts.EvalTargetOutputFieldKeyTrajectory]; ok && trajectoryContent != nil {
+					if trajectoryContent.Text != nil && len(*trajectoryContent.Text) > 0 {
+						preview := utils.GenerateJsonObjectPreview(*trajectoryContent.Text)
+						if preview != "" {
+							trajectoryContent.Text = gptr.Of(utils.GenerateTextPreview(preview))
+						} else {
+							trajectoryContent.Text = gptr.Of(utils.GenerateTextPreview(*trajectoryContent.Text))
+						}
+					}
+				}
+			}
 		}
 		if _, ok := turnResultID2VersionID2Result[turnResultID]; !ok {
 			turnResultID2VersionID2Result[turnResultID] = make(map[int64]*entity.EvaluatorRecord)
@@ -1208,15 +1559,112 @@ func (e *ExptResultBuilder) getTurnEvaluatorResult(ctx context.Context, itemID, 
 		if evaluatorResult == nil {
 			continue
 		}
-
-		if evaluatorResult.EvaluatorOutputData != nil && evaluatorResult.EvaluatorOutputData.EvaluatorRunError != nil {
-			evaluatorResult.EvaluatorOutputData.EvaluatorRunError.Message = errno.ServiceInternalErrMsg
-		}
 	}
 
-	return &entity.TurnEvaluatorOutput{
+	// 从 expt_turn_result 表回写的字段中读取加权分数
+	output := &entity.TurnEvaluatorOutput{
 		EvaluatorRecords: evaluatorVersionID2Result,
 	}
+
+	turnResultID2TurnResult := gslice.ToMap(e.turnResultDO, func(t *entity.ExptTurnResult) (int64, *entity.ExptTurnResult) {
+		return t.ID, t
+	})
+	if tr, ok := turnResultID2TurnResult[turnResultID]; ok {
+		output.WeightedScore = tr.WeightedScore
+	}
+
+	return output
+}
+
+// calculateWeightedScore 计算加权分数
+func calculateWeightedScore(
+	evaluatorRecords map[int64]*entity.EvaluatorRecord,
+	weights map[int64]float64,
+) *float64 {
+	if len(evaluatorRecords) == 0 {
+		return nil
+	}
+
+	// 如果未配置权重（weights 为空），则按所有评估器权重相同计算加权分（即简单平均）
+	if len(weights) == 0 {
+		var (
+			sumScore float64
+			cnt      int
+		)
+		for _, record := range evaluatorRecords {
+			if record == nil {
+				continue
+			}
+			// 获取评估器分数（优先使用修正分数）
+			var score *float64
+			if record.EvaluatorOutputData != nil && record.EvaluatorOutputData.EvaluatorResult != nil {
+				if record.EvaluatorOutputData.EvaluatorResult.Correction != nil &&
+					record.EvaluatorOutputData.EvaluatorResult.Correction.Score != nil {
+					score = record.EvaluatorOutputData.EvaluatorResult.Correction.Score
+				} else if record.EvaluatorOutputData.EvaluatorResult.Score != nil {
+					score = record.EvaluatorOutputData.EvaluatorResult.Score
+				}
+			}
+			if score == nil {
+				continue
+			}
+			sumScore += *score
+			cnt++
+		}
+		if cnt == 0 {
+			return nil
+		}
+		avg := sumScore / float64(cnt)
+		roundedAvg := utils.RoundScoreToTwoDecimals(avg)
+		return &roundedAvg
+	}
+
+	var totalWeightedScore float64
+	var totalWeight float64
+	hasValidScore := false
+
+	for evaluatorVersionID, record := range evaluatorRecords {
+		if record == nil {
+			continue
+		}
+
+		// 获取评估器分数（优先使用修正分数）
+		var score *float64
+		if record.EvaluatorOutputData != nil && record.EvaluatorOutputData.EvaluatorResult != nil {
+			if record.EvaluatorOutputData.EvaluatorResult.Correction != nil &&
+				record.EvaluatorOutputData.EvaluatorResult.Correction.Score != nil {
+				score = record.EvaluatorOutputData.EvaluatorResult.Correction.Score
+			} else if record.EvaluatorOutputData.EvaluatorResult.Score != nil {
+				score = record.EvaluatorOutputData.EvaluatorResult.Score
+			}
+		}
+
+		// 如果没有有效分数，跳过
+		if score == nil {
+			continue
+		}
+
+		// 获取权重（0 合法：不参与分子/分母，等价于乘 0）
+		weight, ok := weights[evaluatorVersionID]
+		if !ok || weight <= 0 {
+			continue
+		}
+
+		// 累加加权分数
+		totalWeightedScore += *score * weight
+		totalWeight += weight
+		hasValidScore = true
+	}
+
+	// 如果没有有效分数或权重总和为0，返回nil
+	if !hasValidScore || totalWeight <= 0 {
+		return nil
+	}
+
+	// 计算加权平均分数
+	weightedScore := totalWeightedScore / totalWeight
+	roundedScore := utils.RoundScoreToTwoDecimals(weightedScore)
+	return &roundedScore
 }
 
 func (e *ExptResultBuilder) buildAnnotateRecords(ctx context.Context) error {
@@ -1279,6 +1727,44 @@ func (e *ExptResultBuilder) getTurnAnnotateRecord(ctx context.Context, itemID, t
 	}
 }
 
+func (e *ExptResultBuilder) buildAnalysis(ctx context.Context) error {
+	if e.ExptID != e.BaselineExptID {
+		return nil
+	}
+	// 构建唯一键
+	var uniqueKeys []string
+	for _, d := range e.turnResultDO {
+		uniqueKeys = append(uniqueKeys, fmt.Sprintf("%v_%v_%v_%v", d.SpaceID, d.ExptID, d.ItemID, d.TurnID))
+	}
+	recordMap, err := e.analysisService.BatchGetAnalysisRecordByUniqueKeys(ctx, uniqueKeys)
+	if err != nil {
+		return err
+	}
+	itemIDTurnID2AnalysisRecord := make(map[int64]map[int64]*entity.AnalysisRecord)
+	for k, v := range recordMap {
+		split := strings.Split(k, "_")
+		if len(split) != 4 {
+			return errorx.New("uniqueKey error")
+		}
+		itemID, err := strconv.ParseInt(split[2], 10, 64)
+		if err != nil {
+			return err
+		}
+		turnID, err := strconv.ParseInt(split[3], 10, 64)
+		if err != nil {
+			return err
+		}
+		itemIDTurnID2AnalysisRecord[itemID] = map[int64]*entity.AnalysisRecord{
+			turnID: {
+				ID:     v.ID,
+				Status: v.Status,
+			},
+		}
+	}
+	e.itemIDTurnID2TrajectoryAnalysis = itemIDTurnID2AnalysisRecord
+	return nil
+}
+
 func (e *ExptResultBuilder) buildEvalSet(ctx context.Context) error {
 	if e.exptDO == nil {
 		return fmt.Errorf("exptPO is nil")
@@ -1307,7 +1793,9 @@ func (e *ExptResultBuilder) buildEvalSet(ctx context.Context) error {
 				itemIDTurnID2Turn[item.ItemID] = make(map[int64]*entity.TurnEvalSet)
 			}
 			turnEvalSet := &entity.TurnEvalSet{
-				Turn: turn,
+				Turn:      turn,
+				ItemID:    item.ItemID,
+				EvalSetID: evalSetID,
 			}
 			itemIDTurnID2Turn[item.ItemID][turn.ID] = turnEvalSet
 		}
@@ -1331,6 +1819,19 @@ func (e *ExptResultBuilder) getTurnEvalSet(ctx context.Context, itemID, turnID i
 	return turn
 }
 
+func (e *ExptResultBuilder) getAnalysisRecord(ctx context.Context, itemID, turnID int64) *entity.AnalysisRecord {
+	turnID2Analysis, ok := e.itemIDTurnID2TrajectoryAnalysis[itemID]
+	if !ok {
+		return &entity.AnalysisRecord{}
+	}
+	analysis, ok := turnID2Analysis[turnID]
+	if !ok {
+		return &entity.AnalysisRecord{}
+	}
+
+	return analysis
+}
+
 func (e *ExptResultBuilder) buildTargetOutput(ctx context.Context) error {
 	if e.exptDO.ExptType == entity.ExptType_Online {
 		return nil
@@ -1346,11 +1847,77 @@ func (e *ExptResultBuilder) buildTargetOutput(ctx context.Context) error {
 		return err
 	}
 
+	// 按需从 TOS 加载评测对象 output 大字段
+	if len(e.LoadEvalTargetOutputFieldKeys) > 0 {
+		for _, targetRecord := range targetRecords {
+			if targetRecord != nil {
+				if err := e.evalTargetService.LoadRecordOutputFields(ctx, targetRecord, e.LoadEvalTargetOutputFieldKeys); err != nil {
+					return err
+				}
+			}
+		}
+	} else if e.LoadEvalTargetFullContent {
+		for _, targetRecord := range targetRecords {
+			if targetRecord != nil {
+				if err := e.evalTargetService.LoadRecordFullData(ctx, targetRecord); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
 	turnResultID2TargetOutput := make(map[int64]*entity.TurnTargetOutput) // turn_result_id -> version_id -> result
+	id2URI := make(map[int64]string)
+	id2URL := make(map[int64]string)
+	for _, targetRecord := range targetRecords {
+		if targetRecord == nil || targetRecord.EvalTargetOutputData == nil || targetRecord.EvalTargetOutputData.Ext == nil || targetRecord.EvalTargetOutputData.Ext[consts.EvalTargetOutputFieldKeyScreenRecordingURI] == "" {
+			continue
+		}
+		id2URI[targetRecord.ID] = targetRecord.EvalTargetOutputData.Ext[consts.EvalTargetOutputFieldKeyScreenRecordingURI]
+	}
+	if len(id2URI) > 0 && e.fileProvider != nil {
+		uris := make([]string, 0, len(id2URI))
+		for _, uri := range id2URI {
+			uris = append(uris, uri)
+		}
+		urlMap, err := e.fileProvider.MGetFileURL(ctx, uris)
+		if err != nil {
+			logs.CtxError(ctx, "MGetFileURL failed, err: %v", err)
+		} else {
+			for id, uri := range id2URI {
+				if url, ok := urlMap[uri]; ok {
+					id2URL[id] = url
+				}
+			}
+		}
+	}
+
 	for _, targetRecord := range targetRecords {
 		turnResultID, ok := targetResultID2turnResultID[targetRecord.ID]
 		if !ok {
 			continue
+		}
+		// 如果不需要完整轨迹，则使用 generateJsonObjectPreview 对 trajectory 进行剪裁
+		if !e.FullTrajectory &&
+			targetRecord.EvalTargetOutputData != nil &&
+			targetRecord.EvalTargetOutputData.OutputFields != nil {
+			if trajectoryContent, ok := targetRecord.EvalTargetOutputData.OutputFields[consts.EvalTargetOutputFieldKeyTrajectory]; ok && trajectoryContent != nil {
+				if trajectoryContent.Text != nil && len(*trajectoryContent.Text) > 0 {
+					// 使用 generateJsonObjectPreview 对 trajectory JSON 进行剪裁
+					preview := utils.GenerateJsonObjectPreview(*trajectoryContent.Text)
+					if preview != "" {
+						trajectoryContent.Text = gptr.Of(utils.GenerateTextPreview(preview))
+					} else {
+						trajectoryContent.Text = gptr.Of(utils.GenerateTextPreview(*trajectoryContent.Text))
+					}
+				}
+			}
+		}
+
+		if targetRecord.EvalTargetOutputData != nil && targetRecord.EvalTargetOutputData.Ext != nil &&
+			targetRecord.EvalTargetOutputData.Ext[consts.EvalTargetOutputFieldKeyScreenRecordingURI] != "" &&
+			id2URL != nil {
+			targetRecord.EvalTargetOutputData.Ext[consts.EvalTargetOutputFieldKeyScreenRecordingURL] = id2URL[targetRecord.ID]
 		}
 
 		turnResultID2TargetOutput[turnResultID] = &entity.TurnTargetOutput{
@@ -1379,10 +1946,6 @@ func (e *ExptResultBuilder) getTurnTargetOutput(ctx context.Context, itemID, tur
 	turnTargetOutput, ok := e.turnResultID2TargetOutput[turnResultID]
 	if !ok {
 		return &entity.TurnTargetOutput{}
-	}
-
-	if turnTargetOutput.EvalTargetRecord != nil && turnTargetOutput.EvalTargetRecord.EvalTargetOutputData != nil && turnTargetOutput.EvalTargetRecord.EvalTargetOutputData.EvalTargetRunError != nil {
-		turnTargetOutput.EvalTargetRecord.EvalTargetOutputData.EvalTargetRunError.Message = errno.ServiceInternalErrMsg
 	}
 
 	return turnTargetOutput
@@ -1434,7 +1997,7 @@ func (e ExptResultServiceImpl) MGetStats(ctx context.Context, exptIDs []int64, s
 	return models, nil
 }
 
-func (e ExptResultServiceImpl) GetStats(ctx context.Context, exptID int64, spaceID int64, session *entity.Session) (*entity.ExptStats, error) {
+func (e ExptResultServiceImpl) GetStats(ctx context.Context, exptID, spaceID int64, session *entity.Session) (*entity.ExptStats, error) {
 	stats, err := e.MGetStats(ctx, []int64{exptID}, spaceID, session)
 	if err != nil {
 		return nil, err
@@ -1489,7 +2052,7 @@ func (e ExptResultServiceImpl) CalculateStats(ctx context.Context, exptID, space
 		if icnt >= int(iTotal) || len(itemResultList) == 0 {
 			break
 		}
-		time.Sleep(time.Millisecond * 30)
+		time.Sleep(time.Millisecond * 20)
 	}
 
 	for i := 0; i < maxLoop; i++ {
@@ -1525,7 +2088,7 @@ func (e ExptResultServiceImpl) CalculateStats(ctx context.Context, exptID, space
 			break
 		}
 
-		time.Sleep(time.Millisecond * 30)
+		time.Sleep(time.Millisecond * 20)
 	}
 
 	stats := &entity.ExptCalculateStats{
@@ -1534,12 +2097,62 @@ func (e ExptResultServiceImpl) CalculateStats(ctx context.Context, exptID, space
 		SuccessItemCnt:    successCnt,
 		ProcessingItemCnt: processingCnt,
 		TerminatedItemCnt: terminatedCnt,
-		IncompleteTurnIDs: incompleteTurns,
 	}
 
 	logs.CtxInfo(ctx, "ExptStatsImpl.CalculateStats scan turn result done, expt_id: %v, total_cnt: %v, incomplete_cnt: %v, total: %v, stats: %v", exptID, cnt, len(incompleteTurns), total, json.Jsonify(stats))
 
 	return stats, nil
+}
+
+func (e ExptResultServiceImpl) GetIncompleteTurns(ctx context.Context, exptID, spaceID int64, session *entity.Session) ([]*entity.ItemTurnID, error) {
+	var (
+		maxLoop         = 10000
+		limit           = 100
+		offset          = 1
+		total           = 0
+		cnt             = 0
+		incompleteTurns []*entity.ItemTurnID
+	)
+
+	for i := 0; i < maxLoop; i++ {
+		logs.CtxInfo(ctx, "ExptStatsImpl.CalculateStats scan turn result, expt_id: %v, page: %v, limit: %v, cur_cnt: %v, total: %v",
+			exptID, offset, limit, cnt, total)
+
+		results, t, err := e.ExptTurnResultRepo.ListTurnResult(ctx, spaceID, exptID, nil, entity.NewPage(offset, limit), false)
+		if err != nil {
+			return nil, err
+		}
+
+		total = int(t)
+		cnt += len(results)
+		offset++
+
+		for _, tr := range results {
+			switch entity.TurnRunState(tr.Status) {
+			case entity.TurnRunState_Queueing:
+				incompleteTurns = append(incompleteTurns, &entity.ItemTurnID{
+					TurnID: tr.TurnID,
+					ItemID: tr.ItemID,
+				})
+			case entity.TurnRunState_Processing:
+				incompleteTurns = append(incompleteTurns, &entity.ItemTurnID{
+					TurnID: tr.TurnID,
+					ItemID: tr.ItemID,
+				})
+			default:
+			}
+		}
+
+		if cnt >= total || len(results) == 0 {
+			break
+		}
+
+		time.Sleep(time.Millisecond * 20)
+	}
+
+	logs.CtxInfo(ctx, "expt %v GetIncompleteTurns result: %v", exptID, json.Jsonify(incompleteTurns))
+
+	return incompleteTurns, nil
 }
 
 // ManualUpsertExptTurnResultFilter 手动更新实验结果过滤条件
@@ -1661,7 +2274,7 @@ func (e ExptResultServiceImpl) UpsertExptTurnResultFilter(ctx context.Context, s
 		ExptIDs: []int64{exptID},
 	}
 	payloadBuilder := NewPayloadBuilder(ctx, param, exptID, allTurnResults, itemResults, e.ExperimentRepo,
-		e.ExptTurnResultRepo, e.ExptAnnotateRepo, e.evalTargetService, e.evaluatorRecordService, e.evaluationSetItemService, exptTurnResultFilterKeyMappingEvaluatorMap, exptTurnResultFilterKeyMappingAnnotationMap, make(map[int64]entity.ItemRunState))
+		e.ExptTurnResultRepo, e.ExptAnnotateRepo, e.evalTargetService, e.evaluatorRecordService, e.evaluationSetItemService, e.analysisService, exptTurnResultFilterKeyMappingEvaluatorMap, exptTurnResultFilterKeyMappingAnnotationMap, make(map[int64]entity.ItemRunState), e.fileProvider)
 
 	exptTurnResultFilters, err := payloadBuilder.BuildTurnResultFilter(ctx)
 	if err != nil {
@@ -1680,15 +2293,13 @@ func (e ExptResultServiceImpl) mapItemSnapshotFilter(ctx context.Context, filter
 	if (filter.ItemSnapshotCond == nil || len(filter.ItemSnapshotCond.StringMapFilters) == 0) && (filter.KeywordSearch == nil || filter.KeywordSearch.ItemSnapshotFilter == nil || len(filter.KeywordSearch.ItemSnapshotFilter.StringMapFilters) == 0) {
 		return nil
 	}
-	if baseExpt.ExptType == entity.ExptType_Online {
-		// todo 草稿版数据集不支持模糊搜索，本期暂不实现
-		return nil
+	req := &rpc.QueryItemSnapshotMappingRequest{
+		SpaceID:        baseExpt.SpaceID,
+		DatasetID:      baseExpt.EvalSetID,
+		IsDraftVersion: baseExpt.ExptType == entity.ExptType_Online,
+		VersionID:      gcond.If(baseExpt.ExptType == entity.ExptType_Online, ptr.Of(int64(0)), ptr.Of(baseExpt.EvalSetVersionID)),
 	}
-	//evaluationSetVersion, _, err := e.evaluationSetVersionService.GetEvaluationSetVersion(ctx, baseExpt.SpaceID, baseExptEvalSetVersionID, ptr.Of(true))
-	//if err != nil {
-	//	return err
-	//}
-	itemSnapshotMappings, syncCkDate, err := e.evaluationSetService.QueryItemSnapshotMappings(ctx, baseExpt.SpaceID, baseExpt.EvalSetID, ptr.Of(baseExpt.EvalSetVersionID))
+	itemSnapshotMappings, syncCkDate, err := e.evaluationSetService.QueryItemSnapshotMappings(ctx, req)
 	if err != nil {
 		return err
 	}
@@ -1712,28 +2323,40 @@ func (e ExptResultServiceImpl) mapItemSnapshotFilter(ctx context.Context, filter
 		switch itemSnapshotMapping.MappingKey {
 		case "string_map":
 			itemSnapshotFilter.StringMapFilters = append(itemSnapshotFilter.StringMapFilters, &entity.FieldFilter{
-				Key:    itemSnapshotMapping.MappingSubKey,
-				Op:     item.Op,
-				Values: item.Values,
+				Key: itemSnapshotMapping.MappingSubKey, Op: item.Op, Values: item.Values,
 			})
+			if baseExpt.ExptType == entity.ExptType_Online && itemSnapshotMapping.RecordID > 0 {
+				itemSnapshotFilter.StringMapFilters = append(itemSnapshotFilter.StringMapFilters, &entity.FieldFilter{
+					Key: "record_" + itemSnapshotMapping.MappingSubKey, Op: "=", Values: []any{strconv.FormatInt(itemSnapshotMapping.RecordID, 10)},
+				})
+			}
 		case "float_map":
 			itemSnapshotFilter.FloatMapFilters = append(itemSnapshotFilter.FloatMapFilters, &entity.FieldFilter{
-				Key:    itemSnapshotMapping.MappingSubKey,
-				Op:     item.Op,
-				Values: item.Values,
+				Key: itemSnapshotMapping.MappingSubKey, Op: item.Op, Values: item.Values,
 			})
+			if baseExpt.ExptType == entity.ExptType_Online && itemSnapshotMapping.RecordID > 0 {
+				itemSnapshotFilter.StringMapFilters = append(itemSnapshotFilter.StringMapFilters, &entity.FieldFilter{
+					Key: "record_" + itemSnapshotMapping.MappingSubKey, Op: "=", Values: []any{strconv.FormatInt(itemSnapshotMapping.RecordID, 10)},
+				})
+			}
 		case "int_map":
 			itemSnapshotFilter.IntMapFilters = append(itemSnapshotFilter.IntMapFilters, &entity.FieldFilter{
-				Key:    itemSnapshotMapping.MappingSubKey,
-				Op:     item.Op,
-				Values: item.Values,
+				Key: itemSnapshotMapping.MappingSubKey, Op: item.Op, Values: item.Values,
 			})
+			if baseExpt.ExptType == entity.ExptType_Online && itemSnapshotMapping.RecordID > 0 {
+				itemSnapshotFilter.StringMapFilters = append(itemSnapshotFilter.StringMapFilters, &entity.FieldFilter{
+					Key: "record_" + itemSnapshotMapping.MappingSubKey, Op: "=", Values: []any{strconv.FormatInt(itemSnapshotMapping.RecordID, 10)},
+				})
+			}
 		case "bool_map":
 			itemSnapshotFilter.BoolMapFilters = append(itemSnapshotFilter.BoolMapFilters, &entity.FieldFilter{
-				Key:    itemSnapshotMapping.MappingSubKey,
-				Op:     item.Op,
-				Values: item.Values,
+				Key: itemSnapshotMapping.MappingSubKey, Op: item.Op, Values: item.Values,
 			})
+			if baseExpt.ExptType == entity.ExptType_Online && itemSnapshotMapping.RecordID > 0 {
+				itemSnapshotFilter.StringMapFilters = append(itemSnapshotFilter.StringMapFilters, &entity.FieldFilter{
+					Key: "record_" + itemSnapshotMapping.MappingSubKey, Op: "=", Values: []any{strconv.FormatInt(itemSnapshotMapping.RecordID, 10)},
+				})
+			}
 		}
 	}
 	filter.ItemSnapshotCond = itemSnapshotFilter
@@ -1754,28 +2377,40 @@ func (e ExptResultServiceImpl) mapItemSnapshotFilter(ctx context.Context, filter
 		switch itemSnapshotMapping.MappingKey {
 		case "string_map":
 			keywordItemSnapshotFilter.StringMapFilters = append(keywordItemSnapshotFilter.StringMapFilters, &entity.FieldFilter{
-				Key:    itemSnapshotMapping.MappingSubKey,
-				Op:     "LIKE",
-				Values: item.Values,
+				Key: itemSnapshotMapping.MappingSubKey, Op: "LIKE", Values: item.Values,
 			})
+			if baseExpt.ExptType == entity.ExptType_Online && itemSnapshotMapping.RecordID > 0 {
+				keywordItemSnapshotFilter.StringMapFilters = append(keywordItemSnapshotFilter.StringMapFilters, &entity.FieldFilter{
+					Key: "record_" + itemSnapshotMapping.MappingSubKey, Op: "=", Values: []any{strconv.FormatInt(itemSnapshotMapping.RecordID, 10)},
+				})
+			}
 		case "float_map":
 			keywordItemSnapshotFilter.FloatMapFilters = append(keywordItemSnapshotFilter.FloatMapFilters, &entity.FieldFilter{
-				Key:    itemSnapshotMapping.MappingSubKey,
-				Op:     "LIKE",
-				Values: item.Values,
+				Key: itemSnapshotMapping.MappingSubKey, Op: "LIKE", Values: item.Values,
 			})
+			if baseExpt.ExptType == entity.ExptType_Online && itemSnapshotMapping.RecordID > 0 {
+				keywordItemSnapshotFilter.StringMapFilters = append(keywordItemSnapshotFilter.StringMapFilters, &entity.FieldFilter{
+					Key: "record_" + itemSnapshotMapping.MappingSubKey, Op: "=", Values: []any{strconv.FormatInt(itemSnapshotMapping.RecordID, 10)},
+				})
+			}
 		case "int_map":
 			keywordItemSnapshotFilter.IntMapFilters = append(keywordItemSnapshotFilter.IntMapFilters, &entity.FieldFilter{
-				Key:    itemSnapshotMapping.MappingSubKey,
-				Op:     "LIKE",
-				Values: item.Values,
+				Key: itemSnapshotMapping.MappingSubKey, Op: "LIKE", Values: item.Values,
 			})
+			if baseExpt.ExptType == entity.ExptType_Online && itemSnapshotMapping.RecordID > 0 {
+				keywordItemSnapshotFilter.StringMapFilters = append(keywordItemSnapshotFilter.StringMapFilters, &entity.FieldFilter{
+					Key: "record_" + itemSnapshotMapping.MappingSubKey, Op: "=", Values: []any{strconv.FormatInt(itemSnapshotMapping.RecordID, 10)},
+				})
+			}
 		case "bool_map":
 			keywordItemSnapshotFilter.BoolMapFilters = append(keywordItemSnapshotFilter.BoolMapFilters, &entity.FieldFilter{
-				Key:    itemSnapshotMapping.MappingSubKey,
-				Op:     "LIKE",
-				Values: item.Values,
+				Key: itemSnapshotMapping.MappingSubKey, Op: "LIKE", Values: item.Values,
 			})
+			if baseExpt.ExptType == entity.ExptType_Online && itemSnapshotMapping.RecordID > 0 {
+				keywordItemSnapshotFilter.StringMapFilters = append(keywordItemSnapshotFilter.StringMapFilters, &entity.FieldFilter{
+					Key: "record_" + itemSnapshotMapping.MappingSubKey, Op: "=", Values: []any{strconv.FormatInt(itemSnapshotMapping.RecordID, 10)},
+				})
+			}
 		}
 	}
 	filter.KeywordSearch.ItemSnapshotFilter = keywordItemSnapshotFilter
@@ -1911,7 +2546,7 @@ func (e ExptResultServiceImpl) CompareExptTurnResultFilters(ctx context.Context,
 			ExptIDs: []int64{exptID},
 		}
 		payloadBuilder := NewPayloadBuilder(ctx, param, exptID, turnResultDAOs, itemResultDAOs, e.ExperimentRepo,
-			e.ExptTurnResultRepo, e.ExptAnnotateRepo, e.evalTargetService, e.evaluatorRecordService, e.evaluationSetItemService, nil, nil, make(map[int64]entity.ItemRunState))
+			e.ExptTurnResultRepo, e.ExptAnnotateRepo, e.evalTargetService, e.evaluatorRecordService, e.evaluationSetItemService, e.analysisService, nil, nil, make(map[int64]entity.ItemRunState), e.fileProvider)
 		itemResults, err := payloadBuilder.BuildItemResults(ctx)
 		if err != nil {
 			return err
@@ -2256,4 +2891,99 @@ func ParseTurnKey(turnKey string) (*TurnKeyComponents, error) {
 		ItemID:  itemID,
 		TurnID:  turnID,
 	}, nil
+}
+
+// RecalculateWeightedScore 重新计算指定轮次的加权得分并更新到 expt_turn_result
+func (e *ExptResultServiceImpl) RecalculateWeightedScore(ctx context.Context, spaceID, exptID, itemID, turnID int64) error {
+	// 获取该轮次对应的 expt_turn_result
+	turnResult, err := e.ExptTurnResultRepo.Get(ctx, spaceID, exptID, itemID, turnID)
+	if err != nil {
+		return err
+	}
+	if turnResult == nil {
+		logs.CtxWarn(ctx, "TurnResult not found, expt_id: %v, item_id: %v, turn_id: %v", exptID, itemID, turnID)
+		return nil
+	}
+
+	// 获取实验配置
+	expt, err := e.ExperimentRepo.GetByID(ctx, exptID, spaceID)
+	if err != nil {
+		return err
+	}
+	if expt == nil {
+		logs.CtxWarn(ctx, "Experiment not found, expt_id: %v", exptID)
+		return nil
+	}
+
+	// 获取该轮次的所有评估器记录
+	turnEvaluatorRefs, err := e.ExptTurnResultRepo.BatchGetTurnEvaluatorResultRef(ctx, spaceID, []int64{turnResult.ID})
+	if err != nil {
+		return err
+	}
+	if len(turnEvaluatorRefs) == 0 {
+		logs.CtxWarn(ctx, "No evaluator refs found for turn_result_id: %v", turnResult.ID)
+		return nil
+	}
+
+	// 收集所有评估器结果ID
+	evaluatorResultIDs := make([]int64, 0, len(turnEvaluatorRefs))
+	for _, ref := range turnEvaluatorRefs {
+		if ref.EvaluatorResultID > 0 {
+			evaluatorResultIDs = append(evaluatorResultIDs, ref.EvaluatorResultID)
+		}
+	}
+	if len(evaluatorResultIDs) == 0 {
+		return nil
+	}
+
+	// 批量获取评估器记录
+	evaluatorRecords, err := e.evaluatorRecordService.BatchGetEvaluatorRecord(ctx, evaluatorResultIDs, false, false)
+	if err != nil {
+		return err
+	}
+
+	// 构建评估器版本ID到评估器记录的映射
+	version2Record := make(map[int64]*entity.EvaluatorRecord, len(evaluatorRecords))
+	for _, record := range evaluatorRecords {
+		if record != nil {
+			version2Record[record.EvaluatorVersionID] = record
+		}
+	}
+
+	// 构建权重映射：仅当 EnableScoreWeight 为 true 时使用配置权重，否则等权
+	var scoreWeights map[int64]float64
+	if expt.EvalConf != nil && expt.EvalConf.ConnectorConf.EvaluatorsConf != nil &&
+		expt.EvalConf.ConnectorConf.EvaluatorsConf.EnableScoreWeight &&
+		expt.EvalConf.ConnectorConf.EvaluatorsConf.EvaluatorConf != nil {
+		for _, ec := range expt.EvalConf.ConnectorConf.EvaluatorsConf.EvaluatorConf {
+			if ec != nil && ec.ScoreWeight != nil && *ec.ScoreWeight > 0 && ec.EvaluatorVersionID > 0 {
+				if scoreWeights == nil {
+					scoreWeights = make(map[int64]float64)
+				}
+				scoreWeights[ec.EvaluatorVersionID] = *ec.ScoreWeight
+			}
+		}
+	}
+
+	weightedScore := calculateWeightedScore(version2Record, scoreWeights)
+
+	// 更新 expt_turn_result 的 weighted_score
+	updateFields := map[string]any{
+		"weighted_score": weightedScore,
+	}
+	itemTurnIDs := []*entity.ItemTurnID{
+		{
+			ItemID: itemID,
+			TurnID: turnID,
+		},
+	}
+	if err := e.ExptTurnResultRepo.UpdateTurnResults(ctx, exptID, itemTurnIDs, spaceID, updateFields); err != nil {
+		return err
+	}
+
+	// 注意：不需要在这里触发加权汇总得分的重新计算
+	// 因为 EvaluatorRecordServiceImpl.CorrectEvaluatorRecord 中已经发送了 AggrCalculateEvent
+	// 当 AggrCalculateEvent 消息被处理时，CreateExptAggrResult 方法会自动计算加权分数的聚合结果
+
+	return nil
 }

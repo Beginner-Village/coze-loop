@@ -4,13 +4,17 @@
 package entity
 
 import (
+	"bytes"
 	"context"
 	"strconv"
 	"time"
 
+	"gorm.io/gorm/clause"
+
 	"github.com/coze-dev/coze-loop/backend/infra/middleware/session"
 	"github.com/coze-dev/coze-loop/backend/pkg/errorx"
 	"github.com/coze-dev/coze-loop/backend/pkg/json"
+	gslice "github.com/coze-dev/coze-loop/backend/pkg/lang/slices"
 )
 
 type FieldType int64
@@ -33,6 +37,21 @@ const (
 
 	// 标注项, FieldKey为TagKeyID
 	FieldType_Annotation FieldType = 23
+
+	// 加权得分, FieldKey为expt_id
+	FieldType_WeightedScore FieldType = 24
+
+	FieldType_TargetLatency      FieldType = 50
+	FieldType_TargetInputTokens  FieldType = 51
+	FieldType_TargetOutputTokens FieldType = 52
+	FieldType_TargetTotalTokens  FieldType = 53
+)
+
+const (
+	AggrResultFieldKey_TargetLatency      string = "_target_latency"
+	AggrResultFieldKey_TargetInputTokens  string = "_target_input_tokens"
+	AggrResultFieldKey_TargetOutputTokens string = "_target_output_tokens"
+	AggrResultFieldKey_TargetTotalTokens  string = "_target_total_tokens"
 )
 
 // aggregate result
@@ -126,15 +145,39 @@ func (a AggregatorResult) GetScore() float64 {
 }
 
 type ExptAggrResult struct {
-	ID           int64
-	SpaceID      int64
-	ExperimentID int64
-	FieldType    int32
-	FieldKey     string
-	Score        float64
-	AggrResult   []byte
-	Version      int64
-	Status       int32
+	ID            int64
+	SpaceID       int64
+	ExperimentID  int64
+	FieldType     int32
+	FieldKey      string
+	Score         float64
+	AggrResult    []byte
+	Version       int64
+	Status        int32
+	UpdateAt      *time.Time
+	WeightedScore float64
+}
+
+func (e *ExptAggrResult) AggrResEqual(other *ExptAggrResult) bool {
+	if e == nil && other == nil {
+		return true
+	}
+	if e == nil || other == nil {
+		return false
+	}
+	if e.SpaceID != other.SpaceID || e.ExperimentID != other.ExperimentID {
+		return false
+	}
+	if e.FieldType != other.FieldType || e.FieldKey != other.FieldKey {
+		return false
+	}
+	if e.Score != other.Score {
+		return false
+	}
+	if !bytes.Equal(e.AggrResult, other.AggrResult) {
+		return false
+	}
+	return true
 }
 
 type ExptAggregateResult struct {
@@ -142,9 +185,14 @@ type ExptAggregateResult struct {
 	EvaluatorResults  map[int64]*EvaluatorAggregateResult
 	Status            int64
 	AnnotationResults map[int64]*AnnotationAggregateResult
+	TargetResults     *EvalTargetMtrAggrResult
+	UpdateTime        *time.Time
+	// WeightedResults 加权聚合结果列表，对每种聚合指标（Average、p99 等）给出加权后的结果
+	WeightedResults []*AggregatorResult
 }
 
 type EvaluatorAggregateResult struct {
+	EvaluatorID        int64
 	EvaluatorVersionID int64
 	AggregatorResults  []*AggregatorResult
 	Name               *string
@@ -158,6 +206,15 @@ type AnnotationAggregateResult struct {
 	Name              *string
 }
 
+type EvalTargetMtrAggrResult struct {
+	TargetID                int64
+	TargetVersionID         int64
+	LatencyAggrResults      []*AggregatorResult
+	InputTokensAggrResults  []*AggregatorResult
+	OutputTokensAggrResults []*AggregatorResult
+	TotalTokensAggrResults  []*AggregatorResult
+}
+
 // item result
 type ExptItemResult struct {
 	ID        int64
@@ -169,6 +226,7 @@ type ExptItemResult struct {
 	ErrMsg    string
 	ItemIdx   int32
 	LogID     string
+	Ext       map[string]string
 }
 
 type ExptItemResultRunLog struct {
@@ -187,6 +245,12 @@ type ExptItemResultRunLog struct {
 type ExptItemEvalResult struct {
 	ItemResultRunLog  *ExptItemResultRunLog
 	TurnResultRunLogs map[int64]*ExptTurnResultRunLog
+}
+
+type ExptEvalItems []*ExptEvalItem
+
+func (e ExptEvalItems) GetItemIDs() []int64 {
+	return gslice.Map(e, func(f *ExptEvalItem) int64 { return f.ItemID })
 }
 
 type ExptEvalItem struct {
@@ -239,6 +303,8 @@ type ExptTurnResult struct {
 	EvaluatorResults *EvaluatorResults
 	ErrMsg           string
 	TurnIdx          int32
+
+	WeightedScore *float64 // 使用指针类型，nil 表示未计算，非 nil 表示已计算（可能为 0）
 }
 
 func (tr *ExptTurnResult) ToRunLogDO() *ExptTurnResultRunLog {
@@ -273,6 +339,15 @@ func (e *EvaluatorResults) Serialize() ([]byte, error) {
 	return bytes, nil
 }
 
+// ExptTurnResultListCursor 与 ListTurnResult 联合排序（item_idx + turn_idx + item_id + turn_id）一致的游标。
+// TurnIdx 为 COALESCE(turn_idx, -1) 的比较值，-1 表示库中 turn_idx 为 NULL。
+type ExptTurnResultListCursor struct {
+	ItemIdx int32
+	TurnIdx int32
+	ItemID  int64
+	TurnID  int64
+}
+
 type MGetExperimentResultParam struct {
 	SpaceID            int64
 	ExptIDs            []int64
@@ -280,7 +355,33 @@ type MGetExperimentResultParam struct {
 	Filters            map[int64]*ExptTurnResultFilter
 	FilterAccelerators map[int64]*ExptTurnResultFilterAccelerator
 	UseAccelerator     bool
-	Page               Page
+	// UseTurnListCursor 为 true 时（如 CSV 导出），按 TurnListCursor + Page.Limit 拉取 turn，忽略 Page 页码；勿与 UseAccelerator 同时使用。
+	UseTurnListCursor bool
+	// TurnListCursor 本批起始位置，首屏传 nil。
+	TurnListCursor *ExptTurnResultListCursor
+	Page           Page
+	// FullTrajectory 表示在构建 eval_target_result 时是否需要包含轨迹（trajectory）相关信息
+	FullTrajectory bool
+	// ExportFullContent 表示导出场景下需要从 TOS 加载完整字段内容（RDS 中大对象会被剪裁）
+	ExportFullContent bool
+	// LoadEvaluatorFullContent 为 true 时从 TOS 加载 Evaluator input 大对象；nil 时沿用 ExportFullContent
+	LoadEvaluatorFullContent *bool
+	// LoadEvalTargetFullContent 为 true 时从 TOS 加载 EvalTarget output 大对象；nil 时沿用 ExportFullContent
+	LoadEvalTargetFullContent *bool
+	// LoadEvalTargetOutputFieldKeys 非空时，仅对指定 output 字段从 TOS 拉取完整内容（优先级高于 LoadEvalTargetFullContent 全量加载）
+	LoadEvalTargetOutputFieldKeys []string
+}
+
+type MGetExperimentReportResult struct {
+	ColumnEvaluators      []*ColumnEvaluator
+	ExptColumnEvaluators  []*ExptColumnEvaluator
+	ColumnEvalSetFields   []*ColumnEvalSetField
+	ExptColumnAnnotations []*ExptColumnAnnotation
+	ItemResults           []*ItemResult
+	ExptColumnsEvalTarget []*ExptColumnEvalTarget
+	Total                 int64
+	// NextTurnListCursor 下一批起始游标；本批不足 Limit 或无更多数据时为 nil。
+	NextTurnListCursor *ExptTurnResultListCursor
 }
 
 type ExptTurnResultRunLog struct {
@@ -296,6 +397,7 @@ type ExptTurnResultRunLog struct {
 	TargetResultID     int64
 	EvaluatorResultIds *EvaluatorResults
 	ErrMsg             string
+	UpdatedAt          time.Time
 }
 
 type ExptTurnEvaluatorResultRef struct {
@@ -323,26 +425,79 @@ type ExptListFilter struct {
 }
 
 type ExptFilterFields struct {
-	CreatedBy    []string
-	Status       []int64
-	EvalSetIDs   []int64
-	TargetIDs    []int64
-	EvaluatorIDs []int64
-	TargetType   []int64
-	ExptType     []int64
-	SourceType   []int64
-	SourceID     []string
+	CreatedBy       []string
+	UpdatedBy       []string
+	Status          []int64
+	EvalSetIDs      []int64
+	TargetIDs       []int64
+	EvaluatorIDs    []int64
+	TargetType      []int64
+	ExptType        []int64
+	SourceType      []int64
+	SourceID        []string
+	ExptTemplateIDs []int64
+	// TriggerType 对应表字段 trigger_type，多值 IN 筛选（如 manual,openapi）
+	TriggerType []string
 }
 
 func (e *ExptFilterFields) IsValid() bool {
 	if e == nil {
 		return true
 	}
-	for _, slice := range [][]int64{e.Status, e.EvalSetIDs, e.TargetIDs, e.EvaluatorIDs, e.TargetType} {
+	for _, slice := range [][]int64{e.Status, e.EvalSetIDs, e.TargetIDs, e.EvaluatorIDs, e.TargetType, e.ExptTemplateIDs} {
 		for _, item := range slice {
 			if item < 0 {
 				return false
 			}
+		}
+	}
+	for _, item := range e.CreatedBy {
+		if len(item) <= 0 {
+			return false
+		}
+	}
+	for _, item := range e.TriggerType {
+		if len(item) <= 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// ExptTemplateListFilter 实验模板列表筛选器
+type ExptTemplateListFilter struct {
+	FuzzyName string
+	Includes  *ExptTemplateFilterFields
+	Excludes  *ExptTemplateFilterFields
+}
+
+// ExptTemplateFilterFields 实验模板筛选字段
+type ExptTemplateFilterFields struct {
+	CreatedBy    []string
+	UpdatedBy    []string
+	EvalSetIDs   []int64
+	TargetIDs    []int64
+	EvaluatorIDs []int64
+	TargetType   []int64
+	ExptType     []int64
+	// CronActivate 对应表字段 cron_activate：仅允许 0（false）/1（true），语义与 ExptType 等多值 IN 一致
+	CronActivate []int64
+}
+
+func (e *ExptTemplateFilterFields) IsValid() bool {
+	if e == nil {
+		return true
+	}
+	for _, slice := range [][]int64{e.EvalSetIDs, e.TargetIDs, e.EvaluatorIDs, e.TargetType, e.ExptType, e.CronActivate} {
+		for _, item := range slice {
+			if item < 0 {
+				return false
+			}
+		}
+	}
+	for _, v := range e.CronActivate {
+		if v != 0 && v != 1 {
+			return false
 		}
 	}
 	for _, item := range e.CreatedBy {
@@ -356,9 +511,15 @@ func (e *ExptFilterFields) IsValid() bool {
 type ExptItemRunLogFilter struct {
 	Status      []ItemRunState
 	ResultState *ExptItemResultState
+
+	RawFilter bool
+	RawCond   clause.Expr
 }
 
 func (e *ExptItemRunLogFilter) GetResultState() ExptItemResultState {
+	if e.ResultState == nil {
+		return 0
+	}
 	return *e.ResultState
 }
 
@@ -419,11 +580,13 @@ func NewSession(ctx context.Context) *Session {
 }
 
 type ExptTurnResultFilterMapCond struct {
-	EvalTargetDataFilters   []*FieldFilter
-	EvaluatorScoreFilters   []*FieldFilter
-	AnnotationFloatFilters  []*FieldFilter
-	AnnotationBoolFilters   []*FieldFilter
-	AnnotationStringFilters []*FieldFilter
+	EvalTargetDataFilters        []*FieldFilter
+	EvaluatorScoreFilters        []*FieldFilter
+	EvaluatorWeightedScoreFilter *FieldFilter
+	AnnotationFloatFilters       []*FieldFilter
+	AnnotationBoolFilters        []*FieldFilter
+	AnnotationStringFilters      []*FieldFilter
+	EvalTargetMetricsFilters     []*FieldFilter
 }
 
 type FieldFilter struct {
@@ -471,6 +634,8 @@ type ExptTurnResultFilterAccelerator struct {
 	KeywordSearch     *KeywordFilter `json:"keyword_search"`
 	Page              Page           `json:"page"`
 	EvalSetSyncCkDate string
+	// IsOnlineExpt 是否在线实验，用于 QueryItemIDStates 拼接 SQL 时选择 join 的表名和条件
+	IsOnlineExpt bool `json:"is_online_expt"`
 }
 
 func (e *ExptTurnResultFilterAccelerator) HasFilters() bool {
@@ -480,9 +645,11 @@ func (e *ExptTurnResultFilterAccelerator) HasFilters() bool {
 		len(e.TurnRunStatus) > 0
 	hasFilters = hasFilters || (e.MapCond != nil && (len(e.MapCond.EvalTargetDataFilters) > 0 ||
 		len(e.MapCond.EvaluatorScoreFilters) > 0 ||
+		e.MapCond.EvaluatorWeightedScoreFilter != nil ||
 		len(e.MapCond.AnnotationFloatFilters) > 0 ||
 		len(e.MapCond.AnnotationBoolFilters) > 0 ||
-		len(e.MapCond.AnnotationStringFilters) > 0))
+		len(e.MapCond.AnnotationStringFilters) > 0 ||
+		len(e.MapCond.EvalTargetMetricsFilters) > 0))
 	hasFilters = hasFilters || (e.ItemSnapshotCond != nil && (len(e.ItemSnapshotCond.BoolMapFilters) > 0 ||
 		len(e.ItemSnapshotCond.FloatMapFilters) > 0 ||
 		len(e.ItemSnapshotCond.IntMapFilters) > 0 ||
@@ -537,6 +704,7 @@ type TurnTargetOutput struct {
 
 type TurnEvaluatorOutput struct {
 	EvaluatorRecords map[int64]*EvaluatorRecord
+	WeightedScore    *float64 // 加权汇总得分
 }
 
 type TurnAnnotateResult struct {
@@ -544,7 +712,9 @@ type TurnAnnotateResult struct {
 }
 
 type TurnEvalSet struct {
-	Turn *Turn
+	Turn      *Turn
+	ItemID    int64
+	EvalSetID int64
 }
 
 type TurnSystemInfo struct {
@@ -571,6 +741,7 @@ type ItemResult struct {
 	TurnResults []*TurnResult
 	SystemInfo  *ItemSystemInfo
 	ItemIndex   *int64
+	Ext         map[string]string
 }
 
 type ExperimentTurnPayload struct {
@@ -585,6 +756,8 @@ type ExperimentTurnPayload struct {
 	SystemInfo *TurnSystemInfo
 	// 标注结果
 	AnnotateResult *TurnAnnotateResult
+	// 分析结果
+	AnalysisRecord *AnalysisRecord
 }
 
 type ExperimentResult struct {
@@ -605,6 +778,7 @@ type ColumnEvalSetField struct {
 	Description *string
 	ContentType ContentType
 	TextSchema  *string
+	SchemaKey   *SchemaKey
 }
 
 type ColumnEvaluator struct {
@@ -614,6 +788,7 @@ type ColumnEvaluator struct {
 	Name               *string
 	Version            *string
 	Description        *string
+	Builtin            *bool
 }
 
 type ExptColumnEvaluator struct {
@@ -630,11 +805,14 @@ type ExptTurnResultFilterEntity struct {
 	Status                  ItemRunState       `json:"status"`
 	EvalTargetData          map[string]string  `json:"eval_target_data"`
 	EvaluatorScore          map[string]float64 `json:"evaluator_score"`
+	EvaluatorWeightedScore  *float64           `json:"evaluator_weighted_score"`
 	AnnotationFloat         map[string]float64 `json:"annotation_float"`
 	AnnotationBool          map[string]bool    `json:"annotation_bool"`
 	AnnotationString        map[string]string  `json:"annotation_string"`
+	EvalTargetMetrics       map[string]int64   `json:"eval_target_metrics"`
 	CreatedDate             time.Time          `json:"created_date"`
 	EvaluatorScoreCorrected bool               `json:"evaluator_score_corrected"`
+	EvalSetID               int64              `json:"eval_set_id"`
 	EvalSetVersionID        int64              `json:"eval_set_version_id"`
 	CreatedAt               time.Time          `json:"created_at"`
 	UpdatedAt               time.Time          `json:"updated_at"`
@@ -674,4 +852,19 @@ type ColumnAnnotation struct {
 type ExptColumnAnnotation struct {
 	ExptID            int64
 	ColumnAnnotations []*ColumnAnnotation
+}
+
+type ExptColumnEvalTarget struct {
+	ExptID  int64
+	Columns []*ColumnEvalTarget
+}
+
+type ColumnEvalTarget struct {
+	Name        string
+	Desc        string
+	Label       *string
+	DisplayName string
+	ContentType *ContentType
+	TextSchema  *string
+	SchemaKey   *SchemaKey
 }

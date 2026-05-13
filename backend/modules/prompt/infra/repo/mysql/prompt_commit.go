@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/coze-dev/coze-loop/backend/modules/prompt/infra/repo/mysql/hooks"
 	"gorm.io/gorm"
 
 	"github.com/coze-dev/coze-loop/backend/infra/db"
@@ -27,6 +28,7 @@ type IPromptCommitDAO interface {
 	Get(ctx context.Context, promptID int64, commitVersion string, opts ...db.Option) (promptCommitPO *model.PromptCommit, err error)
 	MGet(ctx context.Context, pairs []PromptIDCommitVersionPair, opts ...db.Option) (pairCommitPOMap map[PromptIDCommitVersionPair]*model.PromptCommit, err error)
 	List(ctx context.Context, param ListCommitParam, opts ...db.Option) (commitPOs []*model.PromptCommit, err error)
+	MGetVersionsByPromptID(ctx context.Context, promptID int64, opts ...db.Option) (versions []string, err error)
 }
 
 type ListCommitParam struct {
@@ -40,12 +42,14 @@ type ListCommitParam struct {
 type PromptCommitDAOImpl struct {
 	db           db.Provider
 	writeTracker platestwrite.ILatestWriteTracker
+	hook         hooks.IPromptCommitHook
 }
 
-func NewPromptCommitDAO(db db.Provider, redisCli redis.Cmdable) IPromptCommitDAO {
+func NewPromptCommitDAO(db db.Provider, redisCli redis.Cmdable, hook hooks.IPromptCommitHook) IPromptCommitDAO {
 	return &PromptCommitDAOImpl{
 		db:           db,
 		writeTracker: platestwrite.NewLatestWriteTracker(redisCli),
+		hook:         hook,
 	}
 }
 
@@ -61,10 +65,13 @@ func (d *PromptCommitDAOImpl) Create(ctx context.Context, promptCommitPO *model.
 	q := query.Use(d.db.NewSession(ctx, opts...)).WithContext(ctx)
 	promptCommitPO.CreatedAt = timeNow
 	promptCommitPO.UpdatedAt = timeNow
+	if err := d.hook.BeforeSave(ctx, promptCommitPO); err != nil {
+		return errorx.WrapByCode(err, prompterr.CommonMySqlErrorCode)
+	}
 	err = q.PromptCommit.Create(promptCommitPO)
 	if err != nil {
 		if errors.Is(err, gorm.ErrDuplicatedKey) {
-			return errorx.WrapByCode(err, prompterr.CommonResourceDuplicatedCode)
+			return errorx.WrapByCode(err, prompterr.PromptSubmitVersionExistCode)
 		}
 		return errorx.WrapByCode(err, prompterr.CommonMySqlErrorCode)
 	}
@@ -89,6 +96,9 @@ func (d *PromptCommitDAOImpl) Get(ctx context.Context, promptID int64, commitVer
 	if len(promptCommitPOs) <= 0 {
 		return nil, nil
 	}
+	if err := d.hook.AfterFind(ctx, promptCommitPOs); err != nil {
+		return nil, errorx.WrapByCode(err, prompterr.CommonMySqlErrorCode)
+	}
 	return promptCommitPOs[0], nil
 }
 
@@ -109,6 +119,9 @@ func (d *PromptCommitDAOImpl) MGet(ctx context.Context, pairs []PromptIDCommitVe
 	}
 	if len(promptCommitPOs) <= 0 {
 		return nil, nil
+	}
+	if err := d.hook.AfterFind(ctx, promptCommitPOs); err != nil {
+		return nil, errorx.WrapByCode(err, prompterr.CommonMySqlErrorCode)
 	}
 	pairCommitPOMap = make(map[PromptIDCommitVersionPair]*model.PromptCommit)
 	for _, po := range promptCommitPOs {
@@ -133,15 +146,15 @@ func (d *PromptCommitDAOImpl) List(ctx context.Context, param ListCommitParam, o
 	tx = tx.Where(q.PromptCommit.PromptID.Eq(param.PromptID))
 	if param.Cursor == nil {
 		if param.Asc {
-			tx = tx.Order(q.PromptCommit.ID.Asc())
+			tx = tx.Order(q.PromptCommit.CreatedAt.Asc())
 		} else {
-			tx = tx.Order(q.PromptCommit.ID.Desc())
+			tx = tx.Order(q.PromptCommit.CreatedAt.Desc())
 		}
 	} else {
 		if param.Asc {
-			tx = tx.Where(q.PromptCommit.ID.Gte(*param.Cursor)).Order(q.PromptCommit.ID.Asc())
+			tx = tx.Where(q.PromptCommit.CreatedAt.Gte(time.Unix(*param.Cursor, 0))).Order(q.PromptCommit.CreatedAt.Asc())
 		} else {
-			tx = tx.Where(q.PromptCommit.ID.Lte(*param.Cursor)).Order(q.PromptCommit.ID.Desc())
+			tx = tx.Where(q.PromptCommit.CreatedAt.Lte(time.Unix(*param.Cursor, 0))).Order(q.PromptCommit.CreatedAt.Desc())
 		}
 	}
 	tx = tx.Limit(param.Limit)
@@ -152,5 +165,40 @@ func (d *PromptCommitDAOImpl) List(ctx context.Context, param ListCommitParam, o
 	if len(commitPOs) <= 0 {
 		return nil, nil
 	}
+	if err := d.hook.AfterFind(ctx, commitPOs); err != nil {
+		return nil, errorx.WrapByCode(err, prompterr.CommonMySqlErrorCode)
+	}
 	return commitPOs, nil
+}
+
+func (d *PromptCommitDAOImpl) MGetVersionsByPromptID(ctx context.Context, promptID int64, opts ...db.Option) (versions []string, err error) {
+	if promptID <= 0 {
+		return nil, errorx.New("promptID is invalid, promptID = %d", promptID)
+	}
+	if d.writeTracker.CheckWriteFlagByID(ctx, platestwrite.ResourceTypePromptCommit, promptID) {
+		opts = append(opts, db.WithMaster())
+	}
+
+	q := query.Use(d.db.NewSession(ctx, opts...))
+	tx := q.WithContext(ctx).PromptCommit
+	tx = tx.Select(q.PromptCommit.Version)
+	tx = tx.Where(q.PromptCommit.PromptID.Eq(promptID))
+	commitPOs, err := tx.Find()
+	if err != nil {
+		return nil, errorx.WrapByCode(err, prompterr.CommonMySqlErrorCode)
+	}
+	if len(commitPOs) == 0 {
+		return nil, nil
+	}
+	if err := d.hook.AfterFind(ctx, commitPOs); err != nil {
+		return nil, errorx.WrapByCode(err, prompterr.CommonMySqlErrorCode)
+	}
+	versions = make([]string, 0, len(commitPOs))
+	for _, po := range commitPOs {
+		if po == nil || po.Version == "" {
+			continue
+		}
+		versions = append(versions, po.Version)
+	}
+	return versions, nil
 }

@@ -8,6 +8,9 @@ include "./domain/filter.thrift"
 include "./domain/view.thrift"
 include "./domain/annotation.thrift"
 include "./domain/export_dataset.thrift"
+include "./domain/task.thrift"
+include "../trajectory.thrift"
+include "./domain/annotation.thrift"
 
 struct ListSpansRequest {
     1: required i64 workspace_id (api.js_conv='true', go.tag='json:"workspace_id"', api.body="workspace_id")
@@ -27,6 +30,23 @@ struct ListSpansResponse {
     1: required list<span.OutputSpan> spans
     2: required string next_page_token
     3: required bool has_more
+
+    255: optional base.BaseResp BaseResp
+}
+
+struct ListPreSpanRequest {
+    1: required i64 workspace_id (api.js_conv='true', go.tag='json:"workspace_id"',api.body="workspace_id")
+    2: required string trace_id (api.body="trace_id")
+    3: required i64 start_time (api.js_conv='true', go.tag='json:"start_time"', api.body="start_time") // ms
+    4: optional string span_id (api.body="span_id")
+    5: optional string previous_response_id (api.body="previous_response_id")
+    6: optional common.PlatformType platform_type (api.body="platform_type")
+
+    255: optional base.Base Base
+}
+
+struct ListPreSpanResponse {
+    1: required list<span.OutputSpan> spans
 
     255: optional base.BaseResp BaseResp
 }
@@ -53,6 +73,25 @@ struct GetTraceRequest {
 }
 
 struct GetTraceResponse {
+    1: required list<span.OutputSpan> spans
+    2: optional TraceAdvanceInfo traces_advance_info
+
+    255: optional base.BaseResp BaseResp
+}
+
+struct SearchTraceTreeRequest {
+    1: required i64 workspace_id (api.js_conv='true', go.tag='json:"workspace_id"', api.body="workspace_id")
+    2: required string trace_id (go.tag='json:"trace_id"', api.body="trace_id")
+    3: required i64 start_time (api.js_conv='true', go.tag='json:"start_time"', api.body="start_time") // ms
+    4: required i64 end_time (api.js_conv='true', go.tag='json:"end_time"', api.body="end_time") // ms
+    8: optional common.PlatformType platform_type (api.body="platform_type")
+
+    10: optional filter.FilterFields filters (api.body="filters")
+
+    255: optional base.Base Base
+}
+
+struct SearchTraceTreeResponse {
     1: required list<span.OutputSpan> spans
     2: optional TraceAdvanceInfo traces_advance_info
 
@@ -109,6 +148,7 @@ struct GetTracesMetaInfoRequest {
 
 struct GetTracesMetaInfoResponse {
     1: required map<string, FieldMeta> field_metas
+    2: optional list<string> key_span_type
 
     255: optional base.BaseResp BaseResp
 }
@@ -229,6 +269,22 @@ struct ListAnnotationsResponse {
     255: optional base.BaseResp BaseResp
 }
 
+struct ListWorkspaceAnnotationsRequest {
+    1: required i64 workspace_id (api.js_conv='true', go.tag='json:"workspace_id"', api.body="workspace_id", vt.gt="0")
+    2: optional common.PlatformType platform_type (api.body="platform_type")
+    3: optional annotation.AnnotationType annotation_type(api.body="annotation_type")
+    4: optional common.SpanListType span_list_type (api.body="span_list_type")
+
+    255: optional base.Base Base
+}
+
+struct ListWorkspaceAnnotationsResponse {
+    1: required list<annotation.SimpleAnnotationInfo> simple_annotation_list
+
+    255: optional base.BaseResp BaseResp
+}
+
+
 struct ExportTracesToDatasetRequest {
     1: required i64 workspace_id (api.js_conv="true", go.tag='json:"workspace_id"', api.body="workspace_id", vt.gt="0")
     2: required list<SpanID> span_ids (api.body="span_ids", vt.min_size="1", vt.max_size="500")
@@ -268,7 +324,7 @@ struct ExportTracesToDatasetResponse {
 
 struct PreviewExportTracesToDatasetRequest {
     1: required i64 workspace_id (api.js_conv="true", go.tag='json:"workspace_id"', api.body="workspace_id", vt.gt="0")
-    2: required list<SpanID> span_ids (api.body="span_ids", vt.min_size="1", vt.max_size="500")
+    2: required list<SpanID> span_ids (api.body="span_ids", vt.max_size="500")
     3: required dataset.DatasetCategory category (api.body="category")
     4: required DatasetConfig config (api.body="config")
     5: required i64 start_time (api.js_conv="true", go.tag='json:"start_time"', api.body="start_time")
@@ -276,7 +332,8 @@ struct PreviewExportTracesToDatasetRequest {
     7: optional common.PlatformType platform_type (api.body="platform_type")
     8: required export_dataset.ExportType export_type (api.body="export_type")                 // 导入方式，不填默认为追加
     9: optional list<export_dataset.FieldMapping> field_mappings (api.body="field_mappings", vt.min_size="1", vt.max_size="100")
-
+    10: optional filter.SpanFilterFields span_filters (api.body="span_filters")
+    11: optional i64 limit (api.js_conv="true", api.body="limit", vt.gt="0")
     255: optional base.Base Base (api.none="true")
 }
 
@@ -289,9 +346,190 @@ struct PreviewExportTracesToDatasetResponse {
     257: optional string Msg (agw.key = "msg")    // 仅供http请求使用; 内部RPC不予使用，统一通过BaseResp获取Code和Msg
 }
 
+struct ChangeEvaluatorScoreRequest {
+    1: required i64 workspace_id (api.js_conv='true', go.tag='json:"workspace_id"', api.body="workspace_id", vt.gt="0")
+    2: required string annotation_id (api.body="annotation_id", vt.min_size="1")
+    3: required string span_id (api.body="span_id", vt.min_size="1")
+    4: required i64 start_time (api.js_conv='true', go.tag='json:"start_time"', api.body="start_time", vt.gt="0")
+    5: required annotation.Correction correction (api.body="correction")
+    6: optional common.PlatformType platform_type (api.body="platform_type")
+
+    255: optional base.Base Base
+}
+
+struct ChangeEvaluatorScoreResponse {
+    1: required annotation.Annotation annotation
+
+    255: optional base.BaseResp BaseResp
+}
+
+
+
+struct ListAnnotationEvaluatorsRequest {
+    1: required i64 workspace_id (api.js_conv='true', go.tag='json:"workspace_id"', api.query="workspace_id", vt.gt="0")
+    2: optional string name (api.query = "name")
+
+    255: optional base.Base Base (api.none="true")
+}
+
+struct ListAnnotationEvaluatorsResponse {
+    1: required list<annotation.AnnotationEvaluator> evaluators
+
+    255: optional base.BaseResp BaseResp
+}
+
+struct ExtractSpanInfoRequest {
+    1: required i64 workspace_id (api.js_conv='true', go.tag='json:"workspace_id"', api.body="workspace_id", vt.gt="0")
+    2: required string trace_id (api.body = "trace_id" vt.min_size = "1")
+    3: required list<string> span_ids (api.body="span_ids", vt.min_size="1", vt.max_size="500")
+    4: optional i64 start_time (api.js_conv='true', go.tag='json:"start_time"', api.body="start_time", vt.gt="0")
+    5: optional i64 end_time (api.js_conv='true', go.tag='json:"end_time"', api.body="end_time", vt.gt="0")
+    6: optional common.PlatformType platform_type (api.body="platform_type")
+    7: optional list<export_dataset.FieldMapping> field_mappings (vt.min_size="1", vt.max_size="100")
+
+    255: optional base.Base Base (api.none="true")
+}
+
+struct SpanInfo {
+    1: required string span_id
+    2: required list<export_dataset.FieldData>  field_list
+}
+struct ExtractSpanInfoResponse {
+    1: required list<SpanInfo>  span_infos
+
+    255: optional base.BaseResp BaseResp
+}
+
+
+struct UpsertTrajectoryConfigRequest {
+    1: required i64 workspace_id (api.js_conv='true', go.tag='json:"workspace_id"',api.body="workspace_id")
+    2: optional filter.FilterFields filters (api.body="filters")
+
+    255: optional base.Base Base
+}
+
+struct UpsertTrajectoryConfigResponse {
+    255: optional base.BaseResp BaseResp
+}
+
+struct GetTrajectoryConfigRequest {
+    1: required i64 workspace_id (api.js_conv='true',api.query='workspace_id')
+
+    255: optional base.Base Base
+}
+
+struct GetTrajectoryConfigResponse {
+    1: optional filter.FilterFields filters
+
+    255: optional base.BaseResp BaseResp
+}
+
+struct ListTrajectoryRequest {
+    1: required common.PlatformType platform_type (api.body='platform_type') // 需要准确填写，用于确定查询哪些租户的数据
+    2: required i64 workspace_id (api.js_conv='true',api.body='workspace_id')
+    3: required list<string> trace_ids (api.body="trace_ids", vt.min_size="1", vt.max_size="10")
+    4: optional i64 start_time (api.js_conv='true', go.tag='json:"start_time"', api.body="start_time") // ms
+
+    255: optional base.Base Base
+}
+
+struct ListTrajectoryResponse {
+    1: optional list<trajectory.Trajectory> trajectories
+
+    255: optional base.BaseResp BaseResp
+}
+
+struct ListMetadataRequest {
+    1: required i64 workspace_id (api.js_conv='true', go.tag='json:"workspace_id"', api.body="workspace_id")
+    2: optional common.PlatformType platform_type (api.body="platform_type")
+    3: optional common.SpanListType span_list_type (api.body="span_list_type")
+
+    255: optional base.Base Base
+}
+
+struct MetadataItemInfo {
+    1: required string key
+    2: required span.MetadataValueType value_type
+}
+struct ListMetadataResponse {
+    1: required list<MetadataItemInfo> metadataItemList ,
+
+    255: optional base.BaseResp BaseResp
+}
+
+struct ListTraceChatRequest {
+    1: required i64 workspace_id (api.js_conv='true', go.tag='json:"workspace_id"', api.body="workspace_id", vt.gt="0")
+    2: required string trace_id (go.tag='json:"trace_id"', api.body="trace_id", vt.min_size="1")
+    3: optional i64 start_time (api.js_conv='true', go.tag='json:"start_time,omitempty"', api.body="start_time")
+    4: optional i64 end_time (api.js_conv='true', go.tag='json:"end_time,omitempty"', api.body="end_time")
+    5: optional i32 page_size (go.tag='json:"page_size,omitempty"', api.body="page_size")
+    6: optional string page_token (go.tag='json:"page_token,omitempty"', api.body="page_token")
+    7: optional common.PlatformType platform_type (go.tag='json:"platform_type,omitempty"', api.body="platform_type")
+    8: optional filter.FilterFields filters (api.body="filters")
+    9: optional bool without_detail (go.tag='json:"without_detail,omitempty"', api.body="without_detail")
+
+    255: optional base.Base Base
+}
+
+struct ListTraceChatResponse {
+    1: required list<ChatMessage> messages (go.tag='json:"messages"')
+    2: required string next_page_token (go.tag='json:"next_page_token"')
+    3: required bool has_more (go.tag='json:"has_more"')
+
+    255: optional base.BaseResp BaseResp
+}
+
+struct ListThreadChatRequest {
+    1: required i64 workspace_id (api.js_conv='true', go.tag='json:"workspace_id"', api.body="workspace_id", vt.gt="0")
+    2: required string thread_id (go.tag='json:"thread_id"', api.body="thread_id", vt.min_size="1")
+    3: optional i64 start_time (api.js_conv='true', go.tag='json:"start_time,omitempty"', api.body="start_time")
+    4: optional i64 end_time (api.js_conv='true', go.tag='json:"end_time,omitempty"', api.body="end_time")
+    5: optional i32 page_size (go.tag='json:"page_size,omitempty"', api.body="page_size")
+    6: optional string page_token (go.tag='json:"page_token,omitempty"', api.body="page_token")
+    7: optional common.PlatformType platform_type (go.tag='json:"platform_type,omitempty"', api.body="platform_type")
+
+    255: optional base.Base Base
+}
+
+struct ListThreadChatResponse {
+    1: required list<ChatMessage> messages (go.tag='json:"messages"')
+    2: required string next_page_token (go.tag='json:"next_page_token"')
+    3: required bool has_more (go.tag='json:"has_more"')
+
+    255: optional base.BaseResp BaseResp
+}
+
+struct GetThreadStatRequest {
+    1: required i64 workspace_id (api.js_conv='true', go.tag='json:"workspace_id"', api.body="workspace_id", vt.gt="0")
+    2: required string thread_id (go.tag='json:"thread_id"', api.body="thread_id", vt.min_size="1")
+    3: optional i64 start_time (api.js_conv='true', go.tag='json:"start_time,omitempty"', api.body="start_time")
+    4: optional i64 end_time (api.js_conv='true', go.tag='json:"end_time,omitempty"', api.body="end_time")
+    5: optional common.PlatformType platform_type (go.tag='json:"platform_type,omitempty"', api.body="platform_type")
+
+    255: optional base.Base Base
+}
+
+struct GetThreadStatResponse {
+    1: required string thread_id (go.tag='json:"thread_id"')
+    2: optional i64 start_time (api.js_conv='true', go.tag='json:"start_time"')
+    3: optional i64 duration (api.js_conv='true', go.tag='json:"duration"')
+    4: optional string user_id (go.tag='json:"user_id,omitempty"')
+    5: optional i64 total_tokens (api.js_conv='true', go.tag='json:"total_tokens"')
+    6: optional list<string> used_models (go.tag='json:"used_models"')
+
+    255: optional base.BaseResp BaseResp
+}
+
+struct ChatMessage {
+    1: required string role (go.tag='json:"role"')
+    2: optional span.OutputSpan span (go.tag='json:"span,omitempty"')
+}
+
 service TraceService {
     ListSpansResponse ListSpans(1: ListSpansRequest req) (api.post = '/api/observability/v1/spans/list')
+    ListPreSpanResponse ListPreSpan(1: ListPreSpanRequest req) (api.post = '/api/observability/v1/spans/pre_list')
     GetTraceResponse GetTrace(1: GetTraceRequest req) (api.get = '/api/observability/v1/traces/:trace_id')
+    SearchTraceTreeResponse SearchTraceTree(1: SearchTraceTreeRequest req) (api.post = '/api/observability/v1/traces/search_tree')
     BatchGetTracesAdvanceInfoResponse BatchGetTracesAdvanceInfo(1: BatchGetTracesAdvanceInfoRequest req) (api.post = '/api/observability/v1/traces/batch_get_advance_info')
     IngestTracesResponse IngestTracesInner(1: IngestTracesRequest req)
     GetTracesMetaInfoResponse GetTracesMetaInfo(1: GetTracesMetaInfoRequest req) (api.get = '/api/observability/v1/traces/meta_info')
@@ -303,6 +541,17 @@ service TraceService {
     UpdateManualAnnotationResponse UpdateManualAnnotation(1: UpdateManualAnnotationRequest req) (api.put = '/api/observability/v1/annotations/:annotation_id')
     DeleteManualAnnotationResponse DeleteManualAnnotation(1: DeleteManualAnnotationRequest req) (api.delete = '/api/observability/v1/annotations/:annotation_id')
     ListAnnotationsResponse ListAnnotations(1: ListAnnotationsRequest req) (api.post = '/api/observability/v1/annotations/list')
+    ListWorkspaceAnnotationsResponse ListWorkspaceAnnotations(1: ListWorkspaceAnnotationsRequest req) (api.post = '/api/observability/v1/annotations/list_by_workspace')
     ExportTracesToDatasetResponse ExportTracesToDataset(1: ExportTracesToDatasetRequest Req)(api.post = '/api/observability/v1/traces/export_to_dataset')
     PreviewExportTracesToDatasetResponse PreviewExportTracesToDataset(1: PreviewExportTracesToDatasetRequest Req)(api.post = '/api/observability/v1/traces/preview_export_to_dataset')
+    ChangeEvaluatorScoreResponse ChangeEvaluatorScore(1: ChangeEvaluatorScoreRequest req) (api.post = '/api/observability/v1/traces/change_eval_score')
+    ListAnnotationEvaluatorsResponse ListAnnotationEvaluators(1: ListAnnotationEvaluatorsRequest req) (api.get = '/api/observability/v1/annotation/list_evaluators')
+    ExtractSpanInfoResponse ExtractSpanInfo(1: ExtractSpanInfoRequest req) (api.post = '/api/observability/v1/trace/extract_span_info')
+    UpsertTrajectoryConfigResponse UpsertTrajectoryConfig(1: UpsertTrajectoryConfigRequest req) (api.post = '/api/observability/v1/traces/trajectory_config')
+    GetTrajectoryConfigResponse GetTrajectoryConfig(1: GetTrajectoryConfigRequest req) (api.get = '/api/observability/v1/traces/trajectory_config')
+    ListTrajectoryResponse ListTrajectory(1: ListTrajectoryRequest req) (api.post = '/api/observability/v1/traces/trajectory')
+    ListMetadataResponse ListMetadata(1: ListMetadataRequest req) (api.post = '/api/observability/v1/traces/metadata/list')
+    ListTraceChatResponse ListTraceChat(1: ListTraceChatRequest req) (api.post = '/api/observability/v1/traces/chat/list')
+    ListThreadChatResponse ListThreadChat(1: ListThreadChatRequest req) (api.post = '/api/observability/v1/threads/chat/list')
+    GetThreadStatResponse GetThreadStat(1: GetThreadStatRequest req) (api.post = '/api/observability/v1/threads/stat')
 }

@@ -1,12 +1,14 @@
 namespace go coze.loop.evaluation.domain.common
 
 include "../../data/domain/dataset.thrift"
+include "../../llm/domain/manage.thrift"
 
 typedef string ContentType(ts.enum="true")
 
 const ContentType ContentType_Text = "Text" // 空间
 const ContentType ContentType_Image = "Image"
 const ContentType ContentType_Audio = "Audio"
+const ContentType ContentType_Video = "Video"
 const ContentType ContentType_MultiPart = "MultiPart"
 const ContentType ContentType_MultiPartVariable = "multi_part_variable"
 
@@ -17,15 +19,34 @@ struct Content {
     11: optional Image image (go.tag='mapstructure:"image"'),
     12: optional list<Content> multi_part (go.tag='mapstructure:"multi_part"'),
     13: optional Audio audio (go.tag='mapstructure:"audio"'),
+    14: optional Video video (go.tag='mapstructure:"video"'),
+
+    // 超大文本相关字段
+    30: optional bool content_omitted       // 当前列的数据是否省略, 如果此处返回 true, 需要通过 GetDatasetItemField 获取当前列的具体内容, 或者是通过 omittedDataStorage.url 下载
+    31: optional dataset.ObjectStorage full_content // 被省略数据的完整信息，批量返回时会签发相应的 url，用户可以点击下载. 同时支持通过该字段传入已经上传好的超长数据(dataOmitted 为 true 时生效)
+    32: optional i32 full_content_bytes      // 超长数据完整内容的大小，单位 byte
 }
 
 struct AudioContent {
     1: optional list<Audio> audios,
 }
 
+struct Video {
+    1: optional string name,
+    2: optional string url,
+    3: optional string uri,
+    4: optional string thumb_url,
+
+    10: optional dataset.StorageProvider storage_provider (vt.defined_only = "true") // 当前多模态附件存储的 provider. 如果为空，则会从对应的 url 下载文件并上传到默认的存储中，并填充uri
+}
+
 struct Audio {
     1: optional string format,
     2: optional string url,
+    3: optional string name,
+    4: optional string uri,
+
+    10: optional dataset.StorageProvider storage_provider (vt.defined_only = "true") // 当前多模态附件存储的 provider. 如果为空，则会从对应的 url 下载文件并上传到默认的存储中，并填充uri
 }
 
 struct Image {
@@ -40,6 +61,8 @@ struct Image {
 struct OrderBy {
     1: optional string field,
     2: optional bool is_asc,
+
+    100: optional bool is_field_key, // 用于区分当前字段是否是 field key，仅在评测集场景下生效
 }
 
 enum Role {
@@ -55,11 +78,20 @@ struct Message {
     3: optional map<string, string> ext (go.tag='mapstructure:"ext"'),
 }
 
+enum ArgSchemaTextType {
+    Trajectory = 1
+}
+
+const string ArgSchemaKey_ActualOutput = "actual_output"
+const string ArgSchemaKey_Trajectory = "trajectory"
+
 struct ArgsSchema {
     1: optional string key (go.tag='mapstructure:"key"'),
     2: optional list<ContentType> support_content_types (go.tag='mapstructure:"support_content_types"'),
     // 	序列化后的jsonSchema字符串，例如："{\"type\": \"object\", \"properties\": {\"name\": {\"type\": \"string\"}, \"age\": {\"type\": \"integer\"}, \"isStudent\": {\"type\": \"boolean\"}}, \"required\": [\"name\", \"age\", \"isStudent\"]}"
     3: optional string json_schema (go.tag='mapstructure:"json_schema"'),
+    4: optional Content default_value (go.tag='mapstructure:"default_value"')
+    5: optional ArgSchemaTextType text_type (go.tag='mapstructure:"text_type"')
 }
 
 struct UserInfo {
@@ -74,8 +106,8 @@ struct UserInfo {
 }
 
 struct BaseInfo {
-    1: optional UserInfo created_by                       
-    2: optional UserInfo updated_by                     
+    1: optional UserInfo created_by
+    2: optional UserInfo updated_by
     3: optional i64 created_at      (api.js_conv="true", go.tag = 'json:"created_at"')
     4: optional i64 updated_at      (api.js_conv="true", go.tag = 'json:"updated_at"')
     5: optional i64 deleted_at      (api.js_conv="true", go.tag = 'json:"deleted_at"')
@@ -88,6 +120,9 @@ struct ModelConfig {
     3: optional double temperature
     4: optional i32 max_tokens
     5: optional double top_p
+    6: optional manage.Protocol protocol
+    7: optional string identification
+    8: optional bool preset_model
 
     50: optional string json_ext
 }
@@ -100,4 +135,22 @@ struct Session {
 struct RuntimeParam {
     1: optional string json_value
     2: optional string json_demo
+}
+
+struct RateLimit {
+    1: optional i32 rate
+    2: optional i32 burst
+    3: optional string period
+}
+
+typedef string AgentType(ts.enum="true")
+const AgentType AgentType_Vibe = "vibe"
+
+struct AgentConfig {
+    1: optional AgentType agent_type // Agent type
+}
+
+struct SkillConfig {
+    1: optional i64 skill_id (api.js_conv="true") // skill id
+    2: optional string version // skill version
 }

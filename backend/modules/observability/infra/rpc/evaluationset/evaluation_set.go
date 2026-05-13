@@ -19,6 +19,7 @@ import (
 	"github.com/coze-dev/coze-loop/backend/modules/observability/pkg/errno"
 	"github.com/coze-dev/coze-loop/backend/modules/observability/pkg/rpcerror"
 	"github.com/coze-dev/coze-loop/backend/pkg/errorx"
+	"github.com/coze-dev/coze-loop/backend/pkg/json"
 	"github.com/coze-dev/coze-loop/backend/pkg/logs"
 	"github.com/samber/lo"
 )
@@ -42,20 +43,26 @@ func (d *EvaluationSetProvider) CreateDataset(ctx context.Context, dataset *enti
 	if dataset.Name == "" {
 		return 0, errorx.NewByCode(errno.CommonInvalidParamCode, errorx.WithExtraMsg("dataset name is required"))
 	}
-
-	userIDStr, _ := session.UserIDInCtx(ctx)
-	userID, err := strconv.ParseInt(userIDStr, 10, 64)
-	if err != nil {
-		return 0, errorx.NewByCode(errno.CommonInvalidParamCode, errorx.WithExtraMsg("userid is required"))
+	var sessionInfo *common.Session
+	if dataset.Seesion == nil {
+		userIDStr, _ := session.UserIDInCtx(ctx)
+		userID, err := strconv.ParseInt(userIDStr, 10, 64)
+		if err != nil {
+			return 0, errorx.NewByCode(errno.CommonInvalidParamCode, errorx.WithExtraMsg("userid is required"))
+		}
+		sessionInfo = &common.Session{
+			UserID: gptr.Of(userID),
+		}
+	} else {
+		sessionInfo = dataset.Seesion
 	}
+
 	// 构造请求
 	req := &eval_set.CreateEvaluationSetRequest{
 		WorkspaceID: dataset.WorkspaceID,
 		Name:        &dataset.Name,
 		Description: &dataset.Description,
-		Session: &common.Session{
-			UserID: lo.ToPtr(userID),
-		},
+		Session:     sessionInfo,
 	}
 
 	// 设置BizCategory
@@ -68,7 +75,6 @@ func (d *EvaluationSetProvider) CreateDataset(ctx context.Context, dataset *enti
 	if len(dataset.DatasetVersion.DatasetSchema.FieldSchemas) > 0 {
 		req.EvaluationSetSchema = datasetSchemaDO2DTO(&dataset.DatasetVersion.DatasetSchema)
 	}
-
 	resp, err := d.client.CreateEvaluationSet(ctx, req)
 	if err != nil {
 		logs.CtxError(ctx, "CreateEvaluationSet failed, workspace_id=%d, err=%#v", dataset.WorkspaceID, err)
@@ -134,6 +140,11 @@ func (d *EvaluationSetProvider) GetDataset(ctx context.Context, workspaceID, dat
 	dataset := evaluationSetDTO2DO(resp.EvaluationSet)
 	logs.CtxInfo(ctx, "GetDataset success, workspace_id=%d, dataset_id=%d", workspaceID, datasetID)
 	return dataset, nil
+}
+
+// SearchDatasets 搜索数据集
+func (d *EvaluationSetProvider) SearchDatasets(ctx context.Context, workspaceID int64, datasetID int64, category entity.DatasetCategory, name string) ([]*entity.Dataset, error) {
+	return nil, nil
 }
 
 // ClearDatasetItems 清空数据集项
@@ -205,6 +216,8 @@ func (d *EvaluationSetProvider) AddDatasetItems(ctx context.Context, datasetID i
 			logs.CtxError(ctx, "BatchCreateEvaluationSetItems failed, workspace_id=%d, dataset_id=%d, batch=%d-%d, err=%v", workspaceID, datasetID, i, end-1, err)
 			return successItems, errorGroups, rpcerror.UnwrapRPCError(err)
 		}
+		logs.CtxInfo(ctx, "BatchCreateEvaluationSetItems success, batch %d-%d. resp=%v.",
+			i, end-1, json.MarshalStringIgnoreErr(resp))
 
 		// 处理成功的items
 		for batchSpecificIndex, itemID := range resp.GetAddedItems() {
@@ -305,6 +318,7 @@ func fieldSchemaDO2DTO(fs entity.FieldSchema) *eval_set_domain.FieldSchema {
 		Name:                 &fs.Name,
 		Description:          &fs.Description,
 		ContentType:          &contentType,
+		SchemaKey:            lo.ToPtr(dataset_domain.SchemaKey(fs.SchemaKey)),
 		TextSchema:           &fs.TextSchema,
 		DefaultDisplayFormat: defaultDisplayFormat,
 	}
@@ -382,29 +396,6 @@ func fieldSchemaDTO2DO(fs *eval_set_domain.FieldSchema) entity.FieldSchema {
 	return fieldSchema
 }
 
-func convertContentDO2DTO(content *entity.Content) *common.Content {
-	var result *common.Content
-	if content == nil {
-		return result
-	}
-	var multiPart []*common.Content
-	if content.MultiPart != nil {
-		for _, part := range content.MultiPart {
-			multiPart = append(multiPart, convertContentDO2DTO(part))
-		}
-	}
-	result = &common.Content{
-		ContentType: entity.CommonContentTypeDO2DTO(content.GetContentType()),
-		Text:        gptr.Of(content.GetText()),
-		Image: &common.Image{
-			Name: gptr.Of(content.GetImage().GetName()),
-			URL:  gptr.Of(content.GetImage().GetUrl()),
-		},
-		MultiPart: multiPart,
-	}
-	return result
-}
-
 // datasetItemsDO2DTO 转换DatasetItem到EvaluationSetItem
 func datasetItemsDO2DTO(items []*entity.DatasetItem) []*eval_set_domain.EvaluationSetItem {
 	evalSetItems := make([]*eval_set_domain.EvaluationSetItem, 0, len(items))
@@ -428,7 +419,7 @@ func datasetItemsDO2DTO(items []*entity.DatasetItem) []*eval_set_domain.Evaluati
 					fieldDataList = append(fieldDataList, &eval_set_domain.FieldData{
 						Key:     &fd.Key,
 						Name:    &fd.Name,
-						Content: convertContentDO2DTO(fd.Content),
+						Content: ConvertContentDO2DTO(fd.Content),
 					})
 				}
 			}
@@ -462,5 +453,55 @@ func FieldDisplayFormatDO2DTO(df entity.FieldDisplayFormat) dataset_domain.Field
 		return dataset_domain.FieldDisplayFormat_Code
 	default:
 		return dataset_domain.FieldDisplayFormat_PlainText
+	}
+}
+
+// ConvertContentDO2DTO
+// Transfer Observability Content struct entity.Content to Evaluation Content struct common.Content
+func ConvertContentDO2DTO(content *entity.Content) *common.Content {
+	var result *common.Content
+	if content == nil {
+		return result
+	}
+	var multiPart []*common.Content
+	if content.MultiPart != nil {
+		for _, part := range content.MultiPart {
+			multiPart = append(multiPart, ConvertContentDO2DTO(part))
+		}
+	}
+	result = &common.Content{
+		ContentType: entity.CommonContentTypeDO2DTO(content.GetContentType()),
+		Text:        gptr.Of(content.GetText()),
+		Image: &common.Image{
+			Name: gptr.Of(content.GetImage().GetName()),
+			URL:  gptr.Of(content.GetImage().GetUrl()),
+		},
+		Audio: &common.Audio{
+			Name: gptr.Of(content.GetAudio().GetName()),
+			URL:  gptr.Of(content.GetAudio().GetUrl()),
+		},
+		Video: &common.Video{
+			Name: gptr.Of(content.GetVideo().GetName()),
+			URL:  gptr.Of(content.GetVideo().GetUrl()),
+		},
+		MultiPart: multiPart,
+	}
+	return result
+}
+
+func ConvertContentTypeDTO2DO(contentType common.ContentType) entity.ContentType {
+	switch contentType {
+	case common.ContentTypeText:
+		return entity.ContentType_Text
+	case common.ContentTypeImage:
+		return entity.ContentType_Image
+	case common.ContentTypeAudio:
+		return entity.ContentType_Audio
+	case common.ContentTypeVideo:
+		return entity.ContentType_Video
+	case common.ContentTypeMultiPart:
+		return entity.ContentType_MultiPart
+	default:
+		return entity.ContentType_Text
 	}
 }

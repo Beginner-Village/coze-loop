@@ -6,6 +6,7 @@ package common
 import (
 	"context"
 	"strconv"
+	"time"
 
 	"github.com/bytedance/gg/gptr"
 
@@ -32,12 +33,16 @@ func ConvertImageDTO2DO(img *commondto.Image) *commonentity.Image {
 	if img == nil {
 		return nil
 	}
+	var storageProvider *commonentity.StorageProvider = nil
+	if img.StorageProvider != nil {
+		storageProvider = gptr.Of(commonentity.StorageProvider(*img.StorageProvider))
+	}
 	return &commonentity.Image{
 		Name:            img.Name,
 		URL:             img.URL,
 		URI:             img.URI,
 		ThumbURL:        img.ThumbURL,
-		StorageProvider: gptr.Of(commonentity.StorageProvider(gptr.Indirect(img.StorageProvider))),
+		StorageProvider: storageProvider,
 	}
 }
 
@@ -46,12 +51,16 @@ func ConvertImageDO2DTO(img *commonentity.Image) *commondto.Image {
 	if img == nil {
 		return nil
 	}
+	var storageProvider *dataset.StorageProvider = nil
+	if img.StorageProvider != nil {
+		storageProvider = gptr.Of(dataset.StorageProvider(*img.StorageProvider))
+	}
 	return &commondto.Image{
 		Name:            img.Name,
 		URL:             img.URL,
 		URI:             img.URI,
 		ThumbURL:        img.ThumbURL,
-		StorageProvider: gptr.Of(dataset.StorageProvider(gptr.Indirect(img.StorageProvider))),
+		StorageProvider: storageProvider,
 	}
 }
 
@@ -59,9 +68,16 @@ func ConvertAudioDO2DTO(audio *commonentity.Audio) *commondto.Audio {
 	if audio == nil {
 		return nil
 	}
+	var storageProvider *dataset.StorageProvider = nil
+	if audio.StorageProvider != nil {
+		storageProvider = gptr.Of(dataset.StorageProvider(*audio.StorageProvider))
+	}
 	return &commondto.Audio{
-		Format: audio.Format,
-		URL:    audio.URL,
+		Format:          audio.Format,
+		URL:             audio.URL,
+		Name:            audio.Name,
+		URI:             audio.URI,
+		StorageProvider: storageProvider,
 	}
 }
 
@@ -70,9 +86,53 @@ func ConvertAudioDTO2DO(audio *commondto.Audio) *commonentity.Audio {
 	if audio == nil {
 		return nil
 	}
+	var storageProvider *commonentity.StorageProvider = nil
+	if audio.StorageProvider != nil {
+		storageProvider = gptr.Of(commonentity.StorageProvider(*audio.StorageProvider))
+	}
+
 	return &commonentity.Audio{
-		Format: audio.Format,
-		URL:    audio.URL,
+		Format:          audio.Format,
+		URL:             audio.URL,
+		Name:            audio.Name,
+		URI:             audio.URI,
+		StorageProvider: storageProvider,
+	}
+}
+
+// ConvertVideoDTO2DO 将 DTO 转换为 Image 结构体
+func ConvertVideoDTO2DO(video *commondto.Video) *commonentity.Video {
+	if video == nil {
+		return nil
+	}
+	var storageProvider *commonentity.StorageProvider = nil
+	if video.StorageProvider != nil {
+		storageProvider = gptr.Of(commonentity.StorageProvider(*video.StorageProvider))
+	}
+	return &commonentity.Video{
+		Name:            video.Name,
+		URL:             video.URL,
+		URI:             video.URI,
+		ThumbURL:        video.ThumbURL,
+		StorageProvider: storageProvider,
+	}
+}
+
+// ConvertVideoDO2DTO 将 Video 结构体转换为 DTO
+func ConvertVideoDO2DTO(video *commonentity.Video) *commondto.Video {
+	if video == nil {
+		return nil
+	}
+	var storageProvider *dataset.StorageProvider = nil
+	if video.StorageProvider != nil {
+		storageProvider = gptr.Of(dataset.StorageProvider(*video.StorageProvider))
+	}
+	return &commondto.Video{
+		Name:            video.Name,
+		URL:             video.URL,
+		URI:             video.URI,
+		ThumbURL:        video.ThumbURL,
+		StorageProvider: storageProvider,
 	}
 }
 
@@ -103,8 +163,13 @@ func ConvertContentDTO2DO(content *commondto.Content) *commonentity.Content {
 		Format:      format,
 		Text:        content.Text,
 		Image:       ConvertImageDTO2DO(content.Image),
-		MultiPart:   multiPart,
-		Audio:       ConvertAudioDTO2DO(content.Audio),
+		Video:       ConvertVideoDTO2DO(content.Video),
+
+		MultiPart:        multiPart,
+		Audio:            ConvertAudioDTO2DO(content.Audio),
+		ContentOmitted:   content.ContentOmitted,
+		FullContent:      ConvertObjectStorageDTO2DO(content.FullContent),
+		FullContentBytes: content.FullContentBytes,
 	}
 }
 
@@ -126,12 +191,42 @@ func ConvertContentDO2DTO(content *commonentity.Content) *commondto.Content {
 		}
 	}
 	return &commondto.Content{
-		ContentType: contentTypeStr,
-		Format:      (*dataset.FieldDisplayFormat)(content.Format),
-		Text:        content.Text,
-		Image:       ConvertImageDO2DTO(content.Image),
-		MultiPart:   multiPart,
-		Audio:       ConvertAudioDO2DTO(content.Audio),
+		ContentType:      contentTypeStr,
+		Format:           (*dataset.FieldDisplayFormat)(content.Format),
+		Text:             content.Text,
+		Image:            ConvertImageDO2DTO(content.Image),
+		MultiPart:        multiPart,
+		Audio:            ConvertAudioDO2DTO(content.Audio),
+		Video:            ConvertVideoDO2DTO(content.Video),
+		ContentOmitted:   content.ContentOmitted,
+		FullContent:      ConvertObjectStorageDO2DTO(content.FullContent),
+		FullContentBytes: content.FullContentBytes,
+	}
+}
+
+func ConvertObjectStorageDTO2DO(os *dataset.ObjectStorage) *commonentity.ObjectStorage {
+	if os == nil {
+		return nil
+	}
+	return &commonentity.ObjectStorage{
+		Provider: gptr.Of(commonentity.StorageProvider(gptr.Indirect(os.Provider))),
+		Name:     os.Name,
+		URI:      os.URI,
+		URL:      os.URL,
+		ThumbURL: os.ThumbURL,
+	}
+}
+
+func ConvertObjectStorageDO2DTO(os *commonentity.ObjectStorage) *dataset.ObjectStorage {
+	if os == nil {
+		return nil
+	}
+	return &dataset.ObjectStorage{
+		Provider: gptr.Of(dataset.StorageProvider(gptr.Indirect(os.Provider))),
+		Name:     os.Name,
+		URI:      os.URI,
+		URL:      os.URL,
+		ThumbURL: os.ThumbURL,
 	}
 }
 
@@ -152,8 +247,9 @@ func ConvertOrderByDTO2DO(order *commondto.OrderBy) *commonentity.OrderBy {
 		return nil
 	}
 	return &commonentity.OrderBy{
-		Field: order.Field,
-		IsAsc: order.IsAsc,
+		Field:      order.Field,
+		IsAsc:      order.IsAsc,
+		IsFieldKey: order.IsFieldKey,
 	}
 }
 
@@ -163,8 +259,9 @@ func ConvertOrderByDO2DTO(order *commonentity.OrderBy) *commondto.OrderBy {
 		return nil
 	}
 	return &commondto.OrderBy{
-		Field: order.Field,
-		IsAsc: order.IsAsc,
+		Field:      order.Field,
+		IsAsc:      order.IsAsc,
+		IsFieldKey: order.IsFieldKey,
 	}
 }
 
@@ -225,7 +322,19 @@ func ConvertArgsSchemaDTO2DO(schema *commondto.ArgsSchema) *commonentity.ArgsSch
 		Key:                 schema.Key,
 		SupportContentTypes: contentTypes,
 		JsonSchema:          schema.JSONSchema,
+		DefaultValue:        ConvertContentDTO2DO(schema.DefaultValue),
 	}
+}
+
+func ConvertArgsSchemaListDTO2DO(schemas []*commondto.ArgsSchema) []*commonentity.ArgsSchema {
+	if len(schemas) == 0 {
+		return nil
+	}
+	res := make([]*commonentity.ArgsSchema, 0, len(schemas))
+	for _, schema := range schemas {
+		res = append(res, ConvertArgsSchemaDTO2DO(schema))
+	}
+	return res
 }
 
 // ConvertArgsSchemaDO2DTO 将 ArgsSchema 结构体转换为 DTO
@@ -241,7 +350,19 @@ func ConvertArgsSchemaDO2DTO(schema *commonentity.ArgsSchema) *commondto.ArgsSch
 		Key:                 schema.Key,
 		SupportContentTypes: contentTypes,
 		JSONSchema:          schema.JsonSchema,
+		DefaultValue:        ConvertContentDO2DTO(schema.DefaultValue),
 	}
+}
+
+func ConvertArgsSchemaListDO2DTO(schemas []*commonentity.ArgsSchema) []*commondto.ArgsSchema {
+	if len(schemas) == 0 {
+		return nil
+	}
+	res := make([]*commondto.ArgsSchema, 0, len(schemas))
+	for _, schema := range schemas {
+		res = append(res, ConvertArgsSchemaDO2DTO(schema))
+	}
+	return res
 }
 
 // ConvertUserInfoDTO2DO 将 DTO 转换为 UserInfo 结构体
@@ -313,11 +434,14 @@ func ConvertModelConfigDTO2DO(config *commondto.ModelConfig) *commonentity.Model
 	}
 
 	return &commonentity.ModelConfig{
-		ModelID:     config.GetModelID(),
-		ModelName:   gptr.Indirect(config.ModelName),
-		Temperature: config.Temperature,
-		MaxTokens:   config.MaxTokens,
-		TopP:        config.TopP,
+		ModelID:        config.ModelID,
+		ModelName:      gptr.Indirect(config.ModelName),
+		Temperature:    config.Temperature,
+		MaxTokens:      config.MaxTokens,
+		TopP:           config.TopP,
+		Protocol:       config.Protocol,
+		Identification: config.Identification,
+		PresetModel:    config.PresetModel,
 	}
 }
 
@@ -328,14 +452,17 @@ func ConvertModelConfigDO2DTO(config *commonentity.ModelConfig) *commondto.Model
 	}
 
 	dto := &commondto.ModelConfig{
-		ModelID:     gptr.Of(config.ModelID),
-		ModelName:   gptr.Of(config.ModelName),
-		Temperature: config.Temperature,
-		MaxTokens:   config.MaxTokens,
-		TopP:        config.TopP,
+		ModelID:        config.ModelID,
+		ModelName:      gptr.Of(config.ModelName),
+		Temperature:    config.Temperature,
+		MaxTokens:      config.MaxTokens,
+		TopP:           config.TopP,
+		Protocol:       config.Protocol,
+		Identification: config.Identification,
+		PresetModel:    config.PresetModel,
 	}
-	if config.ModelID > 0 {
-		dto.ModelID = gptr.Of(config.ModelID)
+	if config.GetModelID() > 0 {
+		dto.ModelID = config.ModelID
 	} else if config.ProviderModelID != nil && len(gptr.Indirect(config.ProviderModelID)) > 0 {
 		pModelID, err := strconv.ParseInt(gptr.Indirect(config.ProviderModelID), 10, 64)
 		if err != nil {
@@ -354,4 +481,58 @@ func ConvertFieldDisplayFormatDTO2DO(fdf int64) commonentity.FieldDisplayFormat 
 // ConvertFieldDisplayFormatDO2DTO 将 FieldDisplayFormat 枚举转换为 DTO 类型
 func ConvertFieldDisplayFormatDO2DTO(fdf commonentity.FieldDisplayFormat) int64 {
 	return int64(fdf)
+}
+
+func ConvertRateLimitDO2DTO(rateLimit *commonentity.RateLimit) *commondto.RateLimit {
+	if rateLimit == nil {
+		return nil
+	}
+	var period *string = nil
+	if rateLimit.Period != nil {
+		period = gptr.Of(rateLimit.Period.String())
+	}
+	return &commondto.RateLimit{
+		Rate:   rateLimit.Rate,
+		Burst:  rateLimit.Burst,
+		Period: period,
+	}
+}
+
+func ConvertRateLimitDTO2DO(limit *commondto.RateLimit) (*commonentity.RateLimit, error) {
+	if limit == nil {
+		return nil, nil
+	}
+	var period *time.Duration = nil
+	if limit.Period != nil {
+		p, err := time.ParseDuration(*limit.Period)
+		if err != nil {
+			return nil, err
+		}
+		period = gptr.Of(p)
+	}
+	return &commonentity.RateLimit{
+		Rate:   limit.Rate,
+		Burst:  limit.Burst,
+		Period: period,
+	}, nil
+}
+
+func ConvertRuntimeParamDTO2DO(dto *commondto.RuntimeParam) *commonentity.RuntimeParam {
+	if dto == nil {
+		return nil
+	}
+	return &commonentity.RuntimeParam{
+		JSONValue: dto.JSONValue,
+		JSONDemo:  dto.JSONDemo,
+	}
+}
+
+func ConvertRuntimeParamDO2DTO(do *commonentity.RuntimeParam) *commondto.RuntimeParam {
+	if do == nil {
+		return nil
+	}
+	return &commondto.RuntimeParam{
+		JSONValue: do.JSONValue,
+		JSONDemo:  do.JSONDemo,
+	}
 }

@@ -42,6 +42,29 @@ struct EvalTargetContent {
     103: optional CozeWorkflow coze_workflow
     // EvalTargetType=5 时，传参此字段。 评测对象为 VolcengineAgent 时, 需要设置 VolcengineAgent 信息
     104: optional VolcengineAgent volcengine_agent
+    // EvalTargetType=6 时，传参此字段。 评测对象为 CustomRPCServer 时, 需要设置 CustomRPCServer 信息
+    105: optional CustomRPCServer custom_rpc_server
+    // EvalTargetType=8 时，传参此字段。 评测对象为 WebAgent 时, 需要设置 WebAgent 信息
+    106: optional WebAgent web_agent
+}
+
+struct WebAgent {
+    1: optional i64 id    // 应用ID
+
+    2: optional string name    // DTO使用，不存数据库
+    3: optional string description // DTO使用，不存数据库
+
+    4: optional common.AgentConfig agent_config // agent config
+    5: optional WebAgentTargetPromptConfig prompt_config // agent prompt config for agent
+}
+
+struct WebAgentTargetPromptConfig {
+    1: optional list<common.Message> message_list // 通过messge list的方式描述target的操作说明
+    2: optional WebAgentTargetPromptConfigOutputRule output_rule // 输出规则
+}
+
+struct WebAgentTargetPromptConfigOutputRule {
+    1: optional common.Message message
 }
 
 enum EvalTargetType {
@@ -50,7 +73,82 @@ enum EvalTargetType {
     Trace = 3 // Trace
     CozeWorkflow = 4
     VolcengineAgent = 5 // 火山智能体
+    CustomRPCServer = 6 // 自定义RPC服务 for内场
+
+    VolcengineAgentAgentkit = 7 // 火山智能体Agentkit
+    WebAgent = 8 // Web智能体
+
+    CozeBotOnline = 11 // CozeBot在线(评测过程中不执行对象，仅用于展示对象)
+    CozeLoopPromptOnline = 12 // Prompt在线(评测过程中不执行对象，仅用于展示对象)
+    CozeWorkflowOnline = 13 // CozeWorkflow在线(评测过程中不执行对象，仅用于展示对象)
+    VolcengineAgentOnline = 14 // 火山智能体在线(评测过程中不执行对象，仅用于展示对象)
+    CustomRPCServerOnline = 15 // 自定义RPC服务在线(评测过程中不执行对象，仅用于展示对象)
+    VolcengineAgentAgentkitOnline = 16 // 火山智能体Agentkit在线(评测过程中不执行对象，仅用于展示对象)
+
 }
+
+// Agent协议类型
+typedef string VolcengineAgentProtocol (ts.enum="true")
+const VolcengineAgentProtocol VolcengineAgentProtocol_MCP = "mcp"    // mcp
+const VolcengineAgentProtocol VolcengineAgentProtocol_A2A = "a2a"  // a2a
+const VolcengineAgentProtocol VolcengineAgentProtocol_Other = "other" // other
+
+struct CustomRPCServer {
+    1: optional i64 id    // 应用ID
+
+    2: optional string name    // DTO使用，不存数据库
+    3: optional string description // DTO使用，不存数据库
+
+    // 注意以下信息会存储到DB，也就是说实验创建时以下内容就确定了，运行时直接从评测DB中获取，而不是实时从app模块拉
+    10: optional string server_name
+    11: optional AccessProtocol access_protocol  // 接入协议
+    12: optional list<Region> regions
+    13: optional string cluster
+    14: optional HTTPInfo invoke_http_info // 执行http信息
+    15: optional HTTPInfo async_invoke_http_info // 异步执行http信息，如果用户选了异步就传入这个字段
+    16: optional bool need_search_target // 是否需要搜索对象
+    17: optional HTTPInfo search_http_info  // 搜索对象http信息
+    18: optional CustomEvalTarget custom_eval_target   // 搜索对象返回的信息
+    19: optional bool is_async    // 是否异步
+
+
+    20: optional Region exec_region // 执行区域
+    21: optional string exec_env // 执行环境
+    22: optional i64 timeout // 执行超时时间，单位ms
+    23: optional i64 async_timeout // 异步执行超时时间，单位ms
+
+    50: optional map<string, string> ext
+
+}
+
+struct CustomEvalTarget {
+    1: optional string id // 唯一键，平台不消费，仅做透传
+    2: optional string name    // 名称，平台用于展示在对象搜索下拉列表
+    3: optional string avatar_url    // 头像url，平台用于展示在对象搜索下拉列表
+
+    10: optional map<string, string> ext    // 扩展字段，目前主要存储旧版协议response中的额外字段：object_type(旧版ID)、object_meta、space_id
+}
+
+struct HTTPInfo {
+    1: optional HTTPMethod method
+    2: optional string path
+}
+
+typedef string Region (ts.enum="true")
+const Region Region_BOE = "boe"
+const Region Region_CN = "cn"
+const Region Region_I18N = "i18n"
+
+typedef string AccessProtocol (ts.enum="true")
+const AccessProtocol AccessProtocol_RPC = "rpc"
+const AccessProtocol AccessProtocol_RPCOld = "rpc_old"
+const AccessProtocol AccessProtocol_FaasHTTP = "faas_http"
+const AccessProtocol AccessProtocol_FaasHTTPOld = "faas_http_old"
+
+typedef string HTTPMethod (ts.enum="true")
+const HTTPMethod HTTPMethod_Get = "get"
+const HTTPMethod HTTPMethod_Post = "post"
+
 
 struct VolcengineAgent {
     1: optional i64 id (api.js_conv='true', go.tag='json:"id"')    // 罗盘应用ID
@@ -58,6 +156,8 @@ struct VolcengineAgent {
     10: optional string name    // DTO使用，不存数据库
     11: optional string description  // DTO使用，不存数据库
     12: optional list<VolcengineAgentEndpoint> volcengine_agent_endpoints // DTO使用，不存数据库
+    13: optional VolcengineAgentProtocol protocol // 注册协议
+    14: optional string runtime_id
 
     100: optional common.BaseInfo base_info
 }
@@ -149,6 +249,7 @@ enum EvalTargetRunStatus {
     Unknown = 0
     Success = 1
     Fail = 2
+    AsyncInvoking = 3
 }
 
 struct EvalTargetInputData {
@@ -162,11 +263,13 @@ struct EvalTargetOutputData {
     2: optional EvalTargetUsage eval_target_usage             // 运行消耗
     3: optional EvalTargetRunError eval_target_run_error         // 运行报错
     4: optional i64 time_consuming_ms (api.js_conv='true', go.tag='json:\"time_consuming_ms\"') // 运行耗时
+    20: optional map<string, string> ext    // 平台扩展字段
 }
 
 struct EvalTargetUsage {
     1: i64 input_tokens (api.js_conv='true', go.tag='json:\"input_tokens\"')
     2: i64 output_tokens (api.js_conv='true', go.tag='json:\"output_tokens\"')
+    3: i64 total_tokens (api.js_conv='true', go.tag='json:\"total_tokens\"')
 }
 
 struct EvalTargetRunError {

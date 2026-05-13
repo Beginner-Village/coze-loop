@@ -34,23 +34,33 @@ type IExptConfigManager interface {
 	MGet(ctx context.Context, exptIDs []int64, spaceID int64, session *entity.Session) ([]*entity.Experiment, error)
 
 	Clone(ctx context.Context, exptID, spaceID int64, session *entity.Session) (*entity.Experiment, error)
+
+	InjectExptConfTimeRange(ctx context.Context, exptID int64, timeRange *entity.TaskTimeRangeDO)
 }
 
 // IExptExecutionManager 实验执行控制接口（负责实验的运行、监控和状态管理）
 type IExptExecutionManager interface {
 	CheckRun(ctx context.Context, expt *entity.Experiment, spaceID int64, session *entity.Session, opts ...entity.ExptRunCheckOptionFn) error
-	Run(ctx context.Context, exptID, runID, spaceID int64, session *entity.Session, runMode entity.ExptRunMode, ext map[string]string) error
-	RetryUnSuccess(ctx context.Context, exptID, runID, spaceID int64, session *entity.Session, ext map[string]string) error
+	Run(ctx context.Context, exptID, runID, spaceID int64, itemRetryNum int, session *entity.Session, runMode entity.ExptRunMode, ext map[string]string) error
+	RetryItems(ctx context.Context, exptID, runID, spaceID int64, itemRetryNum int, itemIDs []int64, session *entity.Session, ext map[string]string) error
 
 	Invoke(ctx context.Context, invokeExptReq *entity.InvokeExptReq) error
 	Finish(ctx context.Context, exptID *entity.Experiment, exptRunID int64, session *entity.Session) error
 
-	PendRun(ctx context.Context, exptID, exptRunID int64, spaceID int64, session *entity.Session) error
-	PendExpt(ctx context.Context, exptID, spaceID int64, session *entity.Session, opts ...entity.CompleteExptOptionFn) error
+	// RecordExptData 记录实验数据：在无数据且未完成时，计算并更新 run_log 与 expt_stats
+	RecordExptData(ctx context.Context, exptID, exptRunID, spaceID int64, session *entity.Session) error
 
-	CompleteRun(ctx context.Context, exptID, exptRunID int64, mode entity.ExptRunMode, spaceID int64, session *entity.Session, opts ...entity.CompleteExptOptionFn) error
-	CompleteExpt(ctx context.Context, exptID, spaceID int64, session *entity.Session, opts ...entity.CompleteExptOptionFn) error
+	ExistCompletingRunLock(ctx context.Context, exptID, exptRunID, spaceID int64) (bool, error)
+	// LockCompletingRun acquires the completing lock for the given run.
+	LockCompletingRun(ctx context.Context, exptID, exptRunID, spaceID int64, session *entity.Session) error
+	// UnlockCompletingRun releases the completing lock for the given run.
+	UnlockCompletingRun(ctx context.Context, exptID, exptRunID, spaceID int64, session *entity.Session) error
+	CompleteRun(ctx context.Context, exptID, exptRunID, spaceID int64, session *entity.Session, opts ...entity.CompleteExptOptionFn) error
+	CompleteExpt(ctx context.Context, exptID int64, exptRunID *int64, spaceID int64, session *entity.Session, opts ...entity.CompleteExptOptionFn) error
+	// SetExptTerminating Set experiment/run_log status to "terminating".
+	SetExptTerminating(ctx context.Context, exptID, exptRunID, spaceID int64, session *entity.Session) error
 
-	LogRun(ctx context.Context, exptID, exptRunID int64, mode entity.ExptRunMode, spaceID int64, session *entity.Session) error
+	LogRun(ctx context.Context, exptID, exptRunID int64, mode entity.ExptRunMode, spaceID int64, itemIDs []int64, session *entity.Session) error
+	LogRetryItemsRun(ctx context.Context, exptID int64, mode entity.ExptRunMode, spaceID int64, itemIDs []int64, session *entity.Session) (int64, bool, error)
 	GetRunLog(ctx context.Context, exptID, exptRunID, spaceID int64, session *entity.Session) (*entity.ExptRunLog, error)
 }

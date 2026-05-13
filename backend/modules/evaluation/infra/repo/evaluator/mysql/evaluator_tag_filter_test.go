@@ -1,0 +1,715 @@
+// Copyright (c) 2025 coze-dev Authors
+// SPDX-License-Identifier: Apache-2.0
+
+package mysql
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/stretchr/testify/assert"
+	"go.uber.org/mock/gomock"
+	"gorm.io/driver/mysql"
+	"gorm.io/gorm"
+
+	dbmock "github.com/coze-dev/coze-loop/backend/infra/db/mocks"
+	"github.com/coze-dev/coze-loop/backend/modules/evaluation/domain/entity"
+)
+
+func TestEvaluatorTagDAOImpl_GetSourceIDsByFilterConditions(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name               string
+		tagType            int32
+		filterOption       *entity.EvaluatorFilterOption
+		expectedErr        bool
+		description        string
+		expectedPluckCalls int // GetSourceIDsByFilterConditions 多次单表 DISTINCT 查询次数（mock 空结果，不触发 Name 排序 Find）
+	}{
+		{
+			name:               "nil filter option",
+			tagType:            1,
+			filterOption:       nil,
+			expectedErr:        false,
+			description:        "当筛选选项为nil时，应该返回空列表",
+			expectedPluckCalls: 1,
+		},
+		{
+			name:               "empty filter option",
+			tagType:            1,
+			filterOption:       &entity.EvaluatorFilterOption{},
+			expectedErr:        false,
+			description:        "当筛选选项为空时，应该返回空列表",
+			expectedPluckCalls: 1,
+		},
+		{
+			name:    "search keyword only",
+			tagType: 1,
+			filterOption: entity.NewEvaluatorFilterOption().
+				WithSearchKeyword("AI"),
+			expectedErr:        false,
+			description:        "只有搜索关键词时，应该正确构建查询",
+			expectedPluckCalls: 1,
+		},
+		{
+			name:    "single equal condition",
+			tagType: 1,
+			filterOption: entity.NewEvaluatorFilterOption().
+				WithFilters(
+					entity.NewEvaluatorFilters().
+						WithLogicOp(entity.FilterLogicOp_And).
+						AddCondition(entity.NewEvaluatorFilterCondition(
+							entity.EvaluatorTagKey_Category,
+							entity.EvaluatorFilterOperatorType_Equal,
+							"LLM",
+						)),
+				),
+			expectedErr:        false,
+			description:        "单个等于条件，应该正确构建查询",
+			expectedPluckCalls: 1,
+		},
+		{
+			name:    "multiple AND conditions",
+			tagType: 1,
+			filterOption: entity.NewEvaluatorFilterOption().
+				WithFilters(
+					entity.NewEvaluatorFilters().
+						WithLogicOp(entity.FilterLogicOp_And).
+						AddCondition(entity.NewEvaluatorFilterCondition(
+							entity.EvaluatorTagKey_Category,
+							entity.EvaluatorFilterOperatorType_Equal,
+							"LLM",
+						)).
+						AddCondition(entity.NewEvaluatorFilterCondition(
+							entity.EvaluatorTagKey_TargetType,
+							entity.EvaluatorFilterOperatorType_In,
+							"Text,Image",
+						)),
+				),
+			expectedErr:        false,
+			description:        "多个AND条件，应该正确构建查询",
+			expectedPluckCalls: 1,
+		},
+		{
+			name:    "multiple OR conditions",
+			tagType: 1,
+			filterOption: entity.NewEvaluatorFilterOption().
+				WithFilters(
+					entity.NewEvaluatorFilters().
+						WithLogicOp(entity.FilterLogicOp_Or).
+						AddCondition(entity.NewEvaluatorFilterCondition(
+							entity.EvaluatorTagKey_Category,
+							entity.EvaluatorFilterOperatorType_Equal,
+							"LLM",
+						)).
+						AddCondition(entity.NewEvaluatorFilterCondition(
+							entity.EvaluatorTagKey_Category,
+							entity.EvaluatorFilterOperatorType_Equal,
+							"Code",
+						)),
+				),
+			expectedErr:        false,
+			description:        "多个OR条件，应该正确构建查询",
+			expectedPluckCalls: 2,
+		},
+		{
+			name:    "like condition",
+			tagType: 1,
+			filterOption: entity.NewEvaluatorFilterOption().
+				WithFilters(
+					entity.NewEvaluatorFilters().
+						WithLogicOp(entity.FilterLogicOp_And).
+						AddCondition(entity.NewEvaluatorFilterCondition(
+							entity.EvaluatorTagKey_Name,
+							entity.EvaluatorFilterOperatorType_Like,
+							"Quality",
+						)),
+				),
+			expectedErr:        false,
+			description:        "LIKE条件，应该正确构建查询",
+			expectedPluckCalls: 1,
+		},
+		{
+			name:    "in condition",
+			tagType: 1,
+			filterOption: entity.NewEvaluatorFilterOption().
+				WithFilters(
+					entity.NewEvaluatorFilters().
+						WithLogicOp(entity.FilterLogicOp_And).
+						AddCondition(entity.NewEvaluatorFilterCondition(
+							entity.EvaluatorTagKey_TargetType,
+							entity.EvaluatorFilterOperatorType_In,
+							"Text,Image,Video",
+						)),
+				),
+			expectedErr:        false,
+			description:        "IN条件，应该正确构建查询",
+			expectedPluckCalls: 1,
+		},
+		{
+			name:    "not in condition",
+			tagType: 1,
+			filterOption: entity.NewEvaluatorFilterOption().
+				WithFilters(
+					entity.NewEvaluatorFilters().
+						WithLogicOp(entity.FilterLogicOp_And).
+						AddCondition(entity.NewEvaluatorFilterCondition(
+							entity.EvaluatorTagKey_TargetType,
+							entity.EvaluatorFilterOperatorType_NotIn,
+							"Audio,Video",
+						)),
+				),
+			expectedErr:        false,
+			description:        "NOT_IN条件，应该正确构建查询",
+			expectedPluckCalls: 1,
+		},
+		{
+			name:    "is null condition",
+			tagType: 1,
+			filterOption: entity.NewEvaluatorFilterOption().
+				WithFilters(
+					entity.NewEvaluatorFilters().
+						WithLogicOp(entity.FilterLogicOp_And).
+						AddCondition(entity.NewEvaluatorFilterCondition(
+							entity.EvaluatorTagKey_Objective,
+							entity.EvaluatorFilterOperatorType_IsNull,
+							"",
+						)),
+				),
+			expectedErr:        false,
+			description:        "IS_NULL条件，应该正确构建查询",
+			expectedPluckCalls: 1,
+		},
+		{
+			name:    "is not null condition",
+			tagType: 1,
+			filterOption: entity.NewEvaluatorFilterOption().
+				WithFilters(
+					entity.NewEvaluatorFilters().
+						WithLogicOp(entity.FilterLogicOp_And).
+						AddCondition(entity.NewEvaluatorFilterCondition(
+							entity.EvaluatorTagKey_Objective,
+							entity.EvaluatorFilterOperatorType_IsNotNull,
+							"",
+						)),
+				),
+			expectedErr:        false,
+			description:        "IS_NOT_NULL条件，应该正确构建查询",
+			expectedPluckCalls: 1,
+		},
+		{
+			name:    "complex combination",
+			tagType: 1,
+			filterOption: entity.NewEvaluatorFilterOption().
+				WithSearchKeyword("AI").
+				WithFilters(
+					entity.NewEvaluatorFilters().
+						WithLogicOp(entity.FilterLogicOp_And).
+						AddCondition(entity.NewEvaluatorFilterCondition(
+							entity.EvaluatorTagKey_Category,
+							entity.EvaluatorFilterOperatorType_Equal,
+							"LLM",
+						)).
+						AddCondition(entity.NewEvaluatorFilterCondition(
+							entity.EvaluatorTagKey_TargetType,
+							entity.EvaluatorFilterOperatorType_In,
+							"Text,Image",
+						)).
+						AddCondition(entity.NewEvaluatorFilterCondition(
+							entity.EvaluatorTagKey_Objective,
+							entity.EvaluatorFilterOperatorType_Like,
+							"Quality",
+						)),
+				),
+			expectedErr:        false,
+			description:        "复杂组合条件（搜索关键词+多个AND条件），应该正确构建查询",
+			expectedPluckCalls: 1,
+		},
+		{
+			name:    "nested sub filters (AND with OR and AND groups)",
+			tagType: 1,
+			filterOption: func() *entity.EvaluatorFilterOption {
+				// 顶层：AND + Category=LLM
+				top := entity.NewEvaluatorFilters().
+					WithLogicOp(entity.FilterLogicOp_And).
+					AddCondition(entity.NewEvaluatorFilterCondition(
+						entity.EvaluatorTagKey_Category,
+						entity.EvaluatorFilterOperatorType_Equal,
+						"LLM",
+					))
+
+				// 子组1：OR => TargetType IN(Text,Image) OR Name LIKE Qual
+				or := entity.FilterLogicOp_Or
+				sub1 := (&entity.EvaluatorFilters{LogicOp: &or}).
+					AddCondition(entity.NewEvaluatorFilterCondition(
+						entity.EvaluatorTagKey_TargetType,
+						entity.EvaluatorFilterOperatorType_In,
+						"Text,Image",
+					)).
+					AddCondition(entity.NewEvaluatorFilterCondition(
+						entity.EvaluatorTagKey_Name,
+						entity.EvaluatorFilterOperatorType_Like,
+						"Qual",
+					))
+
+				// 子组2：AND => Objective = Quality
+				and := entity.FilterLogicOp_And
+				sub2 := (&entity.EvaluatorFilters{LogicOp: &and}).
+					AddCondition(entity.NewEvaluatorFilterCondition(
+						entity.EvaluatorTagKey_Objective,
+						entity.EvaluatorFilterOperatorType_Equal,
+						"Quality",
+					))
+
+				// 绑定子组
+				top.SubFilters = []*entity.EvaluatorFilters{sub1, sub2}
+
+				return (&entity.EvaluatorFilterOption{}).WithFilters(top)
+			}(),
+			expectedErr:        false,
+			description:        "嵌套子过滤组应正确展开并构造 SQL",
+			expectedPluckCalls: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			// 创建sqlmock连接
+			sqlDB, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatalf("failed to create sqlmock: %v", err)
+			}
+			defer func() { _ = sqlDB.Close() }()
+
+			// 创建真实的GORM数据库连接
+			gormDB, err := gorm.Open(mysql.New(mysql.Config{
+				Conn:                      sqlDB,
+				SkipInitializeWithVersion: true,
+			}), &gorm.Config{})
+			if err != nil {
+				t.Fatalf("failed to open gorm db: %v", err)
+			}
+
+			// 创建mock provider
+			mockProvider := dbmock.NewMockProvider(ctrl)
+
+			// GetSourceIDsByFilterConditions 走多次单表查询路径，每次查询都会 NewSession
+			mockProvider.EXPECT().NewSession(gomock.Any(), gomock.Any()).Return(gormDB).AnyTimes()
+
+			// 无 JOIN：多次 SELECT DISTINCT source_id 或按条件查；结果为空时不会触发按 Name 排序的 Find
+			pluckEmpty := sqlmock.NewRows([]string{"source_id"})
+			for i := 0; i < tt.expectedPluckCalls; i++ {
+				mock.ExpectQuery("SELECT DISTINCT .+ FROM `evaluator_tag`").WillReturnRows(pluckEmpty)
+			}
+
+			// 创建DAO实例
+			dao := &EvaluatorTagDAOImpl{
+				provider: mockProvider,
+			}
+
+			// 执行测试
+			ctx := context.Background()
+			result, total, err := dao.GetSourceIDsByFilterConditions(ctx, tt.tagType, tt.filterOption, 0, 0, "")
+			_ = total
+
+			// 验证结果
+			if tt.expectedErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, result)
+				// 对于nil或空的filterOption，应该返回空列表
+				if tt.filterOption == nil || (tt.filterOption.SearchKeyword == nil && (tt.filterOption.Filters == nil || (len(tt.filterOption.Filters.FilterConditions) == 0 && len(tt.filterOption.Filters.SubFilters) == 0))) {
+					assert.Empty(t, result)
+				}
+			}
+
+			// 验证所有期望的SQL查询都被执行
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Errorf("there were unfulfilled expectations: %s", err)
+			}
+		})
+	}
+}
+
+func TestBuildSingleCondition(t *testing.T) {
+	t.Parallel()
+
+	dao := &EvaluatorTagDAOImpl{}
+
+	tests := []struct {
+		name         string
+		condition    *entity.EvaluatorFilterCondition
+		expectedSQL  string
+		expectedArgs []interface{}
+		expectedErr  bool
+	}{
+		{
+			name: "equal condition",
+			condition: entity.NewEvaluatorFilterCondition(
+				entity.EvaluatorTagKey_Category,
+				entity.EvaluatorFilterOperatorType_Equal,
+				"LLM",
+			),
+			expectedSQL:  "evaluator_tag.tag_key = ? AND evaluator_tag.tag_value = ?",
+			expectedArgs: []interface{}{"Category", "LLM"},
+			expectedErr:  false,
+		},
+		{
+			name: "not equal condition",
+			condition: entity.NewEvaluatorFilterCondition(
+				entity.EvaluatorTagKey_Category,
+				entity.EvaluatorFilterOperatorType_NotEqual,
+				"Code",
+			),
+			expectedSQL:  "evaluator_tag.tag_key = ? AND evaluator_tag.tag_value != ?",
+			expectedArgs: []interface{}{"Category", "Code"},
+			expectedErr:  false,
+		},
+		{
+			name: "in condition",
+			condition: entity.NewEvaluatorFilterCondition(
+				entity.EvaluatorTagKey_TargetType,
+				entity.EvaluatorFilterOperatorType_In,
+				"Text,Image,Video",
+			),
+			expectedSQL:  "evaluator_tag.tag_key = ? AND evaluator_tag.tag_value IN (?,?,?)",
+			expectedArgs: []interface{}{"TargetType", "Text", "Image", "Video"},
+			expectedErr:  false,
+		},
+		{
+			name: "like condition",
+			condition: entity.NewEvaluatorFilterCondition(
+				entity.EvaluatorTagKey_Name,
+				entity.EvaluatorFilterOperatorType_Like,
+				"Quality",
+			),
+			expectedSQL:  "evaluator_tag.tag_key = ? AND evaluator_tag.tag_value LIKE ?",
+			expectedArgs: []interface{}{"Name", "%Quality%"},
+			expectedErr:  false,
+		},
+		{
+			name: "is null condition",
+			condition: entity.NewEvaluatorFilterCondition(
+				entity.EvaluatorTagKey_Objective,
+				entity.EvaluatorFilterOperatorType_IsNull,
+				"",
+			),
+			expectedSQL:  "evaluator_tag.tag_key = ? AND evaluator_tag.tag_value IS NULL",
+			expectedArgs: []interface{}{"Objective"},
+			expectedErr:  false,
+		},
+		{
+			name: "is not null condition",
+			condition: entity.NewEvaluatorFilterCondition(
+				entity.EvaluatorTagKey_Objective,
+				entity.EvaluatorFilterOperatorType_IsNotNull,
+				"",
+			),
+			expectedSQL:  "evaluator_tag.tag_key = ? AND evaluator_tag.tag_value IS NOT NULL",
+			expectedArgs: []interface{}{"Objective"},
+			expectedErr:  false,
+		},
+		{
+			name: "empty in condition",
+			condition: entity.NewEvaluatorFilterCondition(
+				entity.EvaluatorTagKey_TargetType,
+				entity.EvaluatorFilterOperatorType_In,
+				"",
+			),
+			expectedSQL:  "evaluator_tag.tag_key = ? AND evaluator_tag.tag_value IN (?)",
+			expectedArgs: []interface{}{"TargetType", ""},
+			expectedErr:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			sql, args, err := dao.buildSingleCondition(tt.condition)
+
+			if tt.expectedErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.expectedSQL, sql)
+				assert.Equal(t, tt.expectedArgs, args)
+			}
+		})
+	}
+}
+
+func TestConvertToInterfaceSlice(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		input    []string
+		expected []interface{}
+	}{
+		{
+			name:     "empty slice",
+			input:    []string{},
+			expected: []interface{}{},
+		},
+		{
+			name:     "single element",
+			input:    []string{"test"},
+			expected: []interface{}{"test"},
+		},
+		{
+			name:     "multiple elements",
+			input:    []string{"a", "b", "c"},
+			expected: []interface{}{"a", "b", "c"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			result := convertToInterfaceSlice(tt.input)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestGetSourceIDsByFilterConditions_SelfJoinAndLike(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	// sqlmock
+	sqlDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("failed to create sqlmock: %v", err)
+	}
+	defer func() { _ = sqlDB.Close() }()
+
+	gormDB, err := gorm.Open(mysql.New(mysql.Config{
+		Conn:                      sqlDB,
+		SkipInitializeWithVersion: true,
+	}), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("failed to open gorm db: %v", err)
+	}
+
+	mockProvider := dbmock.NewMockProvider(ctrl)
+	mockProvider.EXPECT().NewSession(gomock.Any(), gomock.Any()).Return(gormDB).AnyTimes()
+
+	// 构造筛选：AND(Category=LLM, BusinessScenario=安全风控) + SearchKeyword("AI")
+	filters := entity.NewEvaluatorFilters().
+		WithLogicOp(entity.FilterLogicOp_And).
+		AddCondition(entity.NewEvaluatorFilterCondition(
+			entity.EvaluatorTagKey_Category,
+			entity.EvaluatorFilterOperatorType_In,
+			"LLM",
+		)).
+		AddCondition(entity.NewEvaluatorFilterCondition(
+			entity.EvaluatorTagKey_BusinessScenario,
+			entity.EvaluatorFilterOperatorType_In,
+			"安全风控",
+		))
+	option := entity.NewEvaluatorFilterOption().WithSearchKeyword("AI").WithFilters(filters)
+
+	pluckEmpty := sqlmock.NewRows([]string{"source_id"})
+	for i := 0; i < 1; i++ {
+		mock.ExpectQuery("SELECT DISTINCT .+ FROM `evaluator_tag`").WillReturnRows(pluckEmpty)
+	}
+
+	dao := &EvaluatorTagDAOImpl{provider: mockProvider}
+	_, _, err = dao.GetSourceIDsByFilterConditions(context.Background(), 1, option, 12, 1, "zh-CN")
+	assert.NoError(t, err)
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("there were unfulfilled expectations: %s", err)
+	}
+}
+
+func TestEvaluatorTagDAOImpl_AggregateTagValuesByType(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		tagType      int32
+		langType     string
+		mockSetup    func(*sqlmock.Sqlmock)
+		expectedTags []*entity.AggregatedEvaluatorTag
+		expectedErr  bool
+		description  string
+	}{
+		{
+			name:     "success - with lang type",
+			tagType:  1,
+			langType: "zh-CN",
+			mockSetup: func(mock *sqlmock.Sqlmock) {
+				rows := sqlmock.NewRows([]string{"tag_key", "tag_value"}).
+					AddRow("Category", "LLM").
+					AddRow("Category", "Code").
+					AddRow("TargetType", "Text").
+					AddRow("TargetType", "Image")
+				(*mock).ExpectQuery("SELECT tag_key, tag_value FROM `evaluator_tag` WHERE tag_type = \\? AND deleted_at IS NULL AND lang_type = \\? GROUP BY tag_key, tag_value").
+					WithArgs(1, "zh-CN").
+					WillReturnRows(rows)
+			},
+			expectedTags: []*entity.AggregatedEvaluatorTag{
+				{TagKey: "Category", TagValue: "LLM"},
+				{TagKey: "Category", TagValue: "Code"},
+				{TagKey: "TargetType", TagValue: "Text"},
+				{TagKey: "TargetType", TagValue: "Image"},
+			},
+			expectedErr: false,
+			description: "有语言类型时，应该正确聚合标签",
+		},
+		{
+			name:     "success - without lang type",
+			tagType:  1,
+			langType: "",
+			mockSetup: func(mock *sqlmock.Sqlmock) {
+				rows := sqlmock.NewRows([]string{"tag_key", "tag_value"}).
+					AddRow("Category", "LLM").
+					AddRow("TargetType", "Text")
+				(*mock).ExpectQuery("SELECT tag_key, tag_value FROM `evaluator_tag` WHERE tag_type = \\? AND deleted_at IS NULL GROUP BY tag_key, tag_value").
+					WithArgs(1).
+					WillReturnRows(rows)
+			},
+			expectedTags: []*entity.AggregatedEvaluatorTag{
+				{TagKey: "Category", TagValue: "LLM"},
+				{TagKey: "TargetType", TagValue: "Text"},
+			},
+			expectedErr: false,
+			description: "无语言类型时，应该正确聚合标签",
+		},
+		{
+			name:     "success - empty result",
+			tagType:  1,
+			langType: "zh-CN",
+			mockSetup: func(mock *sqlmock.Sqlmock) {
+				rows := sqlmock.NewRows([]string{"tag_key", "tag_value"})
+				(*mock).ExpectQuery("SELECT tag_key, tag_value FROM `evaluator_tag` WHERE tag_type = \\? AND deleted_at IS NULL AND lang_type = \\? GROUP BY tag_key, tag_value").
+					WithArgs(1, "zh-CN").
+					WillReturnRows(rows)
+			},
+			expectedTags: []*entity.AggregatedEvaluatorTag{},
+			expectedErr:  false,
+			description:  "无结果时，应该返回空切片",
+		},
+		{
+			name:     "success - record not found",
+			tagType:  1,
+			langType: "zh-CN",
+			mockSetup: func(mock *sqlmock.Sqlmock) {
+				(*mock).ExpectQuery("SELECT tag_key, tag_value FROM `evaluator_tag` WHERE tag_type = \\? AND deleted_at IS NULL AND lang_type = \\? GROUP BY tag_key, tag_value").
+					WithArgs(1, "zh-CN").
+					WillReturnError(gorm.ErrRecordNotFound)
+			},
+			expectedTags: []*entity.AggregatedEvaluatorTag{},
+			expectedErr:  false,
+			description:  "记录不存在时，应该返回空切片",
+		},
+		{
+			name:     "error - database error",
+			tagType:  1,
+			langType: "zh-CN",
+			mockSetup: func(mock *sqlmock.Sqlmock) {
+				(*mock).ExpectQuery("SELECT tag_key, tag_value FROM `evaluator_tag` WHERE tag_type = \\? AND deleted_at IS NULL AND lang_type = \\? GROUP BY tag_key, tag_value").
+					WithArgs(1, "zh-CN").
+					WillReturnError(errors.New("database error"))
+			},
+			expectedTags: nil,
+			expectedErr:  true,
+			description:  "数据库错误时，应该返回错误",
+		},
+		{
+			name:     "success - template tag type",
+			tagType:  2,
+			langType: "en-US",
+			mockSetup: func(mock *sqlmock.Sqlmock) {
+				rows := sqlmock.NewRows([]string{"tag_key", "tag_value"}).
+					AddRow("Category", "Prompt").
+					AddRow("Category", "Code")
+				(*mock).ExpectQuery("SELECT tag_key, tag_value FROM `evaluator_tag` WHERE tag_type = \\? AND deleted_at IS NULL AND lang_type = \\? GROUP BY tag_key, tag_value").
+					WithArgs(2, "en-US").
+					WillReturnRows(rows)
+			},
+			expectedTags: []*entity.AggregatedEvaluatorTag{
+				{TagKey: "Category", TagValue: "Prompt"},
+				{TagKey: "Category", TagValue: "Code"},
+			},
+			expectedErr: false,
+			description: "模板标签类型时，应该正确聚合标签",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			// 创建sqlmock连接
+			sqlDB, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatalf("failed to create sqlmock: %v", err)
+			}
+			defer func() { _ = sqlDB.Close() }()
+
+			// 创建真实的GORM数据库连接
+			gormDB, err := gorm.Open(mysql.New(mysql.Config{
+				Conn:                      sqlDB,
+				SkipInitializeWithVersion: true,
+			}), &gorm.Config{})
+			if err != nil {
+				t.Fatalf("failed to open gorm db: %v", err)
+			}
+
+			// 创建mock provider
+			mockProvider := dbmock.NewMockProvider(ctrl)
+			mockProvider.EXPECT().NewSession(gomock.Any(), gomock.Any()).Return(gormDB).Times(1)
+
+			// 设置mock期望
+			tt.mockSetup(&mock)
+
+			// 创建DAO实例
+			dao := &EvaluatorTagDAOImpl{
+				provider: mockProvider,
+			}
+
+			// 执行测试
+			ctx := context.Background()
+			result, err := dao.AggregateTagValuesByType(ctx, tt.tagType, tt.langType)
+
+			// 验证结果
+			if tt.expectedErr {
+				assert.Error(t, err)
+				assert.Nil(t, result)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, result)
+				assert.Equal(t, len(tt.expectedTags), len(result))
+				for i, expected := range tt.expectedTags {
+					if i < len(result) {
+						assert.Equal(t, expected.TagKey, result[i].TagKey)
+						assert.Equal(t, expected.TagValue, result[i].TagValue)
+					}
+				}
+			}
+
+			// 验证所有期望的SQL查询都被执行
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Errorf("there were unfulfilled expectations: %s", err)
+			}
+		})
+	}
+}

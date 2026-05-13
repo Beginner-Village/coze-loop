@@ -181,6 +181,52 @@ func (l *LocalEvalTargetService) BatchGetSourceEvalTargets(ctx context.Context, 
 	return result.GetSuccess(), nil
 }
 
+// GetSourceEvalTargetVersion
+// 获取Source评测对象版本的详情
+func (l *LocalEvalTargetService) GetSourceEvalTargetVersion(ctx context.Context, request *eval_target.GetSourceEvalTargetVersionRequest, callOptions ...callopt.Option) (*eval_target.GetSourceEvalTargetVersionResponse, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*eval_target.EvalTargetServiceGetSourceEvalTargetVersionArgs)
+		result := out.(*eval_target.EvalTargetServiceGetSourceEvalTargetVersionResult)
+		resp, err := l.impl.GetSourceEvalTargetVersion(ctx, arg.Request)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &eval_target.EvalTargetServiceGetSourceEvalTargetVersionArgs{Request: request}
+	result := &eval_target.EvalTargetServiceGetSourceEvalTargetVersionResult{}
+	ctx = l.injectRPCInfo(ctx, "GetSourceEvalTargetVersion")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
+// SearchCustomEvalTarget
+// 搜索自定义评测对象
+func (l *LocalEvalTargetService) SearchCustomEvalTarget(ctx context.Context, req *eval_target.SearchCustomEvalTargetRequest, callOptions ...callopt.Option) (*eval_target.SearchCustomEvalTargetResponse, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*eval_target.EvalTargetServiceSearchCustomEvalTargetArgs)
+		result := out.(*eval_target.EvalTargetServiceSearchCustomEvalTargetResult)
+		resp, err := l.impl.SearchCustomEvalTarget(ctx, arg.Req)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &eval_target.EvalTargetServiceSearchCustomEvalTargetArgs{Req: req}
+	result := &eval_target.EvalTargetServiceSearchCustomEvalTargetResult{}
+	ctx = l.injectRPCInfo(ctx, "SearchCustomEvalTarget")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
 // ExecuteEvalTarget
 // 执行
 func (l *LocalEvalTargetService) ExecuteEvalTarget(ctx context.Context, request *eval_target.ExecuteEvalTargetRequest, callOptions ...callopt.Option) (*eval_target.ExecuteEvalTargetResponse, error) {
@@ -198,6 +244,27 @@ func (l *LocalEvalTargetService) ExecuteEvalTarget(ctx context.Context, request 
 	arg := &eval_target.EvalTargetServiceExecuteEvalTargetArgs{Request: request}
 	result := &eval_target.EvalTargetServiceExecuteEvalTargetResult{}
 	ctx = l.injectRPCInfo(ctx, "ExecuteEvalTarget")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
+func (l *LocalEvalTargetService) AsyncExecuteEvalTarget(ctx context.Context, request *eval_target.AsyncExecuteEvalTargetRequest, callOptions ...callopt.Option) (*eval_target.AsyncExecuteEvalTargetResponse, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*eval_target.EvalTargetServiceAsyncExecuteEvalTargetArgs)
+		result := out.(*eval_target.EvalTargetServiceAsyncExecuteEvalTargetResult)
+		resp, err := l.impl.AsyncExecuteEvalTarget(ctx, arg.Request)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &eval_target.EvalTargetServiceAsyncExecuteEvalTargetArgs{Request: request}
+	result := &eval_target.EvalTargetServiceAsyncExecuteEvalTargetResult{}
+	ctx = l.injectRPCInfo(ctx, "AsyncExecuteEvalTarget")
 	if err := chain(ctx, arg, result); err != nil {
 		return nil, err
 	}
@@ -240,6 +307,96 @@ func (l *LocalEvalTargetService) BatchGetEvalTargetRecords(ctx context.Context, 
 	arg := &eval_target.EvalTargetServiceBatchGetEvalTargetRecordsArgs{Request: request}
 	result := &eval_target.EvalTargetServiceBatchGetEvalTargetRecordsResult{}
 	ctx = l.injectRPCInfo(ctx, "BatchGetEvalTargetRecords")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
+// GetEvalTargetOutputFieldContent
+// 按需查询 output 中大对象的完整内容
+func (l *LocalEvalTargetService) GetEvalTargetOutputFieldContent(ctx context.Context, request *eval_target.GetEvalTargetOutputFieldContentRequest, callOptions ...callopt.Option) (*eval_target.GetEvalTargetOutputFieldContentResponse, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*eval_target.EvalTargetServiceGetEvalTargetOutputFieldContentArgs)
+		result := out.(*eval_target.EvalTargetServiceGetEvalTargetOutputFieldContentResult)
+		resp, err := l.impl.GetEvalTargetOutputFieldContent(ctx, arg.Request)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &eval_target.EvalTargetServiceGetEvalTargetOutputFieldContentArgs{Request: request}
+	result := &eval_target.EvalTargetServiceGetEvalTargetOutputFieldContentResult{}
+	ctx = l.injectRPCInfo(ctx, "GetEvalTargetOutputFieldContent")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
+// DebugEvalTarget
+// debug
+func (l *LocalEvalTargetService) DebugEvalTarget(ctx context.Context, request *eval_target.DebugEvalTargetRequest, callOptions ...callopt.Option) (*eval_target.DebugEvalTargetResponse, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*eval_target.EvalTargetServiceDebugEvalTargetArgs)
+		result := out.(*eval_target.EvalTargetServiceDebugEvalTargetResult)
+		resp, err := l.impl.DebugEvalTarget(ctx, arg.Request)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &eval_target.EvalTargetServiceDebugEvalTargetArgs{Request: request}
+	result := &eval_target.EvalTargetServiceDebugEvalTargetResult{}
+	ctx = l.injectRPCInfo(ctx, "DebugEvalTarget")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
+func (l *LocalEvalTargetService) AsyncDebugEvalTarget(ctx context.Context, request *eval_target.AsyncDebugEvalTargetRequest, callOptions ...callopt.Option) (*eval_target.AsyncDebugEvalTargetResponse, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*eval_target.EvalTargetServiceAsyncDebugEvalTargetArgs)
+		result := out.(*eval_target.EvalTargetServiceAsyncDebugEvalTargetResult)
+		resp, err := l.impl.AsyncDebugEvalTarget(ctx, arg.Request)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &eval_target.EvalTargetServiceAsyncDebugEvalTargetArgs{Request: request}
+	result := &eval_target.EvalTargetServiceAsyncDebugEvalTargetResult{}
+	ctx = l.injectRPCInfo(ctx, "AsyncDebugEvalTarget")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
+// MockEvalTargetOutput
+// mock输出数据
+func (l *LocalEvalTargetService) MockEvalTargetOutput(ctx context.Context, request *eval_target.MockEvalTargetOutputRequest, callOptions ...callopt.Option) (*eval_target.MockEvalTargetOutputResponse, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*eval_target.EvalTargetServiceMockEvalTargetOutputArgs)
+		result := out.(*eval_target.EvalTargetServiceMockEvalTargetOutputResult)
+		resp, err := l.impl.MockEvalTargetOutput(ctx, arg.Request)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &eval_target.EvalTargetServiceMockEvalTargetOutputArgs{Request: request}
+	result := &eval_target.EvalTargetServiceMockEvalTargetOutputResult{}
+	ctx = l.injectRPCInfo(ctx, "MockEvalTargetOutput")
 	if err := chain(ctx, arg, result); err != nil {
 		return nil, err
 	}

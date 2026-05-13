@@ -43,6 +43,27 @@ func (l *LocalTraceService) ListSpans(ctx context.Context, req *trace.ListSpansR
 	return result.GetSuccess(), nil
 }
 
+func (l *LocalTraceService) ListPreSpan(ctx context.Context, req *trace.ListPreSpanRequest, callOptions ...callopt.Option) (*trace.ListPreSpanResponse, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*trace.TraceServiceListPreSpanArgs)
+		result := out.(*trace.TraceServiceListPreSpanResult)
+		resp, err := l.impl.ListPreSpan(ctx, arg.Req)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &trace.TraceServiceListPreSpanArgs{Req: req}
+	result := &trace.TraceServiceListPreSpanResult{}
+	ctx = l.injectRPCInfo(ctx, "ListPreSpan")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
 func (l *LocalTraceService) GetTrace(ctx context.Context, req *trace.GetTraceRequest, callOptions ...callopt.Option) (*trace.GetTraceResponse, error) {
 	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
 		arg := in.(*trace.TraceServiceGetTraceArgs)
@@ -58,6 +79,27 @@ func (l *LocalTraceService) GetTrace(ctx context.Context, req *trace.GetTraceReq
 	arg := &trace.TraceServiceGetTraceArgs{Req: req}
 	result := &trace.TraceServiceGetTraceResult{}
 	ctx = l.injectRPCInfo(ctx, "GetTrace")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
+func (l *LocalTraceService) SearchTraceTree(ctx context.Context, req *trace.SearchTraceTreeRequest, callOptions ...callopt.Option) (*trace.SearchTraceTreeResponse, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*trace.TraceServiceSearchTraceTreeArgs)
+		result := out.(*trace.TraceServiceSearchTraceTreeResult)
+		resp, err := l.impl.SearchTraceTree(ctx, arg.Req)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &trace.TraceServiceSearchTraceTreeArgs{Req: req}
+	result := &trace.TraceServiceSearchTraceTreeResult{}
+	ctx = l.injectRPCInfo(ctx, "SearchTraceTree")
 	if err := chain(ctx, arg, result); err != nil {
 		return nil, err
 	}
@@ -295,6 +337,27 @@ func (l *LocalTraceService) ListAnnotations(ctx context.Context, req *trace.List
 	return result.GetSuccess(), nil
 }
 
+func (l *LocalTraceService) ListWorkspaceAnnotations(ctx context.Context, req *trace.ListWorkspaceAnnotationsRequest, callOptions ...callopt.Option) (*trace.ListWorkspaceAnnotationsResponse, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*trace.TraceServiceListWorkspaceAnnotationsArgs)
+		result := out.(*trace.TraceServiceListWorkspaceAnnotationsResult)
+		resp, err := l.impl.ListWorkspaceAnnotations(ctx, arg.Req)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &trace.TraceServiceListWorkspaceAnnotationsArgs{Req: req}
+	result := &trace.TraceServiceListWorkspaceAnnotationsResult{}
+	ctx = l.injectRPCInfo(ctx, "ListWorkspaceAnnotations")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
 func (l *LocalTraceService) ExportTracesToDataset(ctx context.Context, Req *trace.ExportTracesToDatasetRequest, callOptions ...callopt.Option) (*trace.ExportTracesToDatasetResponse, error) {
 	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
 		arg := in.(*trace.TraceServiceExportTracesToDatasetArgs)
@@ -331,6 +394,216 @@ func (l *LocalTraceService) PreviewExportTracesToDataset(ctx context.Context, Re
 	arg := &trace.TraceServicePreviewExportTracesToDatasetArgs{Req: Req}
 	result := &trace.TraceServicePreviewExportTracesToDatasetResult{}
 	ctx = l.injectRPCInfo(ctx, "PreviewExportTracesToDataset")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
+func (l *LocalTraceService) ChangeEvaluatorScore(ctx context.Context, req *trace.ChangeEvaluatorScoreRequest, callOptions ...callopt.Option) (*trace.ChangeEvaluatorScoreResponse, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*trace.TraceServiceChangeEvaluatorScoreArgs)
+		result := out.(*trace.TraceServiceChangeEvaluatorScoreResult)
+		resp, err := l.impl.ChangeEvaluatorScore(ctx, arg.Req)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &trace.TraceServiceChangeEvaluatorScoreArgs{Req: req}
+	result := &trace.TraceServiceChangeEvaluatorScoreResult{}
+	ctx = l.injectRPCInfo(ctx, "ChangeEvaluatorScore")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
+func (l *LocalTraceService) ListAnnotationEvaluators(ctx context.Context, req *trace.ListAnnotationEvaluatorsRequest, callOptions ...callopt.Option) (*trace.ListAnnotationEvaluatorsResponse, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*trace.TraceServiceListAnnotationEvaluatorsArgs)
+		result := out.(*trace.TraceServiceListAnnotationEvaluatorsResult)
+		resp, err := l.impl.ListAnnotationEvaluators(ctx, arg.Req)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &trace.TraceServiceListAnnotationEvaluatorsArgs{Req: req}
+	result := &trace.TraceServiceListAnnotationEvaluatorsResult{}
+	ctx = l.injectRPCInfo(ctx, "ListAnnotationEvaluators")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
+func (l *LocalTraceService) ExtractSpanInfo(ctx context.Context, req *trace.ExtractSpanInfoRequest, callOptions ...callopt.Option) (*trace.ExtractSpanInfoResponse, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*trace.TraceServiceExtractSpanInfoArgs)
+		result := out.(*trace.TraceServiceExtractSpanInfoResult)
+		resp, err := l.impl.ExtractSpanInfo(ctx, arg.Req)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &trace.TraceServiceExtractSpanInfoArgs{Req: req}
+	result := &trace.TraceServiceExtractSpanInfoResult{}
+	ctx = l.injectRPCInfo(ctx, "ExtractSpanInfo")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
+func (l *LocalTraceService) UpsertTrajectoryConfig(ctx context.Context, req *trace.UpsertTrajectoryConfigRequest, callOptions ...callopt.Option) (*trace.UpsertTrajectoryConfigResponse, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*trace.TraceServiceUpsertTrajectoryConfigArgs)
+		result := out.(*trace.TraceServiceUpsertTrajectoryConfigResult)
+		resp, err := l.impl.UpsertTrajectoryConfig(ctx, arg.Req)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &trace.TraceServiceUpsertTrajectoryConfigArgs{Req: req}
+	result := &trace.TraceServiceUpsertTrajectoryConfigResult{}
+	ctx = l.injectRPCInfo(ctx, "UpsertTrajectoryConfig")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
+func (l *LocalTraceService) GetTrajectoryConfig(ctx context.Context, req *trace.GetTrajectoryConfigRequest, callOptions ...callopt.Option) (*trace.GetTrajectoryConfigResponse, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*trace.TraceServiceGetTrajectoryConfigArgs)
+		result := out.(*trace.TraceServiceGetTrajectoryConfigResult)
+		resp, err := l.impl.GetTrajectoryConfig(ctx, arg.Req)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &trace.TraceServiceGetTrajectoryConfigArgs{Req: req}
+	result := &trace.TraceServiceGetTrajectoryConfigResult{}
+	ctx = l.injectRPCInfo(ctx, "GetTrajectoryConfig")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
+func (l *LocalTraceService) ListTrajectory(ctx context.Context, req *trace.ListTrajectoryRequest, callOptions ...callopt.Option) (*trace.ListTrajectoryResponse, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*trace.TraceServiceListTrajectoryArgs)
+		result := out.(*trace.TraceServiceListTrajectoryResult)
+		resp, err := l.impl.ListTrajectory(ctx, arg.Req)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &trace.TraceServiceListTrajectoryArgs{Req: req}
+	result := &trace.TraceServiceListTrajectoryResult{}
+	ctx = l.injectRPCInfo(ctx, "ListTrajectory")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
+func (l *LocalTraceService) ListMetadata(ctx context.Context, req *trace.ListMetadataRequest, callOptions ...callopt.Option) (*trace.ListMetadataResponse, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*trace.TraceServiceListMetadataArgs)
+		result := out.(*trace.TraceServiceListMetadataResult)
+		resp, err := l.impl.ListMetadata(ctx, arg.Req)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &trace.TraceServiceListMetadataArgs{Req: req}
+	result := &trace.TraceServiceListMetadataResult{}
+	ctx = l.injectRPCInfo(ctx, "ListMetadata")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
+func (l *LocalTraceService) ListTraceChat(ctx context.Context, req *trace.ListTraceChatRequest, callOptions ...callopt.Option) (*trace.ListTraceChatResponse, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*trace.TraceServiceListTraceChatArgs)
+		result := out.(*trace.TraceServiceListTraceChatResult)
+		resp, err := l.impl.ListTraceChat(ctx, arg.Req)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &trace.TraceServiceListTraceChatArgs{Req: req}
+	result := &trace.TraceServiceListTraceChatResult{}
+	ctx = l.injectRPCInfo(ctx, "ListTraceChat")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
+func (l *LocalTraceService) ListThreadChat(ctx context.Context, req *trace.ListThreadChatRequest, callOptions ...callopt.Option) (*trace.ListThreadChatResponse, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*trace.TraceServiceListThreadChatArgs)
+		result := out.(*trace.TraceServiceListThreadChatResult)
+		resp, err := l.impl.ListThreadChat(ctx, arg.Req)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &trace.TraceServiceListThreadChatArgs{Req: req}
+	result := &trace.TraceServiceListThreadChatResult{}
+	ctx = l.injectRPCInfo(ctx, "ListThreadChat")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
+func (l *LocalTraceService) GetThreadStat(ctx context.Context, req *trace.GetThreadStatRequest, callOptions ...callopt.Option) (*trace.GetThreadStatResponse, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*trace.TraceServiceGetThreadStatArgs)
+		result := out.(*trace.TraceServiceGetThreadStatResult)
+		resp, err := l.impl.GetThreadStat(ctx, arg.Req)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &trace.TraceServiceGetThreadStatArgs{Req: req}
+	result := &trace.TraceServiceGetThreadStatResult{}
+	ctx = l.injectRPCInfo(ctx, "GetThreadStat")
 	if err := chain(ctx, arg, result); err != nil {
 		return nil, err
 	}

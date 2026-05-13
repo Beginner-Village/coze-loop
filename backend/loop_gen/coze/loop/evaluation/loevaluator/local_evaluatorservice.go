@@ -257,6 +257,29 @@ func (l *LocalEvaluatorService) BatchGetEvaluatorVersions(ctx context.Context, r
 	return result.GetSuccess(), nil
 }
 
+// BatchGetEvaluatorVersionIDs
+// 按 evaluator_id + version 对批量查询 evaluator_version_id（仅 RPC）
+func (l *LocalEvaluatorService) BatchGetEvaluatorVersionIDs(ctx context.Context, request *evaluator.BatchGetEvaluatorVersionIDsRequest, callOptions ...callopt.Option) (*evaluator.BatchGetEvaluatorVersionIDsResponse, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*evaluator.EvaluatorServiceBatchGetEvaluatorVersionIDsArgs)
+		result := out.(*evaluator.EvaluatorServiceBatchGetEvaluatorVersionIDsResult)
+		resp, err := l.impl.BatchGetEvaluatorVersionIDs(ctx, arg.Request)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &evaluator.EvaluatorServiceBatchGetEvaluatorVersionIDsArgs{Request: request}
+	result := &evaluator.EvaluatorServiceBatchGetEvaluatorVersionIDsResult{}
+	ctx = l.injectRPCInfo(ctx, "BatchGetEvaluatorVersionIDs")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
 func (l *LocalEvaluatorService) SubmitEvaluatorVersion(ctx context.Context, request *evaluator.SubmitEvaluatorVersionRequest, callOptions ...callopt.Option) (*evaluator.SubmitEvaluatorVersionResponse, error) {
 	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
 		arg := in.(*evaluator.EvaluatorServiceSubmitEvaluatorVersionArgs)
@@ -387,6 +410,69 @@ func (l *LocalEvaluatorService) DebugEvaluator(ctx context.Context, req *evaluat
 	return result.GetSuccess(), nil
 }
 
+func (l *LocalEvaluatorService) BatchDebugEvaluator(ctx context.Context, req *evaluator.BatchDebugEvaluatorRequest, callOptions ...callopt.Option) (*evaluator.BatchDebugEvaluatorResponse, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*evaluator.EvaluatorServiceBatchDebugEvaluatorArgs)
+		result := out.(*evaluator.EvaluatorServiceBatchDebugEvaluatorResult)
+		resp, err := l.impl.BatchDebugEvaluator(ctx, arg.Req)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &evaluator.EvaluatorServiceBatchDebugEvaluatorArgs{Req: req}
+	result := &evaluator.EvaluatorServiceBatchDebugEvaluatorResult{}
+	ctx = l.injectRPCInfo(ctx, "BatchDebugEvaluator")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
+func (l *LocalEvaluatorService) AsyncRunEvaluator(ctx context.Context, req *evaluator.AsyncRunEvaluatorRequest, callOptions ...callopt.Option) (*evaluator.AsyncRunEvaluatorResponse, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*evaluator.EvaluatorServiceAsyncRunEvaluatorArgs)
+		result := out.(*evaluator.EvaluatorServiceAsyncRunEvaluatorResult)
+		resp, err := l.impl.AsyncRunEvaluator(ctx, arg.Req)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &evaluator.EvaluatorServiceAsyncRunEvaluatorArgs{Req: req}
+	result := &evaluator.EvaluatorServiceAsyncRunEvaluatorResult{}
+	ctx = l.injectRPCInfo(ctx, "AsyncRunEvaluator")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
+func (l *LocalEvaluatorService) AsyncDebugEvaluator(ctx context.Context, req *evaluator.AsyncDebugEvaluatorRequest, callOptions ...callopt.Option) (*evaluator.AsyncDebugEvaluatorResponse, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*evaluator.EvaluatorServiceAsyncDebugEvaluatorArgs)
+		result := out.(*evaluator.EvaluatorServiceAsyncDebugEvaluatorResult)
+		resp, err := l.impl.AsyncDebugEvaluator(ctx, arg.Req)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &evaluator.EvaluatorServiceAsyncDebugEvaluatorArgs{Req: req}
+	result := &evaluator.EvaluatorServiceAsyncDebugEvaluatorResult{}
+	ctx = l.injectRPCInfo(ctx, "AsyncDebugEvaluator")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
 // UpdateEvaluatorRecord
 // 评估器执行结果
 func (l *LocalEvaluatorService) UpdateEvaluatorRecord(ctx context.Context, req *evaluator.UpdateEvaluatorRecordRequest, callOptions ...callopt.Option) (*evaluator.UpdateEvaluatorRecordResponse, error) {
@@ -446,6 +532,211 @@ func (l *LocalEvaluatorService) BatchGetEvaluatorRecords(ctx context.Context, re
 	arg := &evaluator.EvaluatorServiceBatchGetEvaluatorRecordsArgs{Req: req}
 	result := &evaluator.EvaluatorServiceBatchGetEvaluatorRecordsResult{}
 	ctx = l.injectRPCInfo(ctx, "BatchGetEvaluatorRecords")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
+// ValidateEvaluator
+// 评估器验证
+func (l *LocalEvaluatorService) ValidateEvaluator(ctx context.Context, request *evaluator.ValidateEvaluatorRequest, callOptions ...callopt.Option) (*evaluator.ValidateEvaluatorResponse, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*evaluator.EvaluatorServiceValidateEvaluatorArgs)
+		result := out.(*evaluator.EvaluatorServiceValidateEvaluatorResult)
+		resp, err := l.impl.ValidateEvaluator(ctx, arg.Request)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &evaluator.EvaluatorServiceValidateEvaluatorArgs{Request: request}
+	result := &evaluator.EvaluatorServiceValidateEvaluatorResult{}
+	ctx = l.injectRPCInfo(ctx, "ValidateEvaluator")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
+// ListTemplatesV2
+// 查询评估器模板
+func (l *LocalEvaluatorService) ListTemplatesV2(ctx context.Context, request *evaluator.ListTemplatesV2Request, callOptions ...callopt.Option) (*evaluator.ListTemplatesV2Response, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*evaluator.EvaluatorServiceListTemplatesV2Args)
+		result := out.(*evaluator.EvaluatorServiceListTemplatesV2Result)
+		resp, err := l.impl.ListTemplatesV2(ctx, arg.Request)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &evaluator.EvaluatorServiceListTemplatesV2Args{Request: request}
+	result := &evaluator.EvaluatorServiceListTemplatesV2Result{}
+	ctx = l.injectRPCInfo(ctx, "ListTemplatesV2")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
+func (l *LocalEvaluatorService) GetTemplateV2(ctx context.Context, request *evaluator.GetTemplateV2Request, callOptions ...callopt.Option) (*evaluator.GetTemplateV2Response, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*evaluator.EvaluatorServiceGetTemplateV2Args)
+		result := out.(*evaluator.EvaluatorServiceGetTemplateV2Result)
+		resp, err := l.impl.GetTemplateV2(ctx, arg.Request)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &evaluator.EvaluatorServiceGetTemplateV2Args{Request: request}
+	result := &evaluator.EvaluatorServiceGetTemplateV2Result{}
+	ctx = l.injectRPCInfo(ctx, "GetTemplateV2")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
+// CreateEvaluatorTemplate
+// 创建评估器模板
+func (l *LocalEvaluatorService) CreateEvaluatorTemplate(ctx context.Context, request *evaluator.CreateEvaluatorTemplateRequest, callOptions ...callopt.Option) (*evaluator.CreateEvaluatorTemplateResponse, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*evaluator.EvaluatorServiceCreateEvaluatorTemplateArgs)
+		result := out.(*evaluator.EvaluatorServiceCreateEvaluatorTemplateResult)
+		resp, err := l.impl.CreateEvaluatorTemplate(ctx, arg.Request)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &evaluator.EvaluatorServiceCreateEvaluatorTemplateArgs{Request: request}
+	result := &evaluator.EvaluatorServiceCreateEvaluatorTemplateResult{}
+	ctx = l.injectRPCInfo(ctx, "CreateEvaluatorTemplate")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
+// UpdateEvaluatorTemplate
+// 更新评估器模板
+func (l *LocalEvaluatorService) UpdateEvaluatorTemplate(ctx context.Context, request *evaluator.UpdateEvaluatorTemplateRequest, callOptions ...callopt.Option) (*evaluator.UpdateEvaluatorTemplateResponse, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*evaluator.EvaluatorServiceUpdateEvaluatorTemplateArgs)
+		result := out.(*evaluator.EvaluatorServiceUpdateEvaluatorTemplateResult)
+		resp, err := l.impl.UpdateEvaluatorTemplate(ctx, arg.Request)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &evaluator.EvaluatorServiceUpdateEvaluatorTemplateArgs{Request: request}
+	result := &evaluator.EvaluatorServiceUpdateEvaluatorTemplateResult{}
+	ctx = l.injectRPCInfo(ctx, "UpdateEvaluatorTemplate")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
+// DeleteEvaluatorTemplate
+// 删除
+func (l *LocalEvaluatorService) DeleteEvaluatorTemplate(ctx context.Context, request *evaluator.DeleteEvaluatorTemplateRequest, callOptions ...callopt.Option) (*evaluator.DeleteEvaluatorTemplateResponse, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*evaluator.EvaluatorServiceDeleteEvaluatorTemplateArgs)
+		result := out.(*evaluator.EvaluatorServiceDeleteEvaluatorTemplateResult)
+		resp, err := l.impl.DeleteEvaluatorTemplate(ctx, arg.Request)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &evaluator.EvaluatorServiceDeleteEvaluatorTemplateArgs{Request: request}
+	result := &evaluator.EvaluatorServiceDeleteEvaluatorTemplateResult{}
+	ctx = l.injectRPCInfo(ctx, "DeleteEvaluatorTemplate")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
+// DebugBuiltinEvaluator
+// 调试预置评估器
+func (l *LocalEvaluatorService) DebugBuiltinEvaluator(ctx context.Context, req *evaluator.DebugBuiltinEvaluatorRequest, callOptions ...callopt.Option) (*evaluator.DebugBuiltinEvaluatorResponse, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*evaluator.EvaluatorServiceDebugBuiltinEvaluatorArgs)
+		result := out.(*evaluator.EvaluatorServiceDebugBuiltinEvaluatorResult)
+		resp, err := l.impl.DebugBuiltinEvaluator(ctx, arg.Req)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &evaluator.EvaluatorServiceDebugBuiltinEvaluatorArgs{Req: req}
+	result := &evaluator.EvaluatorServiceDebugBuiltinEvaluatorResult{}
+	ctx = l.injectRPCInfo(ctx, "DebugBuiltinEvaluator")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
+// UpdateBuiltinEvaluatorTags
+// 更新预置评估器tag
+func (l *LocalEvaluatorService) UpdateBuiltinEvaluatorTags(ctx context.Context, req *evaluator.UpdateBuiltinEvaluatorTagsRequest, callOptions ...callopt.Option) (*evaluator.UpdateBuiltinEvaluatorTagsResponse, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*evaluator.EvaluatorServiceUpdateBuiltinEvaluatorTagsArgs)
+		result := out.(*evaluator.EvaluatorServiceUpdateBuiltinEvaluatorTagsResult)
+		resp, err := l.impl.UpdateBuiltinEvaluatorTags(ctx, arg.Req)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &evaluator.EvaluatorServiceUpdateBuiltinEvaluatorTagsArgs{Req: req}
+	result := &evaluator.EvaluatorServiceUpdateBuiltinEvaluatorTagsResult{}
+	ctx = l.injectRPCInfo(ctx, "UpdateBuiltinEvaluatorTags")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
+// ListEvaluatorTags
+// 查询Tag
+func (l *LocalEvaluatorService) ListEvaluatorTags(ctx context.Context, req *evaluator.ListEvaluatorTagsRequest, callOptions ...callopt.Option) (*evaluator.ListEvaluatorTagsResponse, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*evaluator.EvaluatorServiceListEvaluatorTagsArgs)
+		result := out.(*evaluator.EvaluatorServiceListEvaluatorTagsResult)
+		resp, err := l.impl.ListEvaluatorTags(ctx, arg.Req)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &evaluator.EvaluatorServiceListEvaluatorTagsArgs{Req: req}
+	result := &evaluator.EvaluatorServiceListEvaluatorTagsResult{}
+	ctx = l.injectRPCInfo(ctx, "ListEvaluatorTags")
 	if err := chain(ctx, arg, result); err != nil {
 		return nil, err
 	}

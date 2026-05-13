@@ -18,8 +18,20 @@ struct PromptBasic {
     6: optional i64 created_at (api.js_conv="true", go.tag='json:"created_at"')
     7: optional i64 updated_at (api.js_conv="true", go.tag='json:"updated_at"')
     8: optional i64 latest_committed_at (api.js_conv="true", go.tag='json:"latest_committed_at"')
+    9: optional PromptType prompt_type
+    10: optional SecurityLevel security_level
 
 }
+
+typedef string PromptType (ts.enum="true")
+const PromptType PromptType_Normal = "normal"
+const PromptType PromptType_Snippet = "snippet"
+
+typedef string SecurityLevel (ts.enum="true")
+const SecurityLevel SecurityLevel_L1 = "L1"
+const SecurityLevel SecurityLevel_L2 = "L2"
+const SecurityLevel SecurityLevel_L3 = "L3"
+const SecurityLevel SecurityLevel_L4 = "L4"
 
 struct PromptCommit {
     1: optional PromptDetail detail
@@ -53,19 +65,39 @@ struct PromptDetail {
     2: optional list<Tool> tools
     3: optional ToolCallConfig tool_call_config
     4: optional ModelConfig model_config
+    5: optional McpConfig mcp_config
 
     255: optional map<string, string> ext_infos
+}
+
+struct McpConfig {
+    1: optional bool is_mcp_call_auto_retry
+    2: optional list<McpServerCombine> mcp_servers
+}
+
+struct McpServerCombine {
+    1: optional i64 mcp_server_id (api.js_conv="true", go.tag='json:"mcp_server_id"')
+    2: optional i64 access_point_id (api.js_conv="true", go.tag='json:"access_point_id"')
+    3: optional list<string> disabled_tools
+    4: optional list<string> enabled_tools
+    5: optional bool is_enabled_tools
 }
 
 struct PromptTemplate {
     1: optional TemplateType template_type
     2: optional list<Message> messages
     3: optional list<VariableDef> variable_defs
+    4: optional bool has_snippet
+    5: optional list<Prompt> snippets
+
+    100: optional map<string, string> metadata
 }
 
 typedef string TemplateType (ts.enum="true")
 const TemplateType TemplateType_Normal = "normal"
 const TemplateType TemplateType_Jinja2 = "jinja2"
+const TemplateType TemplateType_GoTemplate = "go_template"
+const TemplateType TemplateType_CustomTemplate_M = "custom_template_m"
 
 struct Tool {
     1: optional ToolType type
@@ -74,6 +106,7 @@ struct Tool {
 
 typedef string ToolType (ts.enum="true")
 const ToolType ToolType_Function = "function"
+const ToolType ToolType_GoogleSearch = "google_search"
 
 struct Function {
     1: optional string name
@@ -83,11 +116,18 @@ struct Function {
 
 struct ToolCallConfig {
     1: optional ToolChoiceType tool_choice
+    2: optional ToolChoiceSpecification tool_choice_specification
+}
+
+struct ToolChoiceSpecification {
+    1: optional ToolType type
+    2: optional string name
 }
 
 typedef string ToolChoiceType (ts.enum="true")
 const ToolChoiceType ToolChoiceType_None = "none"
 const ToolChoiceType ToolChoiceType_Auto = "auto"
+const ToolChoiceType ToolChoiceType_Specific = "specific"
 
 struct ModelConfig {
     1: optional i64 model_id (api.js_conv="true", go.tag='json:"model_id"')
@@ -98,6 +138,38 @@ struct ModelConfig {
     6: optional double presence_penalty
     7: optional double frequency_penalty
     8: optional bool json_mode
+    9: optional string extra
+    10: optional ThinkingConfig thinking
+
+    100: optional list<ParamConfigValue> param_config_values
+}
+
+struct ThinkingConfig {
+     1: optional i64 budget_tokens (agw.key="budget_tokens", api.js_conv="true", go.tag='json:"budget_tokens"') // thinking内容的最大输出token
+     2: optional ThinkingOption thinking_option (agw.key="thinking_option")
+     3: optional ReasoningEffort reasoning_effort (agw.key="reasoning_effort") // 思考长度
+}
+
+typedef string ReasoningEffort (ts.enum="true")
+const ReasoningEffort ReasoningEffort_Minimal = "minimal"
+const ReasoningEffort ReasoningEffort_Low = "low"
+const ReasoningEffort ReasoningEffort_Medium = "medium"
+const ReasoningEffort ReasoningEffort_High = "high"
+
+typedef string ThinkingOption (ts.enum="true")
+const ThinkingOption ThinkingOption_Disabled = "disabled"
+const ThinkingOption ThinkingOption_Enabled = "enabled"
+const ThinkingOption ThinkingOption_Auto = "auto"
+
+struct ParamConfigValue {
+    1: optional string name // 传给下游模型的key，与ParamSchema.name对齐
+    2: optional string label // 展示名称
+    3: optional ParamOption value // 传给下游模型的value，与ParamSchema.options对齐
+}
+
+struct ParamOption {
+    1: optional string value // 实际值
+    2: optional string label // 展示值
 }
 
 struct Message {
@@ -107,6 +179,10 @@ struct Message {
     4: optional list<ContentPart> parts
     5: optional string tool_call_id
     6: optional list<ToolCall> tool_calls
+    7: optional bool skip_render // 是否跳过渲染
+    8: optional string signature // gemini3 thought_signature
+
+    100: optional map<string, string> metadata
 }
 
 typedef string Role (ts.enum="true")
@@ -120,11 +196,15 @@ struct ContentPart {
     1: optional ContentType type
     2: optional string text
     3: optional ImageURL image_url
+    4: optional VideoURL video_url
+    5: optional MediaConfig media_config
+    6: optional string signature // gemini3 thought_signature
 }
 
 typedef string ContentType (ts.enum="true")
 const ContentType ContentType_Text = "text"
 const ContentType ContentType_ImageURL = "image_url"
+const ContentType ContentType_VideoURL = "video_url"
 const ContentType ContentType_MultiPartVariable = "multi_part_variable"
 
 struct ImageURL {
@@ -132,11 +212,21 @@ struct ImageURL {
     2: optional string url
 }
 
+struct VideoURL {
+    1: optional string url
+    2: optional string uri
+}
+
+struct MediaConfig {
+    1: optional double fps (vt.ge="0.2", vt.le="5")
+}
+
 struct ToolCall {
     1: optional i64 index (api.js_conv="true", go.tag='json:"index"')
     2: optional string id
     3: optional ToolType type
     4: optional FunctionCall function_call
+    5: optional string signature // gemini3 thought_signature
 }
 
 struct FunctionCall {
@@ -210,6 +300,7 @@ struct DebugMessage {
     4: optional list<ContentPart> parts
     5: optional string tool_call_id
     6: optional list<DebugToolCall> tool_calls
+    7: optional string signature // gemini3 thought_signature
 
     101: optional string debug_id
     102: optional i64 input_tokens (api.js_conv="true", go.tag='json:"input_tokens"')
@@ -255,4 +346,12 @@ const Scenario Scenario_EvalTarget = "eval_target"
 
 struct OverridePromptParams {
     1: optional ModelConfig model_config
+}
+
+struct PromptCommitVersions {
+    1: optional i64 id (api.js_conv="true", go.tag='json:"id"')
+    2: optional i64 workspace_id (api.js_conv="true", go.tag='json:"workspace_id"')
+    3: optional string prompt_key
+    4: optional PromptBasic prompt_basic
+    5: optional list<string> commit_versions
 }

@@ -68,6 +68,74 @@ func (p *EvalTargetContent) IsValid() error {
 			return fmt.Errorf("field VolcengineAgent not valid, %w", err)
 		}
 	}
+	if p.CustomRPCServer != nil {
+		if err := p.CustomRPCServer.IsValid(); err != nil {
+			return fmt.Errorf("field CustomRPCServer not valid, %w", err)
+		}
+	}
+	if p.WebAgent != nil {
+		if err := p.WebAgent.IsValid(); err != nil {
+			return fmt.Errorf("field WebAgent not valid, %w", err)
+		}
+	}
+	return nil
+}
+func (p *WebAgent) IsValid() error {
+	if p.AgentConfig != nil {
+		if err := p.AgentConfig.IsValid(); err != nil {
+			return fmt.Errorf("field AgentConfig not valid, %w", err)
+		}
+	}
+	if p.PromptConfig != nil {
+		if err := p.PromptConfig.IsValid(); err != nil {
+			return fmt.Errorf("field PromptConfig not valid, %w", err)
+		}
+	}
+	return nil
+}
+func (p *WebAgentTargetPromptConfig) IsValid() error {
+	if p.OutputRule != nil {
+		if err := p.OutputRule.IsValid(); err != nil {
+			return fmt.Errorf("field OutputRule not valid, %w", err)
+		}
+	}
+	return nil
+}
+func (p *WebAgentTargetPromptConfigOutputRule) IsValid() error {
+	if p.Message != nil {
+		if err := p.Message.IsValid(); err != nil {
+			return fmt.Errorf("field Message not valid, %w", err)
+		}
+	}
+	return nil
+}
+func (p *CustomRPCServer) IsValid() error {
+	if p.InvokeHTTPInfo != nil {
+		if err := p.InvokeHTTPInfo.IsValid(); err != nil {
+			return fmt.Errorf("field InvokeHTTPInfo not valid, %w", err)
+		}
+	}
+	if p.AsyncInvokeHTTPInfo != nil {
+		if err := p.AsyncInvokeHTTPInfo.IsValid(); err != nil {
+			return fmt.Errorf("field AsyncInvokeHTTPInfo not valid, %w", err)
+		}
+	}
+	if p.SearchHTTPInfo != nil {
+		if err := p.SearchHTTPInfo.IsValid(); err != nil {
+			return fmt.Errorf("field SearchHTTPInfo not valid, %w", err)
+		}
+	}
+	if p.CustomEvalTarget != nil {
+		if err := p.CustomEvalTarget.IsValid(); err != nil {
+			return fmt.Errorf("field CustomEvalTarget not valid, %w", err)
+		}
+	}
+	return nil
+}
+func (p *CustomEvalTarget) IsValid() error {
+	return nil
+}
+func (p *HTTPInfo) IsValid() error {
 	return nil
 }
 func (p *VolcengineAgent) IsValid() error {

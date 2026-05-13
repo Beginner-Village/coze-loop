@@ -2718,6 +2718,8 @@ type FieldSchema struct {
 	Status *dataset.FieldStatus `thrift:"status,6,optional" frugal:"6,optional,FieldStatus" form:"status" json:"status,omitempty" query:"status"`
 	// 是否必填
 	IsRequired *bool `thrift:"isRequired,7,optional" frugal:"7,optional,bool" form:"isRequired" json:"isRequired,omitempty" query:"isRequired"`
+	// 对应的内置 schema
+	SchemaKey *dataset.SchemaKey `thrift:"schema_key,8,optional" frugal:"8,optional,SchemaKey" form:"schema_key" json:"schema_key,omitempty" query:"schema_key"`
 	// [20,50) 内容格式限制相关
 	TextSchema *string `thrift:"text_schema,20,optional" frugal:"20,optional,string" form:"text_schema" json:"text_schema,omitempty" query:"text_schema"`
 	// 多模态规格限制
@@ -2819,6 +2821,18 @@ func (p *FieldSchema) GetIsRequired() (v bool) {
 	return *p.IsRequired
 }
 
+var FieldSchema_SchemaKey_DEFAULT dataset.SchemaKey
+
+func (p *FieldSchema) GetSchemaKey() (v dataset.SchemaKey) {
+	if p == nil {
+		return
+	}
+	if !p.IsSetSchemaKey() {
+		return FieldSchema_SchemaKey_DEFAULT
+	}
+	return *p.SchemaKey
+}
+
 var FieldSchema_TextSchema_DEFAULT string
 
 func (p *FieldSchema) GetTextSchema() (v string) {
@@ -2887,6 +2901,9 @@ func (p *FieldSchema) SetStatus(val *dataset.FieldStatus) {
 func (p *FieldSchema) SetIsRequired(val *bool) {
 	p.IsRequired = val
 }
+func (p *FieldSchema) SetSchemaKey(val *dataset.SchemaKey) {
+	p.SchemaKey = val
+}
 func (p *FieldSchema) SetTextSchema(val *string) {
 	p.TextSchema = val
 }
@@ -2908,6 +2925,7 @@ var fieldIDToName_FieldSchema = map[int16]string{
 	5:  "default_display_format",
 	6:  "status",
 	7:  "isRequired",
+	8:  "schema_key",
 	20: "text_schema",
 	21: "multi_model_spec",
 	50: "hidden",
@@ -2940,6 +2958,10 @@ func (p *FieldSchema) IsSetStatus() bool {
 
 func (p *FieldSchema) IsSetIsRequired() bool {
 	return p.IsRequired != nil
+}
+
+func (p *FieldSchema) IsSetSchemaKey() bool {
+	return p.SchemaKey != nil
 }
 
 func (p *FieldSchema) IsSetTextSchema() bool {
@@ -3027,6 +3049,14 @@ func (p *FieldSchema) Read(iprot thrift.TProtocol) (err error) {
 		case 7:
 			if fieldTypeId == thrift.BOOL {
 				if err = p.ReadField7(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 8:
+			if fieldTypeId == thrift.I32 {
+				if err = p.ReadField8(iprot); err != nil {
 					goto ReadFieldError
 				}
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
@@ -3172,6 +3202,18 @@ func (p *FieldSchema) ReadField7(iprot thrift.TProtocol) error {
 	p.IsRequired = _field
 	return nil
 }
+func (p *FieldSchema) ReadField8(iprot thrift.TProtocol) error {
+
+	var _field *dataset.SchemaKey
+	if v, err := iprot.ReadI32(); err != nil {
+		return err
+	} else {
+		tmp := dataset.SchemaKey(v)
+		_field = &tmp
+	}
+	p.SchemaKey = _field
+	return nil
+}
 func (p *FieldSchema) ReadField20(iprot thrift.TProtocol) error {
 
 	var _field *string
@@ -3258,6 +3300,10 @@ func (p *FieldSchema) Write(oprot thrift.TProtocol) (err error) {
 		}
 		if err = p.writeField7(oprot); err != nil {
 			fieldId = 7
+			goto WriteFieldError
+		}
+		if err = p.writeField8(oprot); err != nil {
+			fieldId = 8
 			goto WriteFieldError
 		}
 		if err = p.writeField20(oprot); err != nil {
@@ -3420,6 +3466,24 @@ WriteFieldBeginError:
 WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 7 end error: ", p), err)
 }
+func (p *FieldSchema) writeField8(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSchemaKey() {
+		if err = oprot.WriteFieldBegin("schema_key", thrift.I32, 8); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteI32(int32(*p.SchemaKey)); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 8 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 8 end error: ", p), err)
+}
 func (p *FieldSchema) writeField20(oprot thrift.TProtocol) (err error) {
 	if p.IsSetTextSchema() {
 		if err = oprot.WriteFieldBegin("text_schema", thrift.STRING, 20); err != nil {
@@ -3536,6 +3600,9 @@ func (p *FieldSchema) DeepEqual(ano *FieldSchema) bool {
 	if !p.Field7DeepEqual(ano.IsRequired) {
 		return false
 	}
+	if !p.Field8DeepEqual(ano.SchemaKey) {
+		return false
+	}
 	if !p.Field20DeepEqual(ano.TextSchema) {
 		return false
 	}
@@ -3631,6 +3698,18 @@ func (p *FieldSchema) Field7DeepEqual(src *bool) bool {
 		return false
 	}
 	if *p.IsRequired != *src {
+		return false
+	}
+	return true
+}
+func (p *FieldSchema) Field8DeepEqual(src *dataset.SchemaKey) bool {
+
+	if p.SchemaKey == src {
+		return true
+	} else if p.SchemaKey == nil || src == nil {
+		return false
+	}
+	if *p.SchemaKey != *src {
 		return false
 	}
 	return true
@@ -4780,6 +4859,7 @@ type FieldData struct {
 	Key     *string         `thrift:"key,1,optional" frugal:"1,optional,string" form:"key" json:"key,omitempty" query:"key"`
 	Name    *string         `thrift:"name,2,optional" frugal:"2,optional,string" form:"name" json:"name,omitempty" query:"name"`
 	Content *common.Content `thrift:"content,3,optional" frugal:"3,optional,common.Content" form:"content" json:"content,omitempty" query:"content"`
+	TraceID *string         `thrift:"trace_id,4,optional" frugal:"4,optional,string" form:"trace_id" json:"trace_id,omitempty" query:"trace_id"`
 }
 
 func NewFieldData() *FieldData {
@@ -4824,6 +4904,18 @@ func (p *FieldData) GetContent() (v *common.Content) {
 	}
 	return p.Content
 }
+
+var FieldData_TraceID_DEFAULT string
+
+func (p *FieldData) GetTraceID() (v string) {
+	if p == nil {
+		return
+	}
+	if !p.IsSetTraceID() {
+		return FieldData_TraceID_DEFAULT
+	}
+	return *p.TraceID
+}
 func (p *FieldData) SetKey(val *string) {
 	p.Key = val
 }
@@ -4833,11 +4925,15 @@ func (p *FieldData) SetName(val *string) {
 func (p *FieldData) SetContent(val *common.Content) {
 	p.Content = val
 }
+func (p *FieldData) SetTraceID(val *string) {
+	p.TraceID = val
+}
 
 var fieldIDToName_FieldData = map[int16]string{
 	1: "key",
 	2: "name",
 	3: "content",
+	4: "trace_id",
 }
 
 func (p *FieldData) IsSetKey() bool {
@@ -4850,6 +4946,10 @@ func (p *FieldData) IsSetName() bool {
 
 func (p *FieldData) IsSetContent() bool {
 	return p.Content != nil
+}
+
+func (p *FieldData) IsSetTraceID() bool {
+	return p.TraceID != nil
 }
 
 func (p *FieldData) Read(iprot thrift.TProtocol) (err error) {
@@ -4889,6 +4989,14 @@ func (p *FieldData) Read(iprot thrift.TProtocol) (err error) {
 		case 3:
 			if fieldTypeId == thrift.STRUCT {
 				if err = p.ReadField3(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 4:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField4(iprot); err != nil {
 					goto ReadFieldError
 				}
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
@@ -4953,6 +5061,17 @@ func (p *FieldData) ReadField3(iprot thrift.TProtocol) error {
 	p.Content = _field
 	return nil
 }
+func (p *FieldData) ReadField4(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.TraceID = _field
+	return nil
+}
 
 func (p *FieldData) Write(oprot thrift.TProtocol) (err error) {
 	var fieldId int16
@@ -4970,6 +5089,10 @@ func (p *FieldData) Write(oprot thrift.TProtocol) (err error) {
 		}
 		if err = p.writeField3(oprot); err != nil {
 			fieldId = 3
+			goto WriteFieldError
+		}
+		if err = p.writeField4(oprot); err != nil {
+			fieldId = 4
 			goto WriteFieldError
 		}
 	}
@@ -5044,6 +5167,24 @@ WriteFieldBeginError:
 WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 3 end error: ", p), err)
 }
+func (p *FieldData) writeField4(oprot thrift.TProtocol) (err error) {
+	if p.IsSetTraceID() {
+		if err = oprot.WriteFieldBegin("trace_id", thrift.STRING, 4); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.TraceID); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 4 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 4 end error: ", p), err)
+}
 
 func (p *FieldData) String() string {
 	if p == nil {
@@ -5066,6 +5207,9 @@ func (p *FieldData) DeepEqual(ano *FieldData) bool {
 		return false
 	}
 	if !p.Field3DeepEqual(ano.Content) {
+		return false
+	}
+	if !p.Field4DeepEqual(ano.TraceID) {
 		return false
 	}
 	return true
@@ -5098,6 +5242,18 @@ func (p *FieldData) Field2DeepEqual(src *string) bool {
 func (p *FieldData) Field3DeepEqual(src *common.Content) bool {
 
 	if !p.Content.DeepEqual(src) {
+		return false
+	}
+	return true
+}
+func (p *FieldData) Field4DeepEqual(src *string) bool {
+
+	if p.TraceID == src {
+		return true
+	} else if p.TraceID == nil || src == nil {
+		return false
+	}
+	if strings.Compare(*p.TraceID, *src) != 0 {
 		return false
 	}
 	return true

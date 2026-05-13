@@ -303,6 +303,27 @@ func (l *LocalExperimentService) BatchGetExperimentResult_(ctx context.Context, 
 	return result.GetSuccess(), nil
 }
 
+func (l *LocalExperimentService) CalculateExperimentAggrResult_(ctx context.Context, req *expt.CalculateExperimentAggrResultRequest, callOptions ...callopt.Option) (*expt.CalculateExperimentAggrResultResponse, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*expt.ExperimentServiceCalculateExperimentAggrResultArgs)
+		result := out.(*expt.ExperimentServiceCalculateExperimentAggrResultResult)
+		resp, err := l.impl.CalculateExperimentAggrResult_(ctx, arg.Req)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &expt.ExperimentServiceCalculateExperimentAggrResultArgs{Req: req}
+	result := &expt.ExperimentServiceCalculateExperimentAggrResultResult{}
+	ctx = l.injectRPCInfo(ctx, "CalculateExperimentAggrResult_")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
 func (l *LocalExperimentService) BatchGetExperimentAggrResult_(ctx context.Context, req *expt.BatchGetExperimentAggrResultRequest, callOptions ...callopt.Option) (*expt.BatchGetExperimentAggrResultResponse, error) {
 	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
 		arg := in.(*expt.ExperimentServiceBatchGetExperimentAggrResultArgs)
@@ -685,6 +706,176 @@ func (l *LocalExperimentService) ListExptInsightAnalysisComment(ctx context.Cont
 	arg := &expt.ExperimentServiceListExptInsightAnalysisCommentArgs{Req: req}
 	result := &expt.ExperimentServiceListExptInsightAnalysisCommentResult{}
 	ctx = l.injectRPCInfo(ctx, "ListExptInsightAnalysisComment")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
+func (l *LocalExperimentService) GetAnalysisRecordFeedbackVote(ctx context.Context, req *expt.GetAnalysisRecordFeedbackVoteRequest, callOptions ...callopt.Option) (*expt.GetAnalysisRecordFeedbackVoteResponse, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*expt.ExperimentServiceGetAnalysisRecordFeedbackVoteArgs)
+		result := out.(*expt.ExperimentServiceGetAnalysisRecordFeedbackVoteResult)
+		resp, err := l.impl.GetAnalysisRecordFeedbackVote(ctx, arg.Req)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &expt.ExperimentServiceGetAnalysisRecordFeedbackVoteArgs{Req: req}
+	result := &expt.ExperimentServiceGetAnalysisRecordFeedbackVoteResult{}
+	ctx = l.injectRPCInfo(ctx, "GetAnalysisRecordFeedbackVote")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
+// CreateExperimentTemplate
+// 实验模板
+func (l *LocalExperimentService) CreateExperimentTemplate(ctx context.Context, req *expt.CreateExperimentTemplateRequest, callOptions ...callopt.Option) (*expt.CreateExperimentTemplateResponse, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*expt.ExperimentServiceCreateExperimentTemplateArgs)
+		result := out.(*expt.ExperimentServiceCreateExperimentTemplateResult)
+		resp, err := l.impl.CreateExperimentTemplate(ctx, arg.Req)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &expt.ExperimentServiceCreateExperimentTemplateArgs{Req: req}
+	result := &expt.ExperimentServiceCreateExperimentTemplateResult{}
+	ctx = l.injectRPCInfo(ctx, "CreateExperimentTemplate")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
+func (l *LocalExperimentService) BatchGetExperimentTemplate(ctx context.Context, req *expt.BatchGetExperimentTemplateRequest, callOptions ...callopt.Option) (*expt.BatchGetExperimentTemplateResponse, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*expt.ExperimentServiceBatchGetExperimentTemplateArgs)
+		result := out.(*expt.ExperimentServiceBatchGetExperimentTemplateResult)
+		resp, err := l.impl.BatchGetExperimentTemplate(ctx, arg.Req)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &expt.ExperimentServiceBatchGetExperimentTemplateArgs{Req: req}
+	result := &expt.ExperimentServiceBatchGetExperimentTemplateResult{}
+	ctx = l.injectRPCInfo(ctx, "BatchGetExperimentTemplate")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
+func (l *LocalExperimentService) UpdateExperimentTemplateMeta(ctx context.Context, req *expt.UpdateExperimentTemplateMetaRequest, callOptions ...callopt.Option) (*expt.UpdateExperimentTemplateMetaResponse, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*expt.ExperimentServiceUpdateExperimentTemplateMetaArgs)
+		result := out.(*expt.ExperimentServiceUpdateExperimentTemplateMetaResult)
+		resp, err := l.impl.UpdateExperimentTemplateMeta(ctx, arg.Req)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &expt.ExperimentServiceUpdateExperimentTemplateMetaArgs{Req: req}
+	result := &expt.ExperimentServiceUpdateExperimentTemplateMetaResult{}
+	ctx = l.injectRPCInfo(ctx, "UpdateExperimentTemplateMeta")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
+func (l *LocalExperimentService) UpdateExperimentTemplate(ctx context.Context, req *expt.UpdateExperimentTemplateRequest, callOptions ...callopt.Option) (*expt.UpdateExperimentTemplateResponse, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*expt.ExperimentServiceUpdateExperimentTemplateArgs)
+		result := out.(*expt.ExperimentServiceUpdateExperimentTemplateResult)
+		resp, err := l.impl.UpdateExperimentTemplate(ctx, arg.Req)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &expt.ExperimentServiceUpdateExperimentTemplateArgs{Req: req}
+	result := &expt.ExperimentServiceUpdateExperimentTemplateResult{}
+	ctx = l.injectRPCInfo(ctx, "UpdateExperimentTemplate")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
+func (l *LocalExperimentService) DeleteExperimentTemplate(ctx context.Context, req *expt.DeleteExperimentTemplateRequest, callOptions ...callopt.Option) (*expt.DeleteExperimentTemplateResponse, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*expt.ExperimentServiceDeleteExperimentTemplateArgs)
+		result := out.(*expt.ExperimentServiceDeleteExperimentTemplateResult)
+		resp, err := l.impl.DeleteExperimentTemplate(ctx, arg.Req)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &expt.ExperimentServiceDeleteExperimentTemplateArgs{Req: req}
+	result := &expt.ExperimentServiceDeleteExperimentTemplateResult{}
+	ctx = l.injectRPCInfo(ctx, "DeleteExperimentTemplate")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
+func (l *LocalExperimentService) ListExperimentTemplates(ctx context.Context, req *expt.ListExperimentTemplatesRequest, callOptions ...callopt.Option) (*expt.ListExperimentTemplatesResponse, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*expt.ExperimentServiceListExperimentTemplatesArgs)
+		result := out.(*expt.ExperimentServiceListExperimentTemplatesResult)
+		resp, err := l.impl.ListExperimentTemplates(ctx, arg.Req)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &expt.ExperimentServiceListExperimentTemplatesArgs{Req: req}
+	result := &expt.ExperimentServiceListExperimentTemplatesResult{}
+	ctx = l.injectRPCInfo(ctx, "ListExperimentTemplates")
+	if err := chain(ctx, arg, result); err != nil {
+		return nil, err
+	}
+	return result.GetSuccess(), nil
+}
+
+func (l *LocalExperimentService) CheckExperimentTemplateName(ctx context.Context, req *expt.CheckExperimentTemplateNameRequest, callOptions ...callopt.Option) (*expt.CheckExperimentTemplateNameResponse, error) {
+	chain := l.mds(func(ctx context.Context, in, out interface{}) error {
+		arg := in.(*expt.ExperimentServiceCheckExperimentTemplateNameArgs)
+		result := out.(*expt.ExperimentServiceCheckExperimentTemplateNameResult)
+		resp, err := l.impl.CheckExperimentTemplateName(ctx, arg.Req)
+		if err != nil {
+			return err
+		}
+		result.SetSuccess(resp)
+		return nil
+	})
+
+	arg := &expt.ExperimentServiceCheckExperimentTemplateNameArgs{Req: req}
+	result := &expt.ExperimentServiceCheckExperimentTemplateNameResult{}
+	ctx = l.injectRPCInfo(ctx, "CheckExperimentTemplateName")
 	if err := chain(ctx, arg, result); err != nil {
 		return nil, err
 	}

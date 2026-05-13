@@ -48,7 +48,7 @@ func TestBatchCreateEvaluationSetItems(t *testing.T) {
 			expectedErrors: nil,
 			expectedErr:    nil,
 			mockSetup: func() {
-				mockAdapter.EXPECT().BatchCreateDatasetItems(gomock.Any(), gomock.Any()).Return(map[int64]int64{1: 100, 2: 200}, nil, nil)
+				mockAdapter.EXPECT().BatchCreateDatasetItems(gomock.Any(), gomock.Any()).Return(map[int64]int64{1: 100, 2: 200}, nil, nil, nil)
 			},
 		},
 		{
@@ -65,7 +65,7 @@ func TestBatchCreateEvaluationSetItems(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.mockSetup()
 
-			idMap, errors, err := service.BatchCreateEvaluationSetItems(context.Background(), tc.param)
+			idMap, errors, _, err := service.BatchCreateEvaluationSetItems(context.Background(), tc.param)
 
 			if !equalIDMaps(idMap, tc.expectedIDMap) {
 				t.Errorf("期望 IDMap 为 %v, 但得到 %v", tc.expectedIDMap, idMap)
@@ -117,7 +117,7 @@ func TestEvaluationSetItemServiceImpl_UpdateEvaluationSetItem(t *testing.T) {
 			},
 			mockSetup: func() {
 				mockDatasetRPCAdapter.EXPECT().
-					UpdateDatasetItem(gomock.Any(), int64(1), int64(100), int64(1000), gomock.Any()).
+					UpdateDatasetItem(gomock.Any(), int64(1), int64(100), int64(1000), gomock.Any(), gomock.Any()).
 					Return(nil)
 			},
 			wantErr: false,
@@ -130,7 +130,7 @@ func TestEvaluationSetItemServiceImpl_UpdateEvaluationSetItem(t *testing.T) {
 			turns:   []*entity.Turn{},
 			mockSetup: func() {
 				mockDatasetRPCAdapter.EXPECT().
-					UpdateDatasetItem(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+					UpdateDatasetItem(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 					Return(errorx.NewByCode(errno.CommonInternalErrorCode))
 			},
 			wantErr: true,
@@ -141,7 +141,7 @@ func TestEvaluationSetItemServiceImpl_UpdateEvaluationSetItem(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.mockSetup()
 
-			err := service.UpdateEvaluationSetItem(context.Background(), tt.spaceID, tt.setID, tt.itemID, tt.turns)
+			err := service.UpdateEvaluationSetItem(context.Background(), tt.spaceID, tt.setID, tt.itemID, tt.turns, nil)
 			if tt.wantErr {
 				assert.Error(t, err)
 			} else {
@@ -214,13 +214,14 @@ func TestEvaluationSetItemServiceImpl_ListEvaluationSetItems(t *testing.T) {
 	service := NewEvaluationSetItemServiceImpl(mockDatasetRPCAdapter)
 
 	tests := []struct {
-		name          string
-		param         *entity.ListEvaluationSetItemsParam
-		mockSetup     func()
-		wantItems     []*entity.EvaluationSetItem
-		wantTotal     *int64
-		wantNextToken *string
-		wantErr       bool
+		name            string
+		param           *entity.ListEvaluationSetItemsParam
+		mockSetup       func()
+		wantItems       []*entity.EvaluationSetItem
+		wantTotal       *int64
+		wantFilterTotal *int64
+		wantNextToken   *string
+		wantErr         bool
 	}{
 		{
 			name: "成功列出项目 - 无版本ID",
@@ -234,14 +235,15 @@ func TestEvaluationSetItemServiceImpl_ListEvaluationSetItems(t *testing.T) {
 					ListDatasetItems(gomock.Any(), gomock.Any()).
 					Return([]*entity.EvaluationSetItem{
 						{ID: 1, ItemKey: "item1"},
-					}, gptr.Of[int64](1), gptr.Of("next_token"), nil)
+					}, gptr.Of[int64](1), gptr.Of[int64](1), gptr.Of("next_token"), nil)
 			},
 			wantItems: []*entity.EvaluationSetItem{
 				{ID: 1, ItemKey: "item1"},
 			},
-			wantTotal:     gptr.Of[int64](1),
-			wantNextToken: gptr.Of("next_token"),
-			wantErr:       false,
+			wantTotal:       gptr.Of[int64](1),
+			wantFilterTotal: gptr.Of[int64](1),
+			wantNextToken:   gptr.Of("next_token"),
+			wantErr:         false,
 		},
 		{
 			name: "成功列出项目 - 有版本ID",
@@ -255,12 +257,13 @@ func TestEvaluationSetItemServiceImpl_ListEvaluationSetItems(t *testing.T) {
 					ListDatasetItemsByVersion(gomock.Any(), gomock.Any()).
 					Return([]*entity.EvaluationSetItem{
 						{ID: 1, ItemKey: "item1"},
-					}, gptr.Of[int64](1), nil, nil)
+					}, gptr.Of[int64](1), gptr.Of[int64](1), nil, nil)
 			},
-			wantItems:     []*entity.EvaluationSetItem{{ID: 1, ItemKey: "item1"}},
-			wantTotal:     gptr.Of[int64](1),
-			wantNextToken: nil,
-			wantErr:       false,
+			wantItems:       []*entity.EvaluationSetItem{{ID: 1, ItemKey: "item1"}},
+			wantTotal:       gptr.Of[int64](1),
+			wantFilterTotal: gptr.Of[int64](1),
+			wantNextToken:   nil,
+			wantErr:         false,
 		},
 		{
 			name:      "列出失败 - 参数为空",
@@ -274,7 +277,7 @@ func TestEvaluationSetItemServiceImpl_ListEvaluationSetItems(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.mockSetup()
 
-			items, total, nextToken, err := service.ListEvaluationSetItems(context.Background(), tt.param)
+			items, total, filterTotal, nextToken, err := service.ListEvaluationSetItems(context.Background(), tt.param)
 			if tt.wantErr {
 				assert.Error(t, err)
 				return
@@ -283,6 +286,7 @@ func TestEvaluationSetItemServiceImpl_ListEvaluationSetItems(t *testing.T) {
 			assert.NoError(t, err)
 			assert.Equal(t, tt.wantItems, items)
 			assert.Equal(t, tt.wantTotal, total)
+			assert.Equal(t, tt.wantFilterTotal, filterTotal)
 			assert.Equal(t, tt.wantNextToken, nextToken)
 		})
 	}
@@ -367,6 +371,166 @@ func TestEvaluationSetItemServiceImpl_BatchGetEvaluationSetItems(t *testing.T) {
 	}
 }
 
+func TestEvaluationSetItemServiceImpl_BatchUpdateEvaluationSetItems(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	evaluationSetItemServiceOnce = sync.Once{}
+	mockDatasetRPCAdapter := mocks.NewMockIDatasetRPCAdapter(ctrl)
+	service := NewEvaluationSetItemServiceImpl(mockDatasetRPCAdapter)
+
+	tests := []struct {
+		name            string
+		param           *entity.BatchUpdateEvaluationSetItemsParam
+		mockSetup       func()
+		wantErrors      []*entity.ItemErrorGroup
+		wantItemOutputs []*entity.DatasetItemOutput
+		wantErr         bool
+	}{
+		{
+			name: "成功批量更新评估集项",
+			param: &entity.BatchUpdateEvaluationSetItemsParam{
+				SpaceID:         1,
+				EvaluationSetID: 100,
+				Items: []*entity.EvaluationSetItem{
+					{
+						ID:              1,
+						ItemKey:         "item1",
+						EvaluationSetID: 100,
+						Turns: []*entity.Turn{
+							{
+								ID: 1,
+								FieldDataList: []*entity.FieldData{
+									{
+										Key:     "field1",
+										Name:    "Field 1",
+										Content: &entity.Content{Text: gptr.Of("updated content")},
+									},
+								},
+							},
+						},
+					},
+				},
+				SkipInvalidItems: gptr.Of(true),
+			},
+			mockSetup: func() {
+				mockDatasetRPCAdapter.EXPECT().
+					BatchUpdateDatasetItems(gomock.Any(), gomock.Any()).
+					Return(nil, []*entity.DatasetItemOutput{
+						{
+							ItemIndex: gptr.Of[int32](0),
+							ItemKey:   gptr.Of("item1"),
+							ItemID:    gptr.Of[int64](1),
+							IsNewItem: gptr.Of(false),
+						},
+					}, nil)
+			},
+			wantErrors: nil,
+			wantItemOutputs: []*entity.DatasetItemOutput{
+				{
+					ItemIndex: gptr.Of[int32](0),
+					ItemKey:   gptr.Of("item1"),
+					ItemID:    gptr.Of[int64](1),
+					IsNewItem: gptr.Of(false),
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "批量更新失败 - 存在错误",
+			param: &entity.BatchUpdateEvaluationSetItemsParam{
+				SpaceID:         1,
+				EvaluationSetID: 100,
+				Items: []*entity.EvaluationSetItem{
+					{
+						ID:              1,
+						ItemKey:         "invalid_item",
+						EvaluationSetID: 100,
+					},
+				},
+				SkipInvalidItems: gptr.Of(false),
+			},
+			mockSetup: func() {
+				mockDatasetRPCAdapter.EXPECT().
+					BatchUpdateDatasetItems(gomock.Any(), gomock.Any()).
+					Return([]*entity.ItemErrorGroup{
+						{
+							Type:       gptr.Of(entity.ItemErrorType_MismatchSchema),
+							Summary:    gptr.Of("Schema validation failed"),
+							ErrorCount: gptr.Of[int32](1),
+							Details: []*entity.ItemErrorDetail{
+								{
+									Message: gptr.Of("Field validation error"),
+									Index:   gptr.Of[int32](0),
+								},
+							},
+						},
+					}, nil, nil)
+			},
+			wantErrors: []*entity.ItemErrorGroup{
+				{
+					Type:       gptr.Of(entity.ItemErrorType_MismatchSchema),
+					Summary:    gptr.Of("Schema validation failed"),
+					ErrorCount: gptr.Of[int32](1),
+					Details: []*entity.ItemErrorDetail{
+						{
+							Message: gptr.Of("Field validation error"),
+							Index:   gptr.Of[int32](0),
+						},
+					},
+				},
+			},
+			wantItemOutputs: nil,
+			wantErr:         false,
+		},
+		{
+			name: "批量更新失败 - RPC错误",
+			param: &entity.BatchUpdateEvaluationSetItemsParam{
+				SpaceID:         1,
+				EvaluationSetID: 100,
+				Items: []*entity.EvaluationSetItem{
+					{
+						ID:              1,
+						ItemKey:         "item1",
+						EvaluationSetID: 100,
+					},
+				},
+			},
+			mockSetup: func() {
+				mockDatasetRPCAdapter.EXPECT().
+					BatchUpdateDatasetItems(gomock.Any(), gomock.Any()).
+					Return(nil, nil, errorx.NewByCode(errno.CommonInternalErrorCode))
+			},
+			wantErrors:      nil,
+			wantItemOutputs: nil,
+			wantErr:         true,
+		},
+		{
+			name:            "批量更新失败 - 参数为空",
+			param:           nil,
+			mockSetup:       func() {},
+			wantErrors:      nil,
+			wantItemOutputs: nil,
+			wantErr:         true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.mockSetup()
+
+			errors, itemOutputs, err := service.BatchUpdateEvaluationSetItems(context.Background(), tt.param)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+
+			assert.NoError(t, err)
+			assert.Equal(t, tt.wantErrors, errors)
+			assert.Equal(t, tt.wantItemOutputs, itemOutputs)
+		})
+	}
+}
+
 func TestEvaluationSetItemServiceImpl_ClearEvaluationSetDraftItem(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
@@ -443,4 +607,41 @@ func equalErrorGroups(g1, g2 []*entity.ItemErrorGroup) bool {
 		}
 	}
 	return true
+}
+
+// ---------------- 追加：GetEvaluationSetItemField 的单测 ----------------
+func TestEvaluationSetItemServiceImpl_GetEvaluationSetItemField(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	evaluationSetItemServiceOnce = sync.Once{}
+	mockAdapter := mocks.NewMockIDatasetRPCAdapter(ctrl)
+	service := NewEvaluationSetItemServiceImpl(mockAdapter)
+
+	ctx := context.Background()
+
+	t.Run("成功获取字段数据", func(t *testing.T) {
+		param := &entity.GetEvaluationSetItemFieldParam{SpaceID: 1, EvaluationSetID: 100, ItemPK: 999, FieldName: "field1", TurnID: gptr.Of[int64](1)}
+		expected := &entity.FieldData{Key: "field1", Name: "Field 1", Content: &entity.Content{Text: gptr.Of("value")}}
+		mockAdapter.EXPECT().GetDatasetItemField(gomock.Any(), gomock.Any()).Return(expected, nil)
+		res, err := service.GetEvaluationSetItemField(ctx, param)
+		assert.NoError(t, err)
+		assert.Equal(t, expected, res)
+	})
+
+	t.Run("参数为空返回错误", func(t *testing.T) {
+		res, err := service.GetEvaluationSetItemField(ctx, nil)
+		assert.Nil(t, res)
+		statusErr, ok := errorx.FromStatusError(err)
+		assert.True(t, ok)
+		assert.Equal(t, int32(errno.CommonInternalErrorCode), statusErr.Code())
+	})
+
+	t.Run("RPC返回错误", func(t *testing.T) {
+		param := &entity.GetEvaluationSetItemFieldParam{SpaceID: 1, EvaluationSetID: 100, ItemPK: 999, FieldName: "field1"}
+		mockAdapter.EXPECT().GetDatasetItemField(gomock.Any(), gomock.Any()).Return(nil, errorx.NewByCode(errno.CommonRPCErrorCode))
+		_, err := service.GetEvaluationSetItemField(ctx, param)
+		statusErr, ok := errorx.FromStatusError(err)
+		assert.True(t, ok)
+		assert.Equal(t, int32(errno.CommonRPCErrorCode), statusErr.Code())
+	})
 }

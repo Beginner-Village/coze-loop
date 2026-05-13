@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/coze-dev/coze-loop/backend/pkg/json"
+	"github.com/coze-dev/coze-loop/backend/pkg/lang/ptr"
 	"github.com/coze-dev/coze-loop/backend/pkg/logs"
 )
 
@@ -46,11 +47,17 @@ const (
 	FieldTypeDouble FieldType = "double"
 	FieldTypeBool   FieldType = "bool"
 
-	PlatformCozeLoop   PlatformType = "cozeloop"
-	PlatformPrompt     PlatformType = "prompt"
-	PlatformEvaluator  PlatformType = "evaluator"
-	PlatformEvalTarget PlatformType = "evaluation_target"
-	PlatformOpenAPI    PlatformType = "open_api"
+	PlatformDefault      PlatformType = "default"
+	PlatformCozeLoop     PlatformType = "cozeloop"
+	PlatformPrompt       PlatformType = "prompt"
+	PlatformEvaluator    PlatformType = "evaluator"
+	PlatformEvalTarget   PlatformType = "evaluation_target"
+	PlatformOpenAPI      PlatformType = "open_api"
+	PlatformCozeWorkflow PlatformType = "coze_workflow"
+	PlatformCozeBot      PlatformType = "coze_bot"
+	PlatformVeAgentKit   PlatformType = "ve_agentkit"
+	PlatformVeADK        PlatformType = "veadk"
+	PlatformCallbackAll  PlatformType = "callback_all"
 
 	SpanListTypeRootSpan SpanListType = "root_span"
 	SpanListTypeAllSpan  SpanListType = "all_span"
@@ -93,7 +100,11 @@ var validFieldComb = map[FieldType]map[QueryTypeEnum]bool{
 		QueryTypeEnumNotEq:    true,
 	},
 	FieldTypeBool: {
-		QueryTypeEnumEq: true,
+		QueryTypeEnumEq:       true,
+		QueryTypeEnumIn:       true,
+		QueryTypeEnumNotIn:    true,
+		QueryTypeEnumExist:    true,
+		QueryTypeEnumNotExist: true,
 	},
 }
 
@@ -104,7 +115,7 @@ type FieldOptions struct {
 }
 
 type FilterObject interface {
-	GetFieldValue(fieldName string, isSystem bool) any
+	GetFieldValue(fieldName string, isSystem, isCustom bool) any
 }
 
 type FilterFields struct {
@@ -146,10 +157,6 @@ func (f *FilterFields) Traverse(fn func(f *FilterField) error) error {
 	return nil
 }
 
-//func (f *FilterFields) Filter[T FilterObject](objs []T) []T  {
-//
-//}
-
 func (f *FilterFields) Satisfied(obj FilterObject) bool {
 	op := QueryAndOrEnumAnd
 	hit := true
@@ -169,6 +176,9 @@ func (f *FilterFields) Satisfied(obj FilterObject) bool {
 			}
 		}
 	}
+	if len(f.FilterFields) == 0 {
+		hit = true
+	}
 	return hit
 }
 
@@ -178,13 +188,16 @@ func (f *FilterFields) Debug() string {
 }
 
 type FilterField struct {
-	FieldName  string          `mapstructure:"field_name" json:"field_name"`
-	FieldType  FieldType       `mapstructure:"field_type" json:"field_type"`
-	Values     []string        `mapstructure:"values" json:"values"`
-	QueryType  *QueryTypeEnum  `mapstructure:"query_type" json:"query_type"`
-	QueryAndOr *QueryAndOrEnum `mapstructure:"query_and_or" json:"query_and_or"`
-	SubFilter  *FilterFields   `mapstructure:"sub_filter" json:"sub_filter"`
-	IsSystem   bool            `mapstructure:"is_system" json:"is_system"`
+	FieldName  string            `mapstructure:"field_name" json:"field_name"`
+	FieldType  FieldType         `mapstructure:"field_type" json:"field_type"`
+	Values     []string          `mapstructure:"values" json:"values"`
+	QueryType  *QueryTypeEnum    `mapstructure:"query_type" json:"query_type"`
+	QueryAndOr *QueryAndOrEnum   `mapstructure:"query_and_or" json:"query_and_or"`
+	SubFilter  *FilterFields     `mapstructure:"sub_filter" json:"sub_filter"`
+	IsSystem   bool              `mapstructure:"is_system" json:"is_system"`
+	IsCustom   bool              `mapstructure:"is_custom" json:"is_custom"`
+	Hidden     bool              `mapstructure:"hidden" json:"hidden"`
+	ExtraInfo  map[string]string `mapstructure:"extra_info" json:"extra_info"`
 }
 
 func (f *FilterField) Validate() error {
@@ -241,19 +254,36 @@ func (f *FilterField) ValidateField() error {
 }
 
 func (f *FilterField) Satisfied(obj FilterObject) bool {
+	op := QueryAndOrEnumAnd
+	hit := true
+	if f.QueryAndOr != nil && *f.QueryAndOr == QueryAndOrEnumOr {
+		op = QueryAndOrEnumOr
+		hit = false
+	}
 	// 检测是否满足筛选条件
 	if f.FieldName != "" {
 		// 不满足field过滤条件
-		if !f.CheckValue(obj.GetFieldValue(f.FieldName, f.IsSystem)) {
-			return false
+		if !f.CheckValue(obj.GetFieldValue(f.FieldName, f.IsSystem, f.IsCustom)) {
+			if op == QueryAndOrEnumAnd {
+				return false
+			}
+		} else if op == QueryAndOrEnumOr {
+			return true
 		}
 	}
 	if f.SubFilter != nil {
 		if !f.SubFilter.Satisfied(obj) {
-			return false
+			if op == QueryAndOrEnumAnd {
+				return false
+			}
+		} else if op == QueryAndOrEnumOr {
+			return true
 		}
 	}
-	return true
+	if f.FieldName == "" && f.SubFilter == nil {
+		hit = true
+	}
+	return hit
 }
 
 // 当前支持特定类型, 满足可用性和可拓展性
@@ -336,6 +366,15 @@ func (f *FilterField) CheckValue(val any) bool {
 	}
 }
 
+func (f *FilterField) SetHidden(hidden bool) {
+	f.Hidden = hidden
+	if f.SubFilter != nil {
+		for _, subFilters := range f.SubFilter.FilterFields {
+			subFilters.SetHidden(hidden)
+		}
+	}
+}
+
 func CompareBool(val bool, values []bool, qType QueryTypeEnum) bool {
 	switch qType {
 	case QueryTypeEnumEq:
@@ -355,7 +394,7 @@ func CompareBool(val bool, values []bool, qType QueryTypeEnum) bool {
 
 // Compare
 //
-//nolint:staticcheck,S1034
+//nolint:staticcheck
 func Compare[T cmp.Ordered](val T, values []T, qType QueryTypeEnum) bool {
 	switch qType {
 	case QueryTypeEnumMatch:
@@ -471,4 +510,20 @@ func anyToFloat64(val any) (float64, error) {
 	default:
 		return 0, fmt.Errorf("invalid float")
 	}
+}
+
+func CombineFilters(filters ...*FilterFields) *FilterFields {
+	filterAggr := &FilterFields{
+		QueryAndOr: ptr.Of(QueryAndOrEnumAnd),
+	}
+	for _, f := range filters {
+		if f == nil {
+			continue
+		}
+		filterAggr.FilterFields = append(filterAggr.FilterFields, &FilterField{
+			QueryAndOr: ptr.Of(QueryAndOrEnumAnd),
+			SubFilter:  f,
+		})
+	}
+	return filterAggr
 }

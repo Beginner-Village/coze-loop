@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/bytedance/gg/gcond"
@@ -31,6 +32,10 @@ func NewPromptSourceEvalTargetServiceImpl(promptRPCAdapter rpc.IPromptRPCAdapter
 
 type PromptSourceEvalTargetServiceImpl struct {
 	promptRPCAdapter rpc.IPromptRPCAdapter
+}
+
+func (t *PromptSourceEvalTargetServiceImpl) AsyncExecute(ctx context.Context, spaceID int64, param *entity.ExecuteEvalTargetParam) (int64, string, map[string]string, error) {
+	return 0, "", nil, errorx.New("async execute not supported")
 }
 
 func (t *PromptSourceEvalTargetServiceImpl) RuntimeParam() entity.IRuntimeParam {
@@ -77,6 +82,14 @@ func (t *PromptSourceEvalTargetServiceImpl) Execute(ctx context.Context, spaceID
 	}
 	vals := make([]*entity.VariableVal, 0)
 	for key, content := range param.Input.InputFields {
+		if key == consts.EvalTargetInputFieldKeyPromptUserQuery {
+			exePromptParam.UserQuery = &entity.Message{
+				Role:    entity.RoleUser,
+				Content: content,
+			}
+			delete(param.Input.InputFields, key)
+			continue
+		}
 		if content != nil {
 			variable := &entity.VariableVal{
 				Key:                 gptr.Of(key),
@@ -114,30 +127,36 @@ func (t *PromptSourceEvalTargetServiceImpl) Execute(ctx context.Context, spaceID
 		return evaluatorOutputData, entity.EvalTargetRunStatusFail, err
 	}
 
-	var outputStr string
-
-	if executePromptResult == nil {
-		outputStr = ""
-	} else if executePromptResult.Content != nil {
-		outputStr = *executePromptResult.Content
-	} else if executePromptResult.ToolCalls != nil {
-		outputStr, err = json.MarshalString(executePromptResult.ToolCalls)
+	var outputContent *entity.Content
+	if executePromptResult != nil && executePromptResult.MultiContent != nil {
+		outputContent = executePromptResult.MultiContent
 	} else {
-		outputStr = ""
-	}
-
-	evaluatorOutputData.OutputFields = map[string]*entity.Content{
-		consts.OutputSchemaKey: {
+		var outputStr string
+		if executePromptResult == nil {
+			outputStr = ""
+		} else if cont := gptr.Indirect(executePromptResult.Content); len(cont) > 0 {
+			outputStr = cont
+		} else if executePromptResult.ToolCalls != nil {
+			outputStr, _ = json.MarshalString(executePromptResult.ToolCalls)
+		} else {
+			outputStr = ""
+		}
+		outputContent = &entity.Content{
 			ContentType: gptr.Of(entity.ContentTypeText),
 			Format:      gptr.Of(entity.Markdown),
 			Text:        &outputStr,
-		},
+		}
+	}
+
+	evaluatorOutputData.OutputFields = map[string]*entity.Content{
+		consts.OutputSchemaKey: outputContent,
 	}
 
 	if executePromptResult != nil && executePromptResult.TokenUsage != nil {
 		evaluatorOutputData.EvalTargetUsage = &entity.EvalTargetUsage{
 			InputTokens:  executePromptResult.TokenUsage.InputTokens,
 			OutputTokens: executePromptResult.TokenUsage.OutputTokens,
+			TotalTokens:  executePromptResult.TokenUsage.InputTokens + executePromptResult.TokenUsage.OutputTokens,
 		}
 	}
 
@@ -149,15 +168,27 @@ func (t *PromptSourceEvalTargetServiceImpl) BuildBySource(ctx context.Context, s
 	if err != nil {
 		return nil, err
 	}
-	prompt, err := t.promptRPCAdapter.GetPrompt(ctx, spaceID, promptID, rpc.GetPromptParams{
-		CommitVersion: &sourceTargetVersion,
-	})
+	srcVer := strings.TrimSpace(sourceTargetVersion)
+	var query *rpc.MGetPromptQuery
+	if srcVer == "" {
+		// 与 RPC 约定一致：Version 为 nil 时拉取 Prompt 当前最新信息（不传 WithCommit 的空版本串）
+		query = &rpc.MGetPromptQuery{PromptID: promptID, Version: nil}
+	} else {
+		v := sourceTargetVersion
+		query = &rpc.MGetPromptQuery{PromptID: promptID, Version: &v}
+	}
+	prompts, err := t.promptRPCAdapter.MGetPrompt(ctx, spaceID, []*rpc.MGetPromptQuery{query})
 	if err != nil {
 		return nil, err
 	}
-	if prompt == nil {
+	if len(prompts) == 0 {
 		return nil, errorx.NewByCode(errno.ResourceNotFoundCode)
 	}
+	if prompts[0] == nil {
+		return nil, errorx.NewByCode(errno.ResourceNotFoundCode)
+	}
+	prompt := prompts[0]
+	// source_target_version 允许为空并原样落库；无版本时 RPC 侧 WithCommit=false，可能无 PromptCommit，仅构建最小入参 schema
 	var inputSchema []*entity.ArgsSchema
 	if prompt.PromptCommit != nil && prompt.PromptCommit.Detail != nil && prompt.PromptCommit.Detail.PromptTemplate != nil {
 		inputSchema = make([]*entity.ArgsSchema, 0)
@@ -196,6 +227,19 @@ func (t *PromptSourceEvalTargetServiceImpl) BuildBySource(ctx context.Context, s
 				JsonSchema:          gptr.Of(jsonschema),
 			})
 		}
+		inputSchema = append(inputSchema, &entity.ArgsSchema{
+			Key:                 gptr.Of(consts.EvalTargetInputFieldKeyPromptUserQuery),
+			SupportContentTypes: []entity.ContentType{entity.ContentTypeText, entity.ContentTypeImage, entity.ContentTypeMultipart},
+			JsonSchema:          gptr.Of(consts.StringJsonSchema),
+		})
+	} else {
+		inputSchema = []*entity.ArgsSchema{
+			{
+				Key:                 gptr.Of(consts.EvalTargetInputFieldKeyPromptUserQuery),
+				SupportContentTypes: []entity.ContentType{entity.ContentTypeText, entity.ContentTypeImage, entity.ContentTypeMultipart},
+				JsonSchema:          gptr.Of(consts.StringJsonSchema),
+			},
+		}
 	}
 	userIDInContext := session.UserIDInCtxOrEmpty(ctx)
 	do := &entity.EvalTarget{
@@ -204,11 +248,17 @@ func (t *PromptSourceEvalTargetServiceImpl) BuildBySource(ctx context.Context, s
 		EvalTargetType: entity.EvalTargetTypeLoopPrompt,
 		EvalTargetVersion: &entity.EvalTargetVersion{
 			SpaceID:             spaceID,
-			SourceTargetVersion: sourceTargetVersion,
+			SourceTargetVersion: srcVer,
 			EvalTargetType:      entity.EvalTargetTypeLoopPrompt,
 			Prompt: &entity.LoopPrompt{
 				PromptID: promptID,
-				Version:  sourceTargetVersion,
+				Version:  srcVer,
+				PromptKey: func() string {
+					if prompt == nil {
+						return ""
+					}
+					return prompt.PromptKey
+				}(),
 			},
 			InputSchema: inputSchema,
 			OutputSchema: []*entity.ArgsSchema{
@@ -339,7 +389,7 @@ func (t *PromptSourceEvalTargetServiceImpl) PackSourceInfo(ctx context.Context, 
 	sourcePromptMap := make(map[string]*rpc.LoopPrompt)
 	promptQueries := make([]*rpc.MGetPromptQuery, 0)
 	for _, do := range dos {
-		if do.EvalTargetType != entity.EvalTargetTypeLoopPrompt {
+		if do.EvalTargetType.ToOperatorBaseType() != entity.EvalTargetTypeLoopPrompt {
 			continue
 		}
 		id, err := strconv.ParseInt(do.SourceTargetID, 10, 64)
@@ -363,7 +413,7 @@ func (t *PromptSourceEvalTargetServiceImpl) PackSourceInfo(ctx context.Context, 
 		sourcePromptMap[fmt.Sprintf("%v", p.ID)] = p
 	}
 	for _, do := range dos {
-		if do.EvalTargetType != entity.EvalTargetTypeLoopPrompt {
+		if do.EvalTargetType.ToOperatorBaseType() != entity.EvalTargetTypeLoopPrompt {
 			continue
 		}
 		if p, ok := sourcePromptMap[fmt.Sprintf("%v", do.SourceTargetID)]; ok {
@@ -383,18 +433,38 @@ func (t *PromptSourceEvalTargetServiceImpl) PackSourceInfo(ctx context.Context, 
 
 func (t *PromptSourceEvalTargetServiceImpl) PackSourceVersionInfo(ctx context.Context, spaceID int64, dos []*entity.EvalTarget) (err error) {
 	sourcePromptMap := make(map[string]*rpc.LoopPrompt)
+	sourcePromptByID := make(map[string]*rpc.LoopPrompt)
 	promptQueries := make([]*rpc.MGetPromptQuery, 0)
 	for _, do := range dos {
-		if do.EvalTargetType != entity.EvalTargetTypeLoopPrompt {
+		if do.EvalTargetType.ToOperatorBaseType() != entity.EvalTargetTypeLoopPrompt {
 			continue
 		}
 		if do.EvalTargetVersion == nil || do.EvalTargetVersion.Prompt == nil {
 			continue
 		}
+		var verPtr *string
+		if strings.TrimSpace(do.EvalTargetVersion.SourceTargetVersion) != "" {
+			v := do.EvalTargetVersion.SourceTargetVersion
+			verPtr = &v
+		}
 		promptQueries = append(promptQueries, &rpc.MGetPromptQuery{
 			PromptID: do.EvalTargetVersion.Prompt.PromptID,
-			Version:  &do.EvalTargetVersion.SourceTargetVersion,
+			Version:  verPtr,
 		})
+		existUserQueryKey := false
+		for _, schema := range do.EvalTargetVersion.InputSchema {
+			if gptr.Indirect(schema.Key) == consts.EvalTargetInputFieldKeyPromptUserQuery {
+				existUserQueryKey = true
+				break
+			}
+		}
+		if !existUserQueryKey { // compatibility with historical data
+			do.EvalTargetVersion.InputSchema = append(do.EvalTargetVersion.InputSchema, &entity.ArgsSchema{
+				Key:                 gptr.Of(consts.EvalTargetInputFieldKeyPromptUserQuery),
+				SupportContentTypes: []entity.ContentType{entity.ContentTypeText, entity.ContentTypeImage, entity.ContentTypeMultipart},
+				JsonSchema:          gptr.Of(consts.StringJsonSchema),
+			})
+		}
 	}
 	if len(promptQueries) == 0 {
 		return nil
@@ -404,20 +474,28 @@ func (t *PromptSourceEvalTargetServiceImpl) PackSourceVersionInfo(ctx context.Co
 		logs.CtxError(ctx, "packSourceInfoWithVersion MGetPrompt err=%v", err)
 	}
 	for _, p := range prompts {
-		if p.PromptCommit == nil || p.PromptCommit.CommitInfo == nil {
+		if p == nil {
 			continue
 		}
-		sourcePromptMap[fmt.Sprintf("%v_%v", p.ID, gptr.Indirect(p.PromptCommit.CommitInfo.Version))] = p
+		if p.PromptCommit != nil && p.PromptCommit.CommitInfo != nil && p.PromptCommit.CommitInfo.Version != nil {
+			sourcePromptMap[fmt.Sprintf("%v_%v", p.ID, gptr.Indirect(p.PromptCommit.CommitInfo.Version))] = p
+		}
+		sourcePromptByID[fmt.Sprintf("%v", p.ID)] = p
 	}
 
 	for _, do := range dos {
-		if do.EvalTargetType != entity.EvalTargetTypeLoopPrompt {
+		if do.EvalTargetType.ToOperatorBaseType() != entity.EvalTargetTypeLoopPrompt {
 			continue
 		}
 		if do.EvalTargetVersion == nil || do.EvalTargetVersion.Prompt == nil {
 			continue
 		}
-		if p, ok := sourcePromptMap[fmt.Sprintf("%v_%v", do.SourceTargetID, do.EvalTargetVersion.SourceTargetVersion)]; ok {
+		key := fmt.Sprintf("%v_%v", do.SourceTargetID, do.EvalTargetVersion.SourceTargetVersion)
+		p, ok := sourcePromptMap[key]
+		if !ok && strings.TrimSpace(do.EvalTargetVersion.SourceTargetVersion) == "" {
+			p, ok = sourcePromptByID[do.SourceTargetID]
+		}
+		if ok {
 			var name string
 			if p.PromptBasic != nil {
 				name = gptr.Indirect(p.PromptBasic.DisplayName)
@@ -428,6 +506,20 @@ func (t *PromptSourceEvalTargetServiceImpl) PackSourceVersionInfo(ctx context.Co
 			}
 		} else {
 			do.BaseInfo.DeletedAt = gptr.Of(int64(1)) // 说明源数据已删除
+		}
+		existTrajectory := false
+		for _, schema := range do.EvalTargetVersion.OutputSchema {
+			if gptr.Indirect(schema.Key) == consts.EvalTargetOutputFieldKeyTrajectory {
+				existTrajectory = true
+				break
+			}
+		}
+		if !existTrajectory {
+			do.EvalTargetVersion.OutputSchema = append(do.EvalTargetVersion.OutputSchema, &entity.ArgsSchema{
+				Key:                 gptr.Of(consts.EvalTargetOutputFieldKeyTrajectory),
+				SupportContentTypes: []entity.ContentType{entity.ContentTypeText},
+				JsonSchema:          gptr.Of(consts.ObjectJsonSchema),
+			})
 		}
 	}
 	return nil
@@ -472,4 +564,8 @@ func (t *PromptSourceEvalTargetServiceImpl) BatchGetSource(ctx context.Context, 
 		})
 	}
 	return targets, nil
+}
+
+func (t *PromptSourceEvalTargetServiceImpl) SearchCustomEvalTarget(ctx context.Context, param *entity.SearchCustomEvalTargetParam) (targets []*entity.CustomEvalTarget, nextCursor string, hasMore bool, err error) {
+	return nil, "", false, nil
 }

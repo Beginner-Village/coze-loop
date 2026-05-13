@@ -1,10 +1,12 @@
 // Copyright (c) 2025 ynet Authors
-// SPDX-License-Identifier: Apache-2.0			runMode: entity.EvaluationModeSubmit,
+// SPDX-License-Identifier: Apache-2.0
+
 package service
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -14,11 +16,14 @@ import (
 
 	"github.com/coze-dev/coze-loop/backend/infra/external/benefit"
 	benefitMocks "github.com/coze-dev/coze-loop/backend/infra/external/benefit/mocks"
+	idgenMocks "github.com/coze-dev/coze-loop/backend/infra/idgen/mocks"
 	lockMocks "github.com/coze-dev/coze-loop/backend/infra/lock/mocks"
 	lwtMocks "github.com/coze-dev/coze-loop/backend/infra/platestwrite/mocks"
+	"github.com/coze-dev/coze-loop/backend/modules/evaluation/consts"
 	idemMocks "github.com/coze-dev/coze-loop/backend/modules/evaluation/domain/component/idem/mocks"
 	metricsMocks "github.com/coze-dev/coze-loop/backend/modules/evaluation/domain/component/metrics/mocks"
 	componentMocks "github.com/coze-dev/coze-loop/backend/modules/evaluation/domain/component/mocks"
+	"github.com/coze-dev/coze-loop/backend/modules/evaluation/domain/component/rpc/mocks"
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/domain/entity"
 	eventsMocks "github.com/coze-dev/coze-loop/backend/modules/evaluation/domain/events/mocks"
 	repoMocks "github.com/coze-dev/coze-loop/backend/modules/evaluation/domain/repo/mocks"
@@ -97,6 +102,10 @@ func TestExptMangerImpl_Run(t *testing.T) {
 					EXPECT().
 					PublishExptScheduleEvent(ctx, gomock.Any(), gptr.Of(time.Second*3)).
 					Return(nil)
+				mgr.userProvider.(*mocks.MockIUserProvider).
+					EXPECT().
+					MGetUserInfo(gomock.Any(), gomock.Any()).
+					Return([]*entity.UserInfo{}, nil)
 			},
 			wantErr: false,
 		},
@@ -205,7 +214,7 @@ func TestExptMangerImpl_Run(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.setup()
-			err := mgr.Run(ctx, tt.exptID, tt.runID, tt.spaceID, session, tt.runMode, tt.ext)
+			err := mgr.Run(ctx, tt.exptID, tt.runID, tt.spaceID, 0, session, tt.runMode, tt.ext)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Run() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -264,7 +273,7 @@ func TestExptMangerImpl_CompleteRun(t *testing.T) {
 
 				mgr.mutex.(*lockMocks.MockILocker).
 					EXPECT().
-					Unlock(gomock.Any()).
+					UnlockForce(ctx, "expt_run_mutex_lock:123").
 					Return(true, nil)
 
 				mgr.runLogRepo.(*repoMocks.MockIExptRunLogRepo).
@@ -309,7 +318,7 @@ func TestExptMangerImpl_CompleteRun(t *testing.T) {
 
 				mgr.mutex.(*lockMocks.MockILocker).
 					EXPECT().
-					Unlock(gomock.Any()).
+					UnlockForce(ctx, "expt_run_mutex_lock:123").
 					Return(true, nil)
 
 				mgr.runLogRepo.(*repoMocks.MockIExptRunLogRepo).
@@ -342,6 +351,45 @@ func TestExptMangerImpl_CompleteRun(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name:    "complete_run_with_interval",
+			exptID:  123,
+			runID:   456,
+			mode:    entity.EvaluationModeSubmit,
+			spaceID: 789,
+			opts: []entity.CompleteExptOptionFn{
+				entity.WithCompleteInterval(time.Millisecond * 100),
+			},
+			setup: func() {
+				runLog := &entity.ExptRunLog{
+					ID:        456,
+					ExptID:    123,
+					ExptRunID: 456,
+					Status:    int64(entity.ExptStatus_Processing),
+				}
+
+				mgr.runLogRepo.(*repoMocks.MockIExptRunLogRepo).
+					EXPECT().
+					Get(ctx, int64(123), int64(456)).
+					Return(runLog, nil)
+
+				mgr.turnResultRepo.(*repoMocks.MockIExptTurnResultRepo).
+					EXPECT().
+					ListTurnResult(ctx, int64(789), int64(123), nil, gomock.Any(), false).
+					Return([]*entity.ExptTurnResult{}, int64(0), nil)
+
+				mgr.mutex.(*lockMocks.MockILocker).
+					EXPECT().
+					UnlockForce(ctx, "expt_run_mutex_lock:123").
+					Return(true, nil)
+
+				mgr.runLogRepo.(*repoMocks.MockIExptRunLogRepo).
+					EXPECT().
+					Save(ctx, gomock.Any()).
+					Return(nil)
+			},
+			wantErr: false,
+		},
+		{
 			name:    "get_run_log_failure",
 			exptID:  123,
 			runID:   456,
@@ -361,7 +409,7 @@ func TestExptMangerImpl_CompleteRun(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.setup()
-			err := mgr.CompleteRun(ctx, tt.exptID, tt.runID, tt.mode, tt.spaceID, session, tt.opts...)
+			err := mgr.CompleteRun(ctx, tt.exptID, tt.runID, tt.spaceID, session, tt.opts...)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("CompleteRun() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -377,18 +425,20 @@ func TestExptMangerImpl_Kill(t *testing.T) {
 	session := &entity.Session{UserID: "test_user"}
 
 	tests := []struct {
-		name    string
-		exptID  int64
-		spaceID int64
-		msg     string
-		setup   func()
-		wantErr bool
+		name      string
+		exptID    int64
+		exptRunID *int64
+		spaceID   int64
+		msg       string
+		setup     func()
+		wantErr   bool
 	}{
 		{
-			name:    "successful_kill",
-			exptID:  123,
-			spaceID: 789,
-			msg:     "user terminated",
+			name:      "successful_kill",
+			exptID:    123,
+			exptRunID: gptr.Of[int64](456),
+			spaceID:   789,
+			msg:       "user terminated",
 			setup: func() {
 				// Mock CompleteExpt dependencies
 				mgr.idem.(*idemMocks.MockIdempotentService).
@@ -406,9 +456,9 @@ func TestExptMangerImpl_Kill(t *testing.T) {
 						StartAt:  gptr.Of(time.Now()),
 					}, nil)
 
-				mgr.publisher.(*eventsMocks.MockExptEventPublisher).
+				mgr.exptAggrResultService.(*svcMocks.MockExptAggrResultService).
 					EXPECT().
-					PublishExptAggrCalculateEvent(ctx, gomock.Any(), gptr.Of(time.Second*3)).
+					PublishExptAggrResultEvent(ctx, gomock.Any(), gomock.Any()).
 					Return(nil)
 
 				mgr.exptResultService.(*svcMocks.MockExptResultService).
@@ -420,8 +470,13 @@ func TestExptMangerImpl_Kill(t *testing.T) {
 						PendingItemCnt:    0,
 						ProcessingItemCnt: 0,
 						TerminatedItemCnt: 0,
-						IncompleteTurnIDs: []*entity.ItemTurnID{},
 					}, nil)
+
+				// Mock incomplete turns retrieval (because NoCompleteItemTurn is not set)
+				mgr.exptResultService.(*svcMocks.MockExptResultService).
+					EXPECT().
+					GetIncompleteTurns(ctx, int64(123), int64(789), session).
+					Return([]*entity.ItemTurnID{}, nil)
 
 				mgr.statsRepo.(*repoMocks.MockIExptStatsRepo).
 					EXPECT().
@@ -440,7 +495,7 @@ func TestExptMangerImpl_Kill(t *testing.T) {
 
 				mgr.configer.(*componentMocks.MockIConfiger).
 					EXPECT().
-					GetExptExecConf(ctx, int64(789)).AnyTimes().AnyTimes().
+					GetExptExecConf(ctx, int64(789)).AnyTimes().
 					Return(&entity.ExptExecConf{
 						SpaceExptConcurLimit: 10,
 					})
@@ -452,148 +507,23 @@ func TestExptMangerImpl_Kill(t *testing.T) {
 
 				mgr.mtr.(*metricsMocks.MockExptMetric).
 					EXPECT().
-					EmitExptExecResult(int64(789), int64(entity.ExptType_Offline), int64(entity.ExptStatus_Terminated), gomock.Any())
-			},
-			wantErr: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			tt.setup()
-			err := mgr.Kill(ctx, tt.exptID, tt.spaceID, tt.msg, session)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Kill() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
-	}
-}
-
-func TestExptMangerImpl_RetryUnSuccess(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-	mgr := newTestExptManager(ctrl)
-	ctx := context.Background()
-	session := &entity.Session{UserID: "test_user"}
-
-	tests := []struct {
-		name    string
-		exptID  int64
-		runID   int64
-		spaceID int64
-		ext     map[string]string
-		setup   func()
-		wantErr bool
-	}{
-		{
-			name:    "successful_retry",
-			exptID:  123,
-			runID:   456,
-			spaceID: 789,
-			ext:     map[string]string{"retry": "true"},
-			setup: func() {
-				// Mock lwt.CheckWriteFlagByID
-				mgr.lwt.(*lwtMocks.MockILatestWriteTracker).
-					EXPECT().
-					CheckWriteFlagByID(ctx, gomock.Any(), int64(123)).
-					Return(false).AnyTimes()
-
-				// Mock MGetByID for experiment retrieval
-				mgr.exptRepo.(*repoMocks.MockIExperimentRepo).
-					EXPECT().
-					MGetByID(ctx, []int64{123}, int64(789)).
-					Return([]*entity.Experiment{{ID: 123, SpaceID: 789}}, nil).AnyTimes()
-
-				// Mock GetEvaluationSet
-				mgr.evaluationSetService.(*svcMocks.MockIEvaluationSetService).
-					EXPECT().
-					GetEvaluationSet(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-					Return(&entity.EvaluationSet{}, nil).AnyTimes()
-
-				// Mock MGetStats
-				mgr.exptResultService.(*svcMocks.MockExptResultService).
-					EXPECT().
-					MGetStats(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-					Return([]*entity.ExptStats{}, nil).AnyTimes()
-
-				// Mock BatchGetExptAggrResultByExperimentIDs
-				mgr.exptAggrResultService.(*svcMocks.MockExptAggrResultService).
-					EXPECT().
-					BatchGetExptAggrResultByExperimentIDs(gomock.Any(), gomock.Any(), gomock.Any()).
-					Return([]*entity.ExptAggregateResult{}, nil).AnyTimes()
-
-				mgr.quotaRepo.(*repoMocks.MockQuotaRepo).
-					EXPECT().
-					CreateOrUpdate(ctx, int64(789), gomock.Any(), session).
-					Return(nil)
-				mgr.configer.(*componentMocks.MockIConfiger).
-					EXPECT().
-					GetExptExecConf(ctx, int64(789)).AnyTimes().
-					Return(&entity.ExptExecConf{
-						SpaceExptConcurLimit: 10,
-					})
+					EmitExptExecResult(int64(789), int64(entity.ExptType_Offline), int64(entity.ExptStatus_Terminated), gomock.Any()).
+					AnyTimes()
 				mgr.publisher.(*eventsMocks.MockExptEventPublisher).
 					EXPECT().
-					PublishExptScheduleEvent(ctx, gomock.Any(), gptr.Of(time.Second*3)).
-					Do(func(ctx context.Context, event *entity.ExptScheduleEvent, timeout *time.Duration) {
-						assert.Equal(t, entity.EvaluationModeFailRetry, event.ExptRunMode)
-					}).
+					PublishExptLifecycleEvent(gomock.Any(), gomock.Any(), gomock.Any()).
 					Return(nil)
 			},
 			wantErr: false,
-		},
-		{
-			name:    "quota_check_failure_on_retry",
-			exptID:  123,
-			runID:   456,
-			spaceID: 789,
-			ext:     map[string]string{},
-			setup: func() {
-				// Mock lwt.CheckWriteFlagByID
-				mgr.lwt.(*lwtMocks.MockILatestWriteTracker).
-					EXPECT().
-					CheckWriteFlagByID(ctx, gomock.Any(), int64(123)).
-					Return(false).AnyTimes()
-
-				// Mock MGetByID for experiment retrieval
-				mgr.exptRepo.(*repoMocks.MockIExperimentRepo).
-					EXPECT().
-					MGetByID(ctx, []int64{123}, int64(789)).
-					Return([]*entity.Experiment{{ID: 123, SpaceID: 789}}, nil).AnyTimes()
-
-				// Mock GetEvaluationSet
-				mgr.evaluationSetService.(*svcMocks.MockIEvaluationSetService).
-					EXPECT().
-					GetEvaluationSet(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-					Return(&entity.EvaluationSet{}, nil).AnyTimes()
-
-				// Mock MGetStats
-				mgr.exptResultService.(*svcMocks.MockExptResultService).
-					EXPECT().
-					MGetStats(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-					Return([]*entity.ExptStats{}, nil).AnyTimes()
-
-				// Mock BatchGetExptAggrResultByExperimentIDs
-				mgr.exptAggrResultService.(*svcMocks.MockExptAggrResultService).
-					EXPECT().
-					BatchGetExptAggrResultByExperimentIDs(gomock.Any(), gomock.Any(), gomock.Any()).
-					Return([]*entity.ExptAggregateResult{}, nil).AnyTimes()
-
-				mgr.quotaRepo.(*repoMocks.MockQuotaRepo).
-					EXPECT().
-					CreateOrUpdate(ctx, int64(789), gomock.Any(), session).
-					Return(errors.New("quota exceeded"))
-			},
-			wantErr: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.setup()
-			err := mgr.RetryUnSuccess(ctx, tt.exptID, tt.runID, tt.spaceID, session, tt.ext)
+			err := mgr.Kill(ctx, tt.exptID, tt.exptRunID, tt.spaceID, tt.msg, session)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("RetryUnSuccess() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("Kill() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}
@@ -624,7 +554,7 @@ func TestExptMangerImpl_LogRun(t *testing.T) {
 			setup: func() {
 				mgr.configer.(*componentMocks.MockIConfiger).
 					EXPECT().
-					GetExptExecConf(ctx, int64(789)).AnyTimes().AnyTimes().
+					GetExptExecConf(ctx, int64(789)).AnyTimes().
 					Return(&entity.ExptExecConf{
 						ZombieIntervalSecond: 300,
 					})
@@ -643,11 +573,21 @@ func TestExptMangerImpl_LogRun(t *testing.T) {
 					Create(ctx, gomock.Any()).
 					Do(func(ctx context.Context, runLog *entity.ExptRunLog) {
 						assert.Equal(t, int64(456), runLog.ID)
+						assert.Equal(t, int64(789), runLog.SpaceID)
 						assert.Equal(t, int64(123), runLog.ExptID)
 						assert.Equal(t, int64(456), runLog.ExptRunID)
 						assert.Equal(t, int32(entity.EvaluationModeSubmit), runLog.Mode)
 						assert.Equal(t, int64(entity.ExptStatus_Pending), runLog.Status)
 						assert.Equal(t, "test_user", runLog.CreatedBy)
+					}).
+					Return(nil)
+
+				mgr.exptRepo.(*repoMocks.MockIExperimentRepo).
+					EXPECT().
+					Update(ctx, gomock.Any()).
+					Do(func(ctx context.Context, expt *entity.Experiment) {
+						assert.Equal(t, int64(123), expt.ID)
+						assert.Equal(t, int64(456), expt.LatestRunID)
 					}).
 					Return(nil)
 			},
@@ -662,7 +602,7 @@ func TestExptMangerImpl_LogRun(t *testing.T) {
 			setup: func() {
 				mgr.configer.(*componentMocks.MockIConfiger).
 					EXPECT().
-					GetExptExecConf(ctx, int64(789)).AnyTimes().AnyTimes().
+					GetExptExecConf(ctx, int64(789)).AnyTimes().
 					Return(&entity.ExptExecConf{
 						ZombieIntervalSecond: 300,
 					})
@@ -683,7 +623,7 @@ func TestExptMangerImpl_LogRun(t *testing.T) {
 			setup: func() {
 				mgr.configer.(*componentMocks.MockIConfiger).
 					EXPECT().
-					GetExptExecConf(ctx, int64(789)).AnyTimes().AnyTimes().
+					GetExptExecConf(ctx, int64(789)).AnyTimes().
 					Return(&entity.ExptExecConf{
 						ZombieIntervalSecond: 300,
 					})
@@ -704,14 +644,372 @@ func TestExptMangerImpl_LogRun(t *testing.T) {
 			},
 			wantErr: true,
 		},
+		{
+			name:      "successful_log_run_with_item_ids",
+			exptID:    123,
+			exptRunID: 456,
+			mode:      entity.EvaluationModeSubmit,
+			spaceID:   789,
+			setup: func() {
+				mgr.configer.(*componentMocks.MockIConfiger).
+					EXPECT().
+					GetExptExecConf(ctx, int64(789)).AnyTimes().
+					Return(&entity.ExptExecConf{
+						ZombieIntervalSecond: 300,
+					})
+
+				mgr.mutex.(*lockMocks.MockILocker).
+					EXPECT().
+					LockBackoff(ctx, gomock.Any(), time.Duration(300)*time.Second, time.Second).
+					Return(true, nil)
+
+				mgr.mtr.(*metricsMocks.MockExptMetric).
+					EXPECT().
+					EmitExptExecRun(int64(789), int64(entity.EvaluationModeSubmit))
+
+				mgr.runLogRepo.(*repoMocks.MockIExptRunLogRepo).
+					EXPECT().
+					Create(ctx, gomock.Any()).
+					Do(func(ctx context.Context, runLog *entity.ExptRunLog) {
+						assert.Equal(t, int64(456), runLog.ID)
+						assert.Equal(t, int64(123), runLog.ExptID)
+						assert.Len(t, runLog.ItemIds, 1)
+						assert.Equal(t, []int64{1, 2}, runLog.ItemIds[0].ItemIDs)
+					}).
+					Return(nil)
+
+				mgr.exptRepo.(*repoMocks.MockIExperimentRepo).
+					EXPECT().
+					Update(ctx, gomock.Any()).
+					Return(nil)
+			},
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.setup()
-			err := mgr.LogRun(ctx, tt.exptID, tt.exptRunID, tt.mode, tt.spaceID, session)
+			itemIDs := []int64(nil)
+			if tt.name == "successful_log_run_with_item_ids" {
+				itemIDs = []int64{1, 2}
+			}
+			err := mgr.LogRun(ctx, tt.exptID, tt.exptRunID, tt.mode, tt.spaceID, itemIDs, session)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("LogRun() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestExptMangerImpl_LogRetryItemsRun(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mgr := newTestExptManager(ctrl)
+	ctx := context.Background()
+	session := &entity.Session{UserID: "test_user"}
+	exptID := int64(123)
+	spaceID := int64(789)
+	mode := entity.EvaluationModeRetryItems
+	itemIDs := []int64{1, 2}
+
+	tests := []struct {
+		name      string
+		setup     func()
+		wantRunID int64
+		wantRetry bool
+		wantErr   bool
+	}{
+		{
+			name: "locked_success_new_run",
+			setup: func() {
+				mgr.configer.(*componentMocks.MockIConfiger).
+					EXPECT().
+					GetExptExecConf(ctx, spaceID).AnyTimes().
+					Return(&entity.ExptExecConf{ZombieIntervalSecond: 300})
+				mgr.idgenerator.(*idgenMocks.MockIIDGenerator).
+					EXPECT().GenID(ctx).Return(int64(1001), nil)
+				mgr.mutex.(*lockMocks.MockILocker).
+					EXPECT().
+					BackoffLockWithValue(ctx, gomock.Any(), "1001", 300*time.Second, time.Second).
+					Return(true, "1001", nil)
+				mgr.runLogRepo.(*repoMocks.MockIExptRunLogRepo).
+					EXPECT().Save(ctx, gomock.Any()).
+					Do(func(ctx context.Context, rl *entity.ExptRunLog) {
+						assert.Equal(t, int64(1001), rl.ExptRunID)
+						assert.Len(t, rl.ItemIds, 1)
+						assert.Equal(t, itemIDs, rl.ItemIds[0].ItemIDs)
+					}).
+					Return(nil)
+				mgr.exptRepo.(*repoMocks.MockIExperimentRepo).
+					EXPECT().Update(ctx, &entity.Experiment{ID: exptID, LatestRunID: 1001}).Return(nil)
+				mgr.mtr.(*metricsMocks.MockExptMetric).
+					EXPECT().EmitExptExecRun(spaceID, int64(mode))
+			},
+			wantRunID: 1001,
+			wantRetry: false,
+			wantErr:   false,
+		},
+		{
+			name: "retried_append_to_existing_run",
+			setup: func() {
+				mgr.configer.(*componentMocks.MockIConfiger).
+					EXPECT().
+					GetExptExecConf(ctx, spaceID).AnyTimes().
+					Return(&entity.ExptExecConf{ZombieIntervalSecond: 300})
+				mgr.idgenerator.(*idgenMocks.MockIIDGenerator).
+					EXPECT().GenID(ctx).Return(int64(1002), nil)
+				mgr.mutex.(*lockMocks.MockILocker).
+					EXPECT().
+					BackoffLockWithValue(ctx, gomock.Any(), "1002", 300*time.Second, time.Second).
+					Return(false, "1001", nil)
+				mgr.mutex.(*lockMocks.MockILocker).
+					EXPECT().Exists(ctx, "expt_completing_mutex_lock:123:1001").Return(false, nil)
+				existingLog := &entity.ExptRunLog{ID: 1001, ExptID: exptID, ExptRunID: 1001}
+				mgr.runLogRepo.(*repoMocks.MockIExptRunLogRepo).
+					EXPECT().Get(ctx, exptID, int64(1001)).
+					Return(existingLog, nil)
+				mgr.runLogRepo.(*repoMocks.MockIExptRunLogRepo).
+					EXPECT().Save(ctx, gomock.Any()).Return(nil)
+			},
+			wantRunID: 1001,
+			wantRetry: true,
+			wantErr:   false,
+		},
+		{
+			name: "idgen_error",
+			setup: func() {
+				mgr.configer.(*componentMocks.MockIConfiger).
+					EXPECT().
+					GetExptExecConf(ctx, spaceID).AnyTimes().
+					Return(&entity.ExptExecConf{ZombieIntervalSecond: 300})
+				mgr.idgenerator.(*idgenMocks.MockIIDGenerator).
+					EXPECT().GenID(ctx).Return(int64(0), errors.New("idgen failed"))
+			},
+			wantErr: true,
+		},
+		{
+			name: "lock_error",
+			setup: func() {
+				mgr.configer.(*componentMocks.MockIConfiger).
+					EXPECT().
+					GetExptExecConf(ctx, spaceID).AnyTimes().
+					Return(&entity.ExptExecConf{ZombieIntervalSecond: 300})
+				mgr.idgenerator.(*idgenMocks.MockIIDGenerator).
+					EXPECT().GenID(ctx).Return(int64(1003), nil)
+				mgr.mutex.(*lockMocks.MockILocker).
+					EXPECT().
+					BackoffLockWithValue(ctx, gomock.Any(), "1003", 300*time.Second, time.Second).
+					Return(false, "", errors.New("redis error"))
+			},
+			wantErr: true,
+		},
+		{
+			name: "retried_parse_run_id_error",
+			setup: func() {
+				mgr.configer.(*componentMocks.MockIConfiger).
+					EXPECT().
+					GetExptExecConf(ctx, spaceID).AnyTimes().
+					Return(&entity.ExptExecConf{ZombieIntervalSecond: 300})
+				mgr.idgenerator.(*idgenMocks.MockIIDGenerator).
+					EXPECT().GenID(ctx).Return(int64(1004), nil)
+				mgr.mutex.(*lockMocks.MockILocker).
+					EXPECT().
+					BackoffLockWithValue(ctx, gomock.Any(), "1004", 300*time.Second, time.Second).
+					Return(false, "not_a_number", nil)
+			},
+			wantErr: true,
+		},
+		{
+			name: "retried_get_run_log_returns_error",
+			setup: func() {
+				mgr.configer.(*componentMocks.MockIConfiger).
+					EXPECT().
+					GetExptExecConf(ctx, spaceID).AnyTimes().
+					Return(&entity.ExptExecConf{ZombieIntervalSecond: 300})
+				mgr.idgenerator.(*idgenMocks.MockIIDGenerator).
+					EXPECT().GenID(ctx).Return(int64(1005), nil)
+				mgr.mutex.(*lockMocks.MockILocker).
+					EXPECT().
+					BackoffLockWithValue(ctx, gomock.Any(), "1005", 300*time.Second, time.Second).
+					Return(false, "1001", nil)
+				mgr.mutex.(*lockMocks.MockILocker).
+					EXPECT().Exists(ctx, "expt_completing_mutex_lock:123:1001").Return(false, nil)
+				mgr.runLogRepo.(*repoMocks.MockIExptRunLogRepo).
+					EXPECT().Get(ctx, exptID, int64(1001)).
+					Return(nil, errors.New("get run log failed"))
+			},
+			wantErr: true,
+		},
+		{
+			name: "save_error",
+			setup: func() {
+				mgr.configer.(*componentMocks.MockIConfiger).
+					EXPECT().
+					GetExptExecConf(ctx, spaceID).AnyTimes().
+					Return(&entity.ExptExecConf{ZombieIntervalSecond: 300})
+				mgr.idgenerator.(*idgenMocks.MockIIDGenerator).
+					EXPECT().GenID(ctx).Return(int64(1006), nil)
+				mgr.mutex.(*lockMocks.MockILocker).
+					EXPECT().
+					BackoffLockWithValue(ctx, gomock.Any(), "1006", 300*time.Second, time.Second).
+					Return(true, "1006", nil)
+				mgr.runLogRepo.(*repoMocks.MockIExptRunLogRepo).
+					EXPECT().Save(ctx, gomock.Any()).Return(errors.New("save failed"))
+			},
+			wantErr: true,
+		},
+		{
+			name: "retried_completing_lock_exists",
+			setup: func() {
+				mgr.configer.(*componentMocks.MockIConfiger).
+					EXPECT().
+					GetExptExecConf(ctx, spaceID).AnyTimes().
+					Return(&entity.ExptExecConf{ZombieIntervalSecond: 300})
+				mgr.idgenerator.(*idgenMocks.MockIIDGenerator).
+					EXPECT().GenID(ctx).Return(int64(1007), nil)
+				mgr.mutex.(*lockMocks.MockILocker).
+					EXPECT().
+					BackoffLockWithValue(ctx, gomock.Any(), "1007", 300*time.Second, time.Second).
+					Return(false, "1001", nil)
+				mgr.mutex.(*lockMocks.MockILocker).
+					EXPECT().Exists(ctx, "expt_completing_mutex_lock:123:1001").Return(true, nil)
+			},
+			wantErr: true,
+		},
+		{
+			name: "retried_completing_lock_check_error",
+			setup: func() {
+				mgr.configer.(*componentMocks.MockIConfiger).
+					EXPECT().
+					GetExptExecConf(ctx, spaceID).AnyTimes().
+					Return(&entity.ExptExecConf{ZombieIntervalSecond: 300})
+				mgr.idgenerator.(*idgenMocks.MockIIDGenerator).
+					EXPECT().GenID(ctx).Return(int64(1008), nil)
+				mgr.mutex.(*lockMocks.MockILocker).
+					EXPECT().
+					BackoffLockWithValue(ctx, gomock.Any(), "1008", 300*time.Second, time.Second).
+					Return(false, "1001", nil)
+				mgr.mutex.(*lockMocks.MockILocker).
+					EXPECT().Exists(ctx, "expt_completing_mutex_lock:123:1001").Return(false, errors.New("lock check error"))
+			},
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.setup()
+			runID, retried, err := mgr.LogRetryItemsRun(ctx, exptID, mode, spaceID, itemIDs, session)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, tt.wantRunID, runID)
+			assert.Equal(t, tt.wantRetry, retried)
+		})
+	}
+}
+
+func TestExptMangerImpl_RetryItems(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mgr := newTestExptManager(ctrl)
+	ctx := context.Background()
+	session := &entity.Session{UserID: "test_user"}
+	exptID := int64(123)
+	runID := int64(456)
+	spaceID := int64(789)
+	itemRetryNum := 1
+	itemIDs := []int64{1, 2}
+	ext := map[string]string{"k": "v"}
+
+	tests := []struct {
+		name    string
+		setup   func()
+		wantErr bool
+	}{
+		{
+			name: "success_publish_event",
+			setup: func() {
+				mgr.quotaRepo.(*repoMocks.MockQuotaRepo).
+					EXPECT().CreateOrUpdate(ctx, spaceID, gomock.Any(), session).Return(nil)
+				mgr.configer.(*componentMocks.MockIConfiger).
+					EXPECT().GetExptExecConf(ctx, spaceID).AnyTimes().
+					Return(&entity.ExptExecConf{SpaceExptConcurLimit: 10})
+				mgr.lwt.(*lwtMocks.MockILatestWriteTracker).
+					EXPECT().CheckWriteFlagByID(ctx, gomock.Any(), exptID).Return(false).AnyTimes()
+				mgr.exptRepo.(*repoMocks.MockIExperimentRepo).
+					EXPECT().MGetByID(ctx, []int64{exptID}, spaceID).
+					Return([]*entity.Experiment{{ID: exptID, SpaceID: spaceID, ExptType: 1}}, nil).AnyTimes()
+				mgr.evaluationSetService.(*svcMocks.MockIEvaluationSetService).
+					EXPECT().GetEvaluationSet(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&entity.EvaluationSet{}, nil).AnyTimes()
+				mgr.exptResultService.(*svcMocks.MockExptResultService).
+					EXPECT().MGetStats(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]*entity.ExptStats{}, nil).AnyTimes()
+				mgr.exptAggrResultService.(*svcMocks.MockExptAggrResultService).
+					EXPECT().BatchGetExptAggrResultByExperimentIDs(gomock.Any(), gomock.Any(), gomock.Any()).Return([]*entity.ExptAggregateResult{}, nil).AnyTimes()
+				mgr.publisher.(*eventsMocks.MockExptEventPublisher).
+					EXPECT().
+					PublishExptScheduleEvent(ctx, gomock.Any(), gptr.Of(time.Second*3)).
+					Return(nil)
+			},
+			wantErr: false,
+		},
+		{
+			name: "quota_check_failure",
+			setup: func() {
+				mgr.quotaRepo.(*repoMocks.MockQuotaRepo).
+					EXPECT().CreateOrUpdate(ctx, spaceID, gomock.Any(), session).Return(errors.New("quota exceeded"))
+				mgr.configer.(*componentMocks.MockIConfiger).
+					EXPECT().GetExptExecConf(ctx, spaceID).AnyTimes().
+					Return(&entity.ExptExecConf{SpaceExptConcurLimit: 10})
+				mgr.lwt.(*lwtMocks.MockILatestWriteTracker).
+					EXPECT().CheckWriteFlagByID(ctx, gomock.Any(), exptID).Return(false).AnyTimes()
+				mgr.exptRepo.(*repoMocks.MockIExperimentRepo).
+					EXPECT().MGetByID(ctx, []int64{exptID}, spaceID).
+					Return([]*entity.Experiment{{ID: exptID, SpaceID: spaceID}}, nil).AnyTimes()
+				mgr.evaluationSetService.(*svcMocks.MockIEvaluationSetService).
+					EXPECT().GetEvaluationSet(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&entity.EvaluationSet{}, nil).AnyTimes()
+				mgr.exptResultService.(*svcMocks.MockExptResultService).
+					EXPECT().MGetStats(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]*entity.ExptStats{}, nil).AnyTimes()
+				mgr.exptAggrResultService.(*svcMocks.MockExptAggrResultService).
+					EXPECT().BatchGetExptAggrResultByExperimentIDs(gomock.Any(), gomock.Any(), gomock.Any()).Return([]*entity.ExptAggregateResult{}, nil).AnyTimes()
+			},
+			wantErr: true,
+		},
+		{
+			name: "publish_event_failure",
+			setup: func() {
+				mgr.quotaRepo.(*repoMocks.MockQuotaRepo).
+					EXPECT().CreateOrUpdate(ctx, spaceID, gomock.Any(), session).Return(nil)
+				mgr.configer.(*componentMocks.MockIConfiger).
+					EXPECT().GetExptExecConf(ctx, spaceID).AnyTimes().
+					Return(&entity.ExptExecConf{SpaceExptConcurLimit: 10})
+				mgr.lwt.(*lwtMocks.MockILatestWriteTracker).
+					EXPECT().CheckWriteFlagByID(ctx, gomock.Any(), exptID).Return(false).AnyTimes()
+				mgr.exptRepo.(*repoMocks.MockIExperimentRepo).
+					EXPECT().MGetByID(ctx, []int64{exptID}, spaceID).
+					Return([]*entity.Experiment{{ID: exptID, SpaceID: spaceID}}, nil).AnyTimes()
+				mgr.evaluationSetService.(*svcMocks.MockIEvaluationSetService).
+					EXPECT().GetEvaluationSet(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&entity.EvaluationSet{}, nil).AnyTimes()
+				mgr.exptResultService.(*svcMocks.MockExptResultService).
+					EXPECT().MGetStats(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]*entity.ExptStats{}, nil).AnyTimes()
+				mgr.exptAggrResultService.(*svcMocks.MockExptAggrResultService).
+					EXPECT().BatchGetExptAggrResultByExperimentIDs(gomock.Any(), gomock.Any(), gomock.Any()).Return([]*entity.ExptAggregateResult{}, nil).AnyTimes()
+				mgr.publisher.(*eventsMocks.MockExptEventPublisher).
+					EXPECT().
+					PublishExptScheduleEvent(ctx, gomock.Any(), gptr.Of(time.Second*3)).
+					Return(errors.New("publish failed"))
+			},
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.setup()
+			err := mgr.RetryItems(ctx, exptID, runID, spaceID, itemRetryNum, itemIDs, session, ext)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("RetryItems() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}
@@ -1034,6 +1332,16 @@ func TestExptMangerImpl_CheckConnector(t *testing.T) {
 				SpaceID: 789,
 				EvalConf: &entity.EvaluationConfiguration{
 					ConnectorConf: entity.Connector{
+						TargetConf: &entity.TargetConf{
+							TargetVersionID: 1,
+							IngressConf: &entity.TargetIngressConf{
+								EvalSetAdapter: &entity.FieldAdapter{
+									FieldConfs: []*entity.FieldConf{
+										{FromField: "field1"},
+									},
+								},
+							},
+						},
 						EvaluatorsConf: &entity.EvaluatorsConf{
 							EvaluatorConf: []*entity.EvaluatorConf{
 								{
@@ -1052,7 +1360,11 @@ func TestExptMangerImpl_CheckConnector(t *testing.T) {
 				},
 				Target: &entity.EvalTarget{
 					EvalTargetType: entity.EvalTargetTypeLoopTrace,
+					EvalTargetVersion: &entity.EvalTargetVersion{
+						ID: 1,
+					},
 				},
+				TargetVersionID: 1,
 				EvalSet: &entity.EvaluationSet{
 					EvaluationSetVersion: &entity.EvaluationSetVersion{
 						EvaluationSetSchema: &entity.EvaluationSetSchema{
@@ -1174,7 +1486,7 @@ func TestExptMangerImpl_CheckConnector(t *testing.T) {
 												{FromField: "field1"},
 											},
 										},
-										TargetAdapter: &entity.FieldAdapter{ // 添加必要的TargetAdapter
+										TargetAdapter: &entity.FieldAdapter{ // Add necessary TargetAdapter
 											FieldConfs: []*entity.FieldConf{},
 										},
 									},
@@ -1246,6 +1558,2309 @@ func TestExptMangerImpl_CheckConnector(t *testing.T) {
 			err := mgr.CheckConnector(ctx, tt.expt, session)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("CheckConnector() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestExptMangerImpl_CompleteExpt(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mgr := newTestExptManager(ctrl)
+	ctx := context.Background()
+	session := &entity.Session{UserID: "test_user"}
+
+	tests := []struct {
+		name      string
+		exptID    int64
+		exptRunID *int64
+		spaceID   int64
+		opts      []entity.CompleteExptOptionFn
+		setup     func()
+		wantErr   bool
+	}{
+		{
+			name:      "successful_complete_expt_with_default_options",
+			exptID:    123,
+			exptRunID: gptr.Of[int64](456),
+			spaceID:   789,
+			opts:      []entity.CompleteExptOptionFn{},
+			setup: func() {
+				// Mock idempotent check
+				mgr.idem.(*idemMocks.MockIdempotentService).
+					EXPECT().
+					Exist(ctx, gomock.Any()).AnyTimes().
+					Return(false, nil)
+
+				// Mock experiment retrieval
+				mgr.exptRepo.(*repoMocks.MockIExperimentRepo).
+					EXPECT().
+					GetByID(ctx, int64(123), int64(789)).
+					Return(&entity.Experiment{
+						ID:       123,
+						SpaceID:  789,
+						ExptType: entity.ExptType_Offline,
+						StartAt:  gptr.Of(time.Now()),
+					}, nil)
+
+				// Mock stats calculation
+				mgr.exptResultService.(*svcMocks.MockExptResultService).
+					EXPECT().
+					CalculateStats(ctx, int64(123), int64(789), session).
+					Return(&entity.ExptCalculateStats{
+						SuccessItemCnt:    5,
+						FailItemCnt:       1,
+						ProcessingItemCnt: 0,
+						TerminatedItemCnt: 0,
+					}, nil)
+
+				// Mock incomplete turns retrieval (because NoCompleteItemTurn is not set)
+				mgr.exptResultService.(*svcMocks.MockExptResultService).
+					EXPECT().
+					GetIncompleteTurns(ctx, int64(123), int64(789), session).
+					Return([]*entity.ItemTurnID{}, nil)
+
+				// Mock stats update
+				mgr.statsRepo.(*repoMocks.MockIExptStatsRepo).
+					EXPECT().
+					UpdateByExptID(ctx, int64(123), int64(789), gomock.Any()).
+					Return(nil)
+
+				// Mock experiment update
+				mgr.exptRepo.(*repoMocks.MockIExperimentRepo).
+					EXPECT().
+					Update(ctx, gomock.Any()).
+					Return(nil)
+
+				// Mock quota release
+				mgr.quotaRepo.(*repoMocks.MockQuotaRepo).
+					EXPECT().
+					CreateOrUpdate(ctx, int64(789), gomock.Any(), session).
+					Return(nil)
+
+				// Mock aggregate calculation result event
+				mgr.exptAggrResultService.(*svcMocks.MockExptAggrResultService).
+					EXPECT().
+					PublishExptAggrResultEvent(ctx, gomock.Any(), gomock.Any()).
+					Return(nil)
+
+				// Mock lifecycle event
+				mgr.publisher.(*eventsMocks.MockExptEventPublisher).
+					EXPECT().
+					PublishExptLifecycleEvent(ctx, gomock.Any(), gomock.Any()).
+					Return(nil)
+
+				// Mock metrics emission
+				mgr.mtr.(*metricsMocks.MockExptMetric).
+					EXPECT().
+					EmitExptExecResult(int64(789), int64(entity.ExptType_Offline), gomock.Any(), gomock.Any()).
+					AnyTimes()
+			},
+			wantErr: false,
+		},
+		{
+			name:      "successful_complete_expt_with_terminated_status",
+			exptID:    123,
+			exptRunID: gptr.Of[int64](456),
+			spaceID:   789,
+			opts: []entity.CompleteExptOptionFn{
+				entity.WithStatus(entity.ExptStatus_Terminated),
+			},
+			setup: func() {
+				// Mock idempotent check
+				mgr.idem.(*idemMocks.MockIdempotentService).
+					EXPECT().
+					Exist(ctx, gomock.Any()).AnyTimes().
+					Return(false, nil)
+
+				// Mock experiment retrieval
+				mgr.exptRepo.(*repoMocks.MockIExperimentRepo).
+					EXPECT().
+					GetByID(ctx, int64(123), int64(789)).
+					Return(&entity.Experiment{
+						ID:       123,
+						SpaceID:  789,
+						ExptType: entity.ExptType_Offline,
+						StartAt:  gptr.Of(time.Now()),
+					}, nil)
+
+				// Mock stats calculation
+				mgr.exptResultService.(*svcMocks.MockExptResultService).
+					EXPECT().
+					CalculateStats(ctx, int64(123), int64(789), session).
+					Return(&entity.ExptCalculateStats{
+						SuccessItemCnt:    3,
+						FailItemCnt:       1,
+						ProcessingItemCnt: 0,
+						TerminatedItemCnt: 0,
+					}, nil)
+
+				// Mock incomplete turns retrieval
+				mgr.exptResultService.(*svcMocks.MockExptResultService).
+					EXPECT().
+					GetIncompleteTurns(ctx, int64(123), int64(789), session).
+					Return([]*entity.ItemTurnID{
+						{TurnID: 1, ItemID: 10},
+						{TurnID: 2, ItemID: 20},
+					}, nil)
+
+				// Mock terminate item turns
+				mgr.itemResultRepo.(*repoMocks.MockIExptItemResultRepo).
+					EXPECT().
+					UpdateItemsResult(ctx, int64(789), int64(123), []int64{10, 20}, gomock.Any()).
+					Return(nil)
+
+				mgr.turnResultRepo.(*repoMocks.MockIExptTurnResultRepo).
+					EXPECT().
+					UpdateTurnResults(ctx, int64(123), []*entity.ItemTurnID{
+						{TurnID: 1, ItemID: 10},
+						{TurnID: 2, ItemID: 20},
+					}, int64(789), gomock.Any()).
+					Return(nil)
+
+				// Mock UpsertExptTurnResultFilter after terminateItemTurns
+				mgr.exptResultService.(*svcMocks.MockExptResultService).
+					EXPECT().
+					UpsertExptTurnResultFilter(ctx, int64(789), int64(123), gomock.Any()).
+					DoAndReturn(func(_ context.Context, _, _ int64, itemIDs []int64) error {
+						// Verify that itemIDs contains 10 and 20 (order may vary)
+						if len(itemIDs) != 2 {
+							return fmt.Errorf("expected 2 itemIDs, got %d", len(itemIDs))
+						}
+						itemIDSet := make(map[int64]bool)
+						for _, id := range itemIDs {
+							itemIDSet[id] = true
+						}
+						if !itemIDSet[10] || !itemIDSet[20] {
+							return fmt.Errorf("expected itemIDs [10, 20], got %v", itemIDs)
+						}
+						return nil
+					})
+
+				// Mock stats update
+				mgr.statsRepo.(*repoMocks.MockIExptStatsRepo).
+					EXPECT().
+					UpdateByExptID(ctx, int64(123), int64(789), gomock.Any()).
+					Return(nil)
+
+				// Mock experiment update
+				mgr.exptRepo.(*repoMocks.MockIExperimentRepo).
+					EXPECT().
+					Update(ctx, gomock.Any()).
+					Return(nil)
+
+				// Mock quota release
+				mgr.quotaRepo.(*repoMocks.MockQuotaRepo).
+					EXPECT().
+					CreateOrUpdate(ctx, int64(789), gomock.Any(), session).
+					Return(nil)
+
+				// Mock aggregate calculation result event
+				mgr.exptAggrResultService.(*svcMocks.MockExptAggrResultService).
+					EXPECT().
+					PublishExptAggrResultEvent(ctx, gomock.Any(), gomock.Any()).
+					Return(nil)
+
+				// Mock lifecycle event
+				mgr.publisher.(*eventsMocks.MockExptEventPublisher).
+					EXPECT().
+					PublishExptLifecycleEvent(ctx, gomock.Any(), gomock.Any()).
+					Return(nil)
+
+				// Mock metrics emission
+				mgr.mtr.(*metricsMocks.MockExptMetric).
+					EXPECT().
+					EmitExptExecResult(int64(789), int64(entity.ExptType_Offline), int64(entity.ExptStatus_Terminated), gomock.Any()).
+					AnyTimes()
+			},
+			wantErr: false,
+		},
+		{
+			name:      "successful_complete_expt_with_no_aggr_calculate",
+			exptID:    123,
+			exptRunID: gptr.Of[int64](456),
+			spaceID:   789,
+			opts: []entity.CompleteExptOptionFn{
+				entity.NoAggrCalculate(),
+			},
+			setup: func() {
+				// Mock idempotent check
+				mgr.idem.(*idemMocks.MockIdempotentService).
+					EXPECT().
+					Exist(ctx, gomock.Any()).AnyTimes().
+					Return(false, nil)
+
+				// Mock experiment retrieval
+				mgr.exptRepo.(*repoMocks.MockIExperimentRepo).
+					EXPECT().
+					GetByID(ctx, int64(123), int64(789)).
+					Return(&entity.Experiment{
+						ID:       123,
+						SpaceID:  789,
+						ExptType: entity.ExptType_Offline,
+						StartAt:  gptr.Of(time.Now()),
+					}, nil)
+
+				// Mock stats calculation
+				mgr.exptResultService.(*svcMocks.MockExptResultService).
+					EXPECT().
+					CalculateStats(ctx, int64(123), int64(789), session).
+					Return(&entity.ExptCalculateStats{
+						SuccessItemCnt:    5,
+						FailItemCnt:       1,
+						ProcessingItemCnt: 0,
+						TerminatedItemCnt: 0,
+					}, nil)
+
+				// Mock incomplete turns retrieval (because NoCompleteItemTurn is not set)
+				mgr.exptResultService.(*svcMocks.MockExptResultService).
+					EXPECT().
+					GetIncompleteTurns(ctx, int64(123), int64(789), session).
+					Return([]*entity.ItemTurnID{}, nil)
+
+				// Mock stats update
+				mgr.statsRepo.(*repoMocks.MockIExptStatsRepo).
+					EXPECT().
+					UpdateByExptID(ctx, int64(123), int64(789), gomock.Any()).
+					Return(nil)
+
+				// Mock experiment update
+				mgr.exptRepo.(*repoMocks.MockIExperimentRepo).
+					EXPECT().
+					Update(ctx, gomock.Any()).
+					Return(nil)
+
+				// Mock quota release
+				mgr.quotaRepo.(*repoMocks.MockQuotaRepo).
+					EXPECT().
+					CreateOrUpdate(ctx, int64(789), gomock.Any(), session).
+					Return(nil)
+
+				// No aggregate calculation event should be published
+
+				// Mock lifecycle event
+				mgr.publisher.(*eventsMocks.MockExptEventPublisher).
+					EXPECT().
+					PublishExptLifecycleEvent(ctx, gomock.Any(), gomock.Any()).
+					Return(nil)
+
+				// Mock metrics emission
+				mgr.mtr.(*metricsMocks.MockExptMetric).
+					EXPECT().
+					EmitExptExecResult(int64(789), int64(entity.ExptType_Offline), gomock.Any(), gomock.Any()).
+					AnyTimes()
+			},
+			wantErr: false,
+		},
+		{
+			name:      "successful_complete_expt_with_no_complete_item_turn",
+			exptID:    123,
+			exptRunID: gptr.Of[int64](456),
+			spaceID:   789,
+			opts: []entity.CompleteExptOptionFn{
+				entity.WithStatus(entity.ExptStatus_Terminated),
+				entity.NoCompleteItemTurn(),
+			},
+			setup: func() {
+				// Mock idempotent check
+				mgr.idem.(*idemMocks.MockIdempotentService).
+					EXPECT().
+					Exist(ctx, gomock.Any()).AnyTimes().
+					Return(false, nil)
+
+				// Mock experiment retrieval
+				mgr.exptRepo.(*repoMocks.MockIExperimentRepo).
+					EXPECT().
+					GetByID(ctx, int64(123), int64(789)).
+					Return(&entity.Experiment{
+						ID:       123,
+						SpaceID:  789,
+						ExptType: entity.ExptType_Offline,
+						StartAt:  gptr.Of(time.Now()),
+					}, nil)
+
+				// Mock stats calculation
+				mgr.exptResultService.(*svcMocks.MockExptResultService).
+					EXPECT().
+					CalculateStats(ctx, int64(123), int64(789), session).
+					Return(&entity.ExptCalculateStats{
+						SuccessItemCnt:    3,
+						FailItemCnt:       1,
+						ProcessingItemCnt: 0,
+						TerminatedItemCnt: 0,
+					}, nil)
+
+				// Mock stats update
+				mgr.statsRepo.(*repoMocks.MockIExptStatsRepo).
+					EXPECT().
+					UpdateByExptID(ctx, int64(123), int64(789), gomock.Any()).
+					Return(nil)
+
+				// Mock experiment update
+				mgr.exptRepo.(*repoMocks.MockIExperimentRepo).
+					EXPECT().
+					Update(ctx, gomock.Any()).
+					Return(nil)
+
+				// Mock quota release
+				mgr.quotaRepo.(*repoMocks.MockQuotaRepo).
+					EXPECT().
+					CreateOrUpdate(ctx, int64(789), gomock.Any(), session).
+					Return(nil)
+
+				// Mock aggregate calculation result event
+				mgr.exptAggrResultService.(*svcMocks.MockExptAggrResultService).
+					EXPECT().
+					PublishExptAggrResultEvent(ctx, gomock.Any(), gomock.Any()).
+					Return(nil)
+
+				// Mock lifecycle event
+				mgr.publisher.(*eventsMocks.MockExptEventPublisher).
+					EXPECT().
+					PublishExptLifecycleEvent(ctx, gomock.Any(), gomock.Any()).
+					Return(nil)
+
+				// Mock metrics emission
+				mgr.mtr.(*metricsMocks.MockExptMetric).
+					EXPECT().
+					EmitExptExecResult(int64(789), int64(entity.ExptType_Offline), gomock.Any(), gomock.Any()).
+					AnyTimes()
+			},
+			wantErr: false,
+		},
+		{
+			name:      "complete_expt_with_interval",
+			exptID:    123,
+			exptRunID: gptr.Of[int64](456),
+			spaceID:   789,
+			opts: []entity.CompleteExptOptionFn{
+				entity.WithCompleteInterval(time.Millisecond * 200),
+			},
+			setup: func() {
+				// Mock idempotent check
+				mgr.idem.(*idemMocks.MockIdempotentService).
+					EXPECT().
+					Exist(ctx, gomock.Any()).AnyTimes().
+					Return(false, nil)
+
+				// Mock experiment retrieval
+				mgr.exptRepo.(*repoMocks.MockIExperimentRepo).
+					EXPECT().
+					GetByID(ctx, int64(123), int64(789)).
+					Return(&entity.Experiment{
+						ID:       123,
+						SpaceID:  789,
+						ExptType: entity.ExptType_Offline,
+						StartAt:  gptr.Of(time.Now()),
+					}, nil)
+
+				// Mock stats calculation
+				mgr.exptResultService.(*svcMocks.MockExptResultService).
+					EXPECT().
+					CalculateStats(ctx, int64(123), int64(789), session).
+					Return(&entity.ExptCalculateStats{
+						SuccessItemCnt:    5,
+						FailItemCnt:       1,
+						ProcessingItemCnt: 0,
+						TerminatedItemCnt: 0,
+					}, nil)
+
+				// Mock incomplete turns retrieval (because NoCompleteItemTurn is not set)
+				mgr.exptResultService.(*svcMocks.MockExptResultService).
+					EXPECT().
+					GetIncompleteTurns(ctx, int64(123), int64(789), session).
+					Return([]*entity.ItemTurnID{}, nil)
+
+				// Mock stats update
+				mgr.statsRepo.(*repoMocks.MockIExptStatsRepo).
+					EXPECT().
+					UpdateByExptID(ctx, int64(123), int64(789), gomock.Any()).
+					Return(nil)
+
+				// Mock experiment update
+				mgr.exptRepo.(*repoMocks.MockIExperimentRepo).
+					EXPECT().
+					Update(ctx, gomock.Any()).
+					Return(nil)
+
+				// Mock quota release
+				mgr.quotaRepo.(*repoMocks.MockQuotaRepo).
+					EXPECT().
+					CreateOrUpdate(ctx, int64(789), gomock.Any(), session).
+					Return(nil)
+
+				// Mock aggregate calculation result event
+				mgr.exptAggrResultService.(*svcMocks.MockExptAggrResultService).
+					EXPECT().
+					PublishExptAggrResultEvent(ctx, gomock.Any(), gomock.Any()).
+					Return(nil)
+
+				// Mock lifecycle event
+				mgr.publisher.(*eventsMocks.MockExptEventPublisher).
+					EXPECT().
+					PublishExptLifecycleEvent(ctx, gomock.Any(), gomock.Any()).
+					Return(nil)
+
+				// Mock metrics emission
+				mgr.mtr.(*metricsMocks.MockExptMetric).
+					EXPECT().
+					EmitExptExecResult(int64(789), int64(entity.ExptType_Offline), gomock.Any(), gomock.Any()).
+					AnyTimes()
+			},
+			wantErr: false,
+		},
+		{
+			name:      "experiment_not_found",
+			exptID:    123,
+			exptRunID: gptr.Of[int64](456),
+			spaceID:   789,
+			opts:      []entity.CompleteExptOptionFn{},
+			setup: func() {
+				// Mock experiment retrieval failure
+				mgr.exptRepo.(*repoMocks.MockIExperimentRepo).
+					EXPECT().
+					GetByID(ctx, int64(123), int64(789)).
+					Return(nil, fmt.Errorf("experiment not found"))
+			},
+			wantErr: true,
+		},
+		{
+			name:      "stats_calculation_error",
+			exptID:    123,
+			exptRunID: gptr.Of[int64](456),
+			spaceID:   789,
+			opts:      []entity.CompleteExptOptionFn{},
+			setup: func() {
+				// Mock idempotent check
+				mgr.idem.(*idemMocks.MockIdempotentService).
+					EXPECT().
+					Exist(ctx, gomock.Any()).AnyTimes().
+					Return(false, nil)
+
+				// Mock experiment retrieval
+				mgr.exptRepo.(*repoMocks.MockIExperimentRepo).
+					EXPECT().
+					GetByID(ctx, int64(123), int64(789)).
+					Return(&entity.Experiment{
+						ID:       123,
+						SpaceID:  789,
+						ExptType: entity.ExptType_Offline,
+						StartAt:  gptr.Of(time.Now()),
+					}, nil)
+
+				// Mock stats calculation failure
+				mgr.exptResultService.(*svcMocks.MockExptResultService).
+					EXPECT().
+					CalculateStats(ctx, int64(123), int64(789), session).
+					Return(nil, fmt.Errorf("stats calculation failed"))
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.setup()
+			err := mgr.CompleteExpt(ctx, tt.exptID, tt.exptRunID, tt.spaceID, session, tt.opts...)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("CompleteExpt() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestExptMangerImpl_CompleteExpt_workflow_calls_PipelineNodeFinishCallback(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mgr := newTestExptManager(ctrl)
+	mockPipeline := mocks.NewMockIPipelineListAdapter(ctrl)
+	mgr.pipelineListAdapter = mockPipeline
+
+	ctx := context.Background()
+	session := &entity.Session{UserID: "test_user"}
+
+	mgr.idem.(*idemMocks.MockIdempotentService).EXPECT().Exist(ctx, gomock.Any()).AnyTimes().Return(false, nil)
+
+	mgr.exptRepo.(*repoMocks.MockIExperimentRepo).EXPECT().GetByID(ctx, int64(123), int64(789)).Return(&entity.Experiment{
+		ID:         123,
+		SpaceID:    789,
+		ExptType:   entity.ExptType_Offline,
+		StartAt:    gptr.Of(time.Now()),
+		SourceType: entity.SourceType_Workflow,
+		SourceID:   "42",
+	}, nil)
+
+	mgr.exptResultService.(*svcMocks.MockExptResultService).EXPECT().
+		CalculateStats(ctx, int64(123), int64(789), session).
+		Return(&entity.ExptCalculateStats{SuccessItemCnt: 1}, nil)
+
+	mgr.exptResultService.(*svcMocks.MockExptResultService).EXPECT().
+		GetIncompleteTurns(ctx, int64(123), int64(789), session).
+		Return([]*entity.ItemTurnID{}, nil)
+
+	mgr.statsRepo.(*repoMocks.MockIExptStatsRepo).EXPECT().
+		UpdateByExptID(ctx, int64(123), int64(789), gomock.Any()).Return(nil)
+
+	mgr.exptRepo.(*repoMocks.MockIExperimentRepo).EXPECT().Update(ctx, gomock.Any()).Return(nil)
+
+	mockPipeline.EXPECT().PipelineNodeFinishCallback(ctx, int64(123), int64(789)).Return(nil).Times(1)
+
+	mgr.quotaRepo.(*repoMocks.MockQuotaRepo).EXPECT().
+		CreateOrUpdate(ctx, int64(789), gomock.Any(), session).Return(nil)
+
+	mgr.exptAggrResultService.(*svcMocks.MockExptAggrResultService).EXPECT().
+		PublishExptAggrResultEvent(ctx, gomock.Any(), gomock.Any()).Return(nil)
+
+	mgr.mtr.(*metricsMocks.MockExptMetric).EXPECT().
+		EmitExptExecResult(int64(789), int64(entity.ExptType_Offline), gomock.Any(), gomock.Any()).AnyTimes()
+
+	mgr.publisher.(*eventsMocks.MockExptEventPublisher).EXPECT().
+		PublishExptLifecycleEvent(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil)
+
+	err := mgr.CompleteExpt(ctx, 123, nil, 789, session)
+	assert.NoError(t, err)
+}
+
+func TestExptMangerImpl_SetExptTerminating(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mgr := newTestExptManager(ctrl)
+	ctx := context.Background()
+	session := &entity.Session{UserID: "test_user"}
+
+	tests := []struct {
+		name    string
+		exptID  int64
+		runID   int64
+		spaceID int64
+		setup   func()
+		wantErr bool
+	}{
+		{
+			name:    "successfully set experiment and run to terminating status",
+			exptID:  123,
+			runID:   456,
+			spaceID: 789,
+			setup: func() {
+				// Mock successful run log update
+				mgr.runLogRepo.(*repoMocks.MockIExptRunLogRepo).
+					EXPECT().
+					Update(ctx, int64(123), int64(456), map[string]any{"status": int64(entity.ExptStatus_Terminating)}).
+					Return(nil)
+
+				// Mock successful experiment update
+				mgr.exptRepo.(*repoMocks.MockIExperimentRepo).
+					EXPECT().
+					Update(ctx, gomock.Any()).
+					Do(func(ctx context.Context, expt *entity.Experiment) {
+						assert.Equal(t, int64(123), expt.ID)
+						assert.Equal(t, entity.ExptStatus_Terminating, expt.Status)
+					}).
+					Return(nil)
+			},
+			wantErr: false,
+		},
+		{
+			name:    "run log update fails",
+			exptID:  123,
+			runID:   456,
+			spaceID: 789,
+			setup: func() {
+				// Mock failed run log update
+				mgr.runLogRepo.(*repoMocks.MockIExptRunLogRepo).
+					EXPECT().
+					Update(ctx, int64(123), int64(456), map[string]any{"status": int64(entity.ExptStatus_Terminating)}).
+					Return(errors.New("database error"))
+			},
+			wantErr: true,
+		},
+		{
+			name:    "experiment update fails",
+			exptID:  123,
+			runID:   456,
+			spaceID: 789,
+			setup: func() {
+				// Mock successful run log update
+				mgr.runLogRepo.(*repoMocks.MockIExptRunLogRepo).
+					EXPECT().
+					Update(ctx, int64(123), int64(456), map[string]any{"status": int64(entity.ExptStatus_Terminating)}).
+					Return(nil)
+
+				// Mock failed experiment update
+				mgr.exptRepo.(*repoMocks.MockIExperimentRepo).
+					EXPECT().
+					Update(ctx, gomock.Any()).
+					Do(func(ctx context.Context, expt *entity.Experiment) {
+						assert.Equal(t, int64(123), expt.ID)
+						assert.Equal(t, entity.ExptStatus_Terminating, expt.Status)
+					}).
+					Return(errors.New("database error"))
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.setup()
+			err := mgr.SetExptTerminating(ctx, tt.exptID, tt.runID, tt.spaceID, session)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("SetExptTerminating() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestExptMangerImpl_CheckEvalSet_OnlineAndDefault(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mgr := newTestExptManager(ctrl)
+	ctx := context.Background()
+	session := &entity.Session{UserID: "test_user"}
+
+	tests := []struct {
+		name    string
+		expt    *entity.Experiment
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name: "Online_expt_EvalSet_nil",
+			expt: &entity.Experiment{
+				ID:        1,
+				SpaceID:   100,
+				ExptType:  entity.ExptType_Online,
+				EvalSetID: 10,
+				EvalSet:   nil,
+			},
+			wantErr: true,
+			errMsg:  "with empty EvalSet: 10",
+		},
+		{
+			name: "Online_expt_EvalSet_not_nil_success",
+			expt: &entity.Experiment{
+				ID:        1,
+				SpaceID:   100,
+				ExptType:  entity.ExptType_Online,
+				EvalSetID: 10,
+				EvalSet:   &entity.EvaluationSet{ID: 10},
+			},
+			wantErr: false,
+		},
+		{
+			name: "default_type_EvalSetVersionID_0",
+			expt: &entity.Experiment{
+				ID:               1,
+				SpaceID:          100,
+				ExptType:         0,
+				EvalSetVersionID: 0,
+				EvalSet:          nil,
+			},
+			wantErr: true,
+			errMsg:  "with invalid EvalSetVersion 0",
+		},
+		{
+			name: "default_type_EvalSet_nil",
+			expt: &entity.Experiment{
+				ID:               1,
+				SpaceID:          100,
+				ExptType:         0,
+				EvalSetVersionID: 10,
+				EvalSet:          nil,
+			},
+			wantErr: true,
+			errMsg:  "with invalid EvalSetVersion 10",
+		},
+		{
+			name: "default_type_EvaluationSetVersion_nil",
+			expt: &entity.Experiment{
+				ID:               1,
+				SpaceID:          100,
+				ExptType:         0,
+				EvalSetVersionID: 10,
+				EvalSet: &entity.EvaluationSet{
+					ID:                   10,
+					EvaluationSetVersion: nil,
+				},
+			},
+			wantErr: true,
+			errMsg:  "with invalid EvalSetVersion 10",
+		},
+		{
+			name: "default_type_ItemCount_0",
+			expt: &entity.Experiment{
+				ID:               1,
+				SpaceID:          100,
+				ExptType:         0,
+				EvalSetVersionID: 10,
+				EvalSet: &entity.EvaluationSet{
+					ID: 10,
+					EvaluationSetVersion: &entity.EvaluationSetVersion{
+						ID:        10,
+						ItemCount: 0,
+					},
+				},
+			},
+			wantErr: true,
+			errMsg:  "with empty EvalSetVersion 10",
+		},
+		{
+			name: "default_type_success",
+			expt: &entity.Experiment{
+				ID:               1,
+				SpaceID:          100,
+				ExptType:         0,
+				EvalSetVersionID: 10,
+				EvalSet: &entity.EvaluationSet{
+					ID: 10,
+					EvaluationSetVersion: &entity.EvaluationSetVersion{
+						ID:        10,
+						ItemCount: 5,
+					},
+				},
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := mgr.CheckEvalSet(ctx, tt.expt, session)
+			if tt.wantErr {
+				assert.Error(t, err)
+				if tt.errMsg != "" {
+					assert.Contains(t, err.Error(), tt.errMsg)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestExptMangerImpl_Invoke_ExtField(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mgr := newTestExptManager(ctrl)
+	ctx := context.Background()
+	session := &entity.Session{UserID: "test_user"}
+
+	tests := []struct {
+		name      string
+		invokeReq *entity.InvokeExptReq
+		setup     func(*testing.T)
+		wantErr   bool
+	}{
+		{
+			name: "Ext_field_set_correctly",
+			invokeReq: &entity.InvokeExptReq{
+				ExptID:  1,
+				RunID:   2,
+				SpaceID: 100,
+				Session: session,
+				Items: []*entity.EvaluationSetItem{
+					{
+						ItemID: 10,
+						Turns:  []*entity.Turn{{ID: 1}},
+					},
+				},
+				Ext: map[string]string{
+					"key1": "value1",
+					"key2": "value2",
+				},
+			},
+			setup: func(t *testing.T) {
+				mgr.itemResultRepo.(*repoMocks.MockIExptItemResultRepo).
+					EXPECT().
+					GetItemIDListByExptID(ctx, int64(100), int64(1)).
+					Return([]int64{}, nil)
+
+				mgr.itemResultRepo.(*repoMocks.MockIExptItemResultRepo).
+					EXPECT().
+					GetMaxItemIdxByExptID(ctx, int64(1), int64(100)).
+					Return(int32(0), nil)
+
+				mgr.idgenerator.(*idgenMocks.MockIIDGenerator).
+					EXPECT().
+					GenMultiIDs(ctx, 2).
+					Return([]int64{1001, 1002}, nil)
+
+				mgr.mutex.(*lockMocks.MockILocker).
+					EXPECT().
+					LockBackoff(ctx, "expt_online_data_lock:1:2", time.Second*30, time.Minute*10).
+					Return(true, nil)
+
+				mgr.turnResultRepo.(*repoMocks.MockIExptTurnResultRepo).
+					EXPECT().
+					BatchCreateNX(ctx, gomock.Any()).
+					Do(func(_ context.Context, etrs []*entity.ExptTurnResult) {
+						assert.Len(t, etrs, 1)
+					}).
+					Return(nil)
+
+				mgr.itemResultRepo.(*repoMocks.MockIExptItemResultRepo).
+					EXPECT().
+					BatchCreateNX(ctx, gomock.Any()).
+					Do(func(_ context.Context, eirs []*entity.ExptItemResult) {
+						assert.Len(t, eirs, 1)
+						assert.Equal(t, map[string]string{"key1": "value1", "key2": "value2"}, eirs[0].Ext)
+					}).
+					Return(nil)
+
+				mgr.idgenerator.(*idgenMocks.MockIIDGenerator).
+					EXPECT().
+					GenMultiIDs(ctx, 1).
+					Return([]int64{2001}, nil)
+
+				mgr.itemResultRepo.(*repoMocks.MockIExptItemResultRepo).
+					EXPECT().
+					BatchCreateNXRunLogs(ctx, gomock.Any()).
+					Return(nil)
+
+				mgr.statsRepo.(*repoMocks.MockIExptStatsRepo).
+					EXPECT().
+					ArithOperateCount(ctx, int64(1), int64(100), gomock.Any()).
+					Return(nil)
+
+				mgr.mutex.(*lockMocks.MockILocker).
+					EXPECT().
+					LockWithRenew(ctx, "expt_online_daemon_lock:1:2", time.Second*5, time.Minute).
+					Return(true, ctx, func() {}, nil)
+
+				mgr.mutex.(*lockMocks.MockILocker).
+					EXPECT().
+					Unlock("expt_online_data_lock:1:2").
+					Return(true, nil)
+
+				// Mock GetDetail
+				mgr.lwt.(*lwtMocks.MockILatestWriteTracker).
+					EXPECT().
+					CheckWriteFlagByID(ctx, gomock.Any(), int64(1)).
+					Return(false).AnyTimes()
+
+				mgr.exptRepo.(*repoMocks.MockIExperimentRepo).
+					EXPECT().
+					MGetByID(ctx, []int64{1}, int64(100)).
+					Return([]*entity.Experiment{{ID: 1, SpaceID: 100, ExptType: entity.ExptType_Offline}}, nil)
+
+				mgr.evaluationSetService.(*svcMocks.MockIEvaluationSetService).
+					EXPECT().
+					GetEvaluationSet(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+					Return(&entity.EvaluationSet{}, nil).AnyTimes()
+
+				mgr.evalTargetService.(*svcMocks.MockIEvalTargetService).
+					EXPECT().
+					GetEvalTargetVersion(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+					Return(&entity.EvalTarget{}, nil).AnyTimes()
+
+				mgr.evaluatorService.(*svcMocks.MockEvaluatorService).
+					EXPECT().
+					BatchGetEvaluatorVersion(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+					Return([]*entity.Evaluator{}, nil).AnyTimes()
+
+				mgr.exptResultService.(*svcMocks.MockExptResultService).
+					EXPECT().
+					MGetStats(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+					Return([]*entity.ExptStats{}, nil).AnyTimes()
+
+				mgr.exptAggrResultService.(*svcMocks.MockExptAggrResultService).
+					EXPECT().
+					BatchGetExptAggrResultByExperimentIDs(gomock.Any(), gomock.Any(), gomock.Any()).
+					Return([]*entity.ExptAggregateResult{}, nil).AnyTimes()
+
+				// Mock PublishExptScheduleEvent
+				mgr.publisher.(*eventsMocks.MockExptEventPublisher).
+					EXPECT().
+					PublishExptScheduleEvent(ctx, gomock.Any(), gptr.Of(time.Second*3)).
+					Do(func(_ context.Context, event *entity.ExptScheduleEvent, _ *time.Duration) {
+						assert.Equal(t, map[string]string{"key1": "value1", "key2": "value2"}, event.Ext)
+					}).
+					Return(nil)
+			},
+			wantErr: false,
+		},
+		{
+			name: "Ext_field_empty_map",
+			invokeReq: &entity.InvokeExptReq{
+				ExptID:  1,
+				RunID:   2,
+				SpaceID: 100,
+				Session: session,
+				Items: []*entity.EvaluationSetItem{
+					{
+						ItemID: 10,
+						Turns:  []*entity.Turn{{ID: 1}},
+					},
+				},
+				Ext: map[string]string{},
+			},
+			setup: func(t *testing.T) {
+				mgr.itemResultRepo.(*repoMocks.MockIExptItemResultRepo).
+					EXPECT().
+					GetItemIDListByExptID(ctx, int64(100), int64(1)).
+					Return([]int64{}, nil)
+
+				mgr.itemResultRepo.(*repoMocks.MockIExptItemResultRepo).
+					EXPECT().
+					GetMaxItemIdxByExptID(ctx, int64(1), int64(100)).
+					Return(int32(0), nil)
+
+				mgr.idgenerator.(*idgenMocks.MockIIDGenerator).
+					EXPECT().
+					GenMultiIDs(ctx, 2).
+					Return([]int64{1001, 1002}, nil)
+
+				mgr.mutex.(*lockMocks.MockILocker).
+					EXPECT().
+					LockBackoff(ctx, "expt_online_data_lock:1:2", time.Second*30, time.Minute*10).
+					Return(true, nil)
+
+				mgr.turnResultRepo.(*repoMocks.MockIExptTurnResultRepo).
+					EXPECT().
+					BatchCreateNX(ctx, gomock.Any()).
+					Return(nil)
+
+				mgr.itemResultRepo.(*repoMocks.MockIExptItemResultRepo).
+					EXPECT().
+					BatchCreateNX(ctx, gomock.Any()).
+					Do(func(_ context.Context, eirs []*entity.ExptItemResult) {
+						assert.Len(t, eirs, 1)
+						assert.Equal(t, map[string]string{}, eirs[0].Ext)
+					}).
+					Return(nil)
+
+				mgr.idgenerator.(*idgenMocks.MockIIDGenerator).
+					EXPECT().
+					GenMultiIDs(ctx, 1).
+					Return([]int64{2001}, nil)
+
+				mgr.itemResultRepo.(*repoMocks.MockIExptItemResultRepo).
+					EXPECT().
+					BatchCreateNXRunLogs(ctx, gomock.Any()).
+					Return(nil)
+
+				mgr.statsRepo.(*repoMocks.MockIExptStatsRepo).
+					EXPECT().
+					ArithOperateCount(ctx, int64(1), int64(100), gomock.Any()).
+					Return(nil)
+
+				mgr.mutex.(*lockMocks.MockILocker).
+					EXPECT().
+					LockWithRenew(ctx, "expt_online_daemon_lock:1:2", time.Second*5, time.Minute).
+					Return(true, ctx, func() {}, nil)
+
+				mgr.mutex.(*lockMocks.MockILocker).
+					EXPECT().
+					Unlock("expt_online_data_lock:1:2").
+					Return(true, nil)
+
+				// Mock GetDetail
+				mgr.lwt.(*lwtMocks.MockILatestWriteTracker).
+					EXPECT().
+					CheckWriteFlagByID(ctx, gomock.Any(), int64(1)).
+					Return(false).AnyTimes()
+
+				mgr.exptRepo.(*repoMocks.MockIExperimentRepo).
+					EXPECT().
+					MGetByID(ctx, []int64{1}, int64(100)).
+					Return([]*entity.Experiment{{ID: 1, SpaceID: 100, ExptType: entity.ExptType_Offline}}, nil)
+
+				mgr.evaluationSetService.(*svcMocks.MockIEvaluationSetService).
+					EXPECT().
+					GetEvaluationSet(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+					Return(&entity.EvaluationSet{}, nil).AnyTimes()
+
+				mgr.evalTargetService.(*svcMocks.MockIEvalTargetService).
+					EXPECT().
+					GetEvalTargetVersion(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+					Return(&entity.EvalTarget{}, nil).AnyTimes()
+
+				mgr.evaluatorService.(*svcMocks.MockEvaluatorService).
+					EXPECT().
+					BatchGetEvaluatorVersion(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+					Return([]*entity.Evaluator{}, nil).AnyTimes()
+
+				mgr.exptResultService.(*svcMocks.MockExptResultService).
+					EXPECT().
+					MGetStats(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+					Return([]*entity.ExptStats{}, nil).AnyTimes()
+
+				mgr.exptAggrResultService.(*svcMocks.MockExptAggrResultService).
+					EXPECT().
+					BatchGetExptAggrResultByExperimentIDs(gomock.Any(), gomock.Any(), gomock.Any()).
+					Return([]*entity.ExptAggregateResult{}, nil).AnyTimes()
+
+				// Mock PublishExptScheduleEvent
+				mgr.publisher.(*eventsMocks.MockExptEventPublisher).
+					EXPECT().
+					PublishExptScheduleEvent(ctx, gomock.Any(), gptr.Of(time.Second*3)).
+					Do(func(_ context.Context, event *entity.ExptScheduleEvent, _ *time.Duration) {
+						assert.Equal(t, map[string]string{}, event.Ext)
+					}).
+					Return(nil)
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.setup(t)
+			err := mgr.Invoke(ctx, tt.invokeReq)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestExptMangerImpl_checkTargetConnector_WithRuntimeParam(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mgr := newTestExptManager(ctrl)
+	ctx := context.Background()
+	session := &entity.Session{UserID: "1"}
+
+	tests := []struct {
+		name    string
+		expt    *entity.Experiment
+		setup   func()
+		wantErr bool
+	}{
+		{
+			name: "valid_runtime_param_success",
+			expt: &entity.Experiment{
+				ID:              1,
+				TargetVersionID: 1,
+				TargetType:      entity.EvalTargetTypeLoopPrompt,
+				Target: &entity.EvalTarget{
+					EvalTargetType: entity.EvalTargetTypeLoopPrompt,
+					EvalTargetVersion: &entity.EvalTargetVersion{
+						OutputSchema: []*entity.ArgsSchema{{Key: gptr.Of("output_field")}},
+					},
+				},
+				EvalSet: &entity.EvaluationSet{
+					EvaluationSetVersion: &entity.EvaluationSetVersion{
+						EvaluationSetSchema: &entity.EvaluationSetSchema{
+							FieldSchemas: []*entity.FieldSchema{{Name: "input_field"}},
+						},
+					},
+				},
+				EvalConf: &entity.EvaluationConfiguration{
+					ConnectorConf: entity.Connector{
+						TargetConf: &entity.TargetConf{
+							TargetVersionID: 1,
+							IngressConf: &entity.TargetIngressConf{
+								EvalSetAdapter: &entity.FieldAdapter{
+									FieldConfs: []*entity.FieldConf{{FromField: "input_field"}},
+								},
+								CustomConf: &entity.FieldAdapter{
+									FieldConfs: []*entity.FieldConf{
+										{
+											FieldName: consts.FieldAdapterBuiltinFieldNameRuntimeParam,
+											Value:     `{"model_config":{"model_id":"test_model"}}`,
+										},
+									},
+								},
+							},
+						},
+						EvaluatorsConf: &entity.EvaluatorsConf{
+							EvaluatorConf: []*entity.EvaluatorConf{
+								{
+									EvaluatorVersionID: 1,
+									IngressConf: &entity.EvaluatorIngressConf{
+										EvalSetAdapter: &entity.FieldAdapter{
+											FieldConfs: []*entity.FieldConf{{FromField: "input_field"}},
+										},
+										TargetAdapter: &entity.FieldAdapter{
+											FieldConfs: []*entity.FieldConf{{FromField: "output_field"}},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			setup: func() {
+				mgr.evalTargetService.(*svcMocks.MockIEvalTargetService).
+					EXPECT().
+					ValidateRuntimeParam(ctx, entity.EvalTargetTypeLoopPrompt, `{"model_config":{"model_id":"test_model"}}`).
+					Return(nil)
+			},
+			wantErr: false,
+		},
+		{
+			name: "TargetType为0时从Target回填并校验runtime_param",
+			expt: &entity.Experiment{
+				ID:              1,
+				TargetVersionID: 1,
+				TargetType:      0, // 未设置，需从 Target 回填
+				Target: &entity.EvalTarget{
+					EvalTargetType: 0,
+					EvalTargetVersion: &entity.EvalTargetVersion{
+						EvalTargetType: entity.EvalTargetTypeLoopPrompt,
+						OutputSchema:   []*entity.ArgsSchema{{Key: gptr.Of("output_field")}},
+					},
+				},
+				EvalSet: &entity.EvaluationSet{
+					EvaluationSetVersion: &entity.EvaluationSetVersion{
+						EvaluationSetSchema: &entity.EvaluationSetSchema{
+							FieldSchemas: []*entity.FieldSchema{{Name: "input_field"}},
+						},
+					},
+				},
+				EvalConf: &entity.EvaluationConfiguration{
+					ConnectorConf: entity.Connector{
+						TargetConf: &entity.TargetConf{
+							TargetVersionID: 1,
+							IngressConf: &entity.TargetIngressConf{
+								EvalSetAdapter: &entity.FieldAdapter{
+									FieldConfs: []*entity.FieldConf{{FromField: "input_field"}},
+								},
+								CustomConf: &entity.FieldAdapter{
+									FieldConfs: []*entity.FieldConf{
+										{
+											FieldName: consts.FieldAdapterBuiltinFieldNameRuntimeParam,
+											Value:     `{"model_config":{"model_id":"fallback_model"}}`,
+										},
+									},
+								},
+							},
+						},
+						EvaluatorsConf: &entity.EvaluatorsConf{
+							EvaluatorConf: []*entity.EvaluatorConf{
+								{
+									EvaluatorVersionID: 1,
+									IngressConf: &entity.EvaluatorIngressConf{
+										EvalSetAdapter: &entity.FieldAdapter{
+											FieldConfs: []*entity.FieldConf{{FromField: "input_field"}},
+										},
+										TargetAdapter: &entity.FieldAdapter{
+											FieldConfs: []*entity.FieldConf{{FromField: "output_field"}},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			setup: func() {
+				mgr.evalTargetService.(*svcMocks.MockIEvalTargetService).
+					EXPECT().
+					ValidateRuntimeParam(ctx, entity.EvalTargetTypeLoopPrompt, `{"model_config":{"model_id":"fallback_model"}}`).
+					Return(nil)
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid_runtime_param_format_error",
+			expt: &entity.Experiment{
+				ID:              1,
+				TargetVersionID: 1,
+				TargetType:      entity.EvalTargetTypeLoopPrompt,
+				Target: &entity.EvalTarget{
+					EvalTargetType: entity.EvalTargetTypeLoopPrompt,
+					EvalTargetVersion: &entity.EvalTargetVersion{
+						OutputSchema: []*entity.ArgsSchema{{Key: gptr.Of("output_field")}},
+					},
+				},
+				EvalSet: &entity.EvaluationSet{
+					EvaluationSetVersion: &entity.EvaluationSetVersion{
+						EvaluationSetSchema: &entity.EvaluationSetSchema{
+							FieldSchemas: []*entity.FieldSchema{{Name: "input_field"}},
+						},
+					},
+				},
+				EvalConf: &entity.EvaluationConfiguration{
+					ConnectorConf: entity.Connector{
+						TargetConf: &entity.TargetConf{
+							TargetVersionID: 1,
+							IngressConf: &entity.TargetIngressConf{
+								EvalSetAdapter: &entity.FieldAdapter{
+									FieldConfs: []*entity.FieldConf{{FromField: "input_field"}},
+								},
+								CustomConf: &entity.FieldAdapter{
+									FieldConfs: []*entity.FieldConf{
+										{
+											FieldName: consts.FieldAdapterBuiltinFieldNameRuntimeParam,
+											Value:     `invalid_json`,
+										},
+									},
+								},
+							},
+						},
+						EvaluatorsConf: &entity.EvaluatorsConf{
+							EvaluatorConf: []*entity.EvaluatorConf{
+								{
+									EvaluatorVersionID: 1,
+									IngressConf: &entity.EvaluatorIngressConf{
+										EvalSetAdapter: &entity.FieldAdapter{
+											FieldConfs: []*entity.FieldConf{{FromField: "input_field"}},
+										},
+										TargetAdapter: &entity.FieldAdapter{
+											FieldConfs: []*entity.FieldConf{{FromField: "output_field"}},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			setup: func() {
+				mgr.evalTargetService.(*svcMocks.MockIEvalTargetService).
+					EXPECT().
+					ValidateRuntimeParam(ctx, entity.EvalTargetTypeLoopPrompt, "invalid_json").
+					Return(errors.New("invalid JSON format"))
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.setup()
+			err := mgr.checkTargetConnector(ctx, tt.expt, session)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("checkTargetConnector() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestExptMangerImpl_ExistCompletingRunLock(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mgr := newTestExptManager(ctrl)
+	ctx := context.Background()
+
+	tests := []struct {
+		name       string
+		exptID     int64
+		exptRunID  int64
+		spaceID    int64
+		setup      func()
+		wantExists bool
+		wantErr    bool
+	}{
+		{
+			name:      "lock exists",
+			exptID:    123,
+			exptRunID: 456,
+			spaceID:   789,
+			setup: func() {
+				mgr.mutex.(*lockMocks.MockILocker).
+					EXPECT().
+					Exists(ctx, "expt_completing_mutex_lock:123:456").
+					Return(true, nil)
+			},
+			wantExists: true,
+			wantErr:    false,
+		},
+		{
+			name:      "lock does not exist",
+			exptID:    123,
+			exptRunID: 456,
+			spaceID:   789,
+			setup: func() {
+				mgr.mutex.(*lockMocks.MockILocker).
+					EXPECT().
+					Exists(ctx, "expt_completing_mutex_lock:123:456").
+					Return(false, nil)
+			},
+			wantExists: false,
+			wantErr:    false,
+		},
+		{
+			name:      "mutex check error",
+			exptID:    123,
+			exptRunID: 456,
+			spaceID:   789,
+			setup: func() {
+				mgr.mutex.(*lockMocks.MockILocker).
+					EXPECT().
+					Exists(ctx, "expt_completing_mutex_lock:123:456").
+					Return(false, errors.New("mutex error"))
+			},
+			wantExists: false,
+			wantErr:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.setup()
+			exists, err := mgr.ExistCompletingRunLock(ctx, tt.exptID, tt.exptRunID, tt.spaceID)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ExistCompletingRunLock() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if exists != tt.wantExists {
+				t.Errorf("ExistCompletingRunLock() exists = %v, want %v", exists, tt.wantExists)
+			}
+		})
+	}
+}
+
+func TestExptMangerImpl_LockCompletingRun(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mgr := newTestExptManager(ctrl)
+	ctx := context.Background()
+	session := &entity.Session{UserID: "test_user"}
+
+	tests := []struct {
+		name      string
+		exptID    int64
+		exptRunID int64
+		spaceID   int64
+		setup     func()
+		wantErr   bool
+	}{
+		{
+			name:      "lock acquired successfully",
+			exptID:    123,
+			exptRunID: 456,
+			spaceID:   789,
+			setup: func() {
+				mgr.mutex.(*lockMocks.MockILocker).
+					EXPECT().
+					Lock(ctx, "expt_completing_mutex_lock:123:456", time.Minute*3).
+					Return(true, nil)
+			},
+			wantErr: false,
+		},
+		{
+			name:      "lock acquisition failed",
+			exptID:    123,
+			exptRunID: 456,
+			spaceID:   789,
+			setup: func() {
+				mgr.mutex.(*lockMocks.MockILocker).
+					EXPECT().
+					Lock(ctx, "expt_completing_mutex_lock:123:456", time.Minute*3).
+					Return(false, nil)
+			},
+			wantErr: true,
+		},
+		{
+			name:      "mutex lock error",
+			exptID:    123,
+			exptRunID: 456,
+			spaceID:   789,
+			setup: func() {
+				mgr.mutex.(*lockMocks.MockILocker).
+					EXPECT().
+					Lock(ctx, "expt_completing_mutex_lock:123:456", time.Minute*3).
+					Return(false, errors.New("lock error"))
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.setup()
+			err := mgr.LockCompletingRun(ctx, tt.exptID, tt.exptRunID, tt.spaceID, session)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("LockCompletingRun() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestExptMangerImpl_UnlockCompletingRun(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mgr := newTestExptManager(ctrl)
+	ctx := context.Background()
+	session := &entity.Session{UserID: "test_user"}
+
+	tests := []struct {
+		name      string
+		exptID    int64
+		exptRunID int64
+		spaceID   int64
+		setup     func()
+		wantErr   bool
+	}{
+		{
+			name:      "unlock successful",
+			exptID:    123,
+			exptRunID: 456,
+			spaceID:   789,
+			setup: func() {
+				mgr.mutex.(*lockMocks.MockILocker).
+					EXPECT().
+					Unlock("expt_completing_mutex_lock:123:456").
+					Return(true, nil)
+			},
+			wantErr: false,
+		},
+		{
+			name:      "unlock error",
+			exptID:    123,
+			exptRunID: 456,
+			spaceID:   789,
+			setup: func() {
+				mgr.mutex.(*lockMocks.MockILocker).
+					EXPECT().
+					Unlock("expt_completing_mutex_lock:123:456").
+					Return(false, errors.New("unlock error"))
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.setup()
+			err := mgr.UnlockCompletingRun(ctx, tt.exptID, tt.exptRunID, tt.spaceID, session)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("UnlockCompletingRun() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestExptMangerImpl_Finish(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mgr := newTestExptManager(ctrl)
+	ctx := context.Background()
+	session := &entity.Session{UserID: "test_user"}
+
+	tests := []struct {
+		name    string
+		expt    *entity.Experiment
+		runID   int64
+		setup   func()
+		wantErr bool
+	}{
+		{
+			name: "idem_already_exist",
+			expt: &entity.Experiment{
+				ID:      123,
+				SpaceID: 789,
+			},
+			runID: 456,
+			setup: func() {
+				mgr.idem.(*idemMocks.MockIdempotentService).
+					EXPECT().
+					Exist(ctx, "FinishExpt:123").
+					Return(true, nil)
+			},
+			wantErr: false,
+		},
+		{
+			name: "idem_exist_error_then_update_fails",
+			expt: &entity.Experiment{
+				ID:       123,
+				SpaceID:  789,
+				ExptType: entity.ExptType_Online,
+			},
+			runID: 456,
+			setup: func() {
+				mgr.idem.(*idemMocks.MockIdempotentService).
+					EXPECT().
+					Exist(ctx, "FinishExpt:123").
+					Return(false, errors.New("redis error"))
+				mgr.exptRepo.(*repoMocks.MockIExperimentRepo).
+					EXPECT().
+					Update(ctx, gomock.Any()).
+					Return(errors.New("update failed"))
+			},
+			wantErr: true,
+		},
+		{
+			name: "normal_flow_success",
+			expt: &entity.Experiment{
+				ID:       123,
+				SpaceID:  789,
+				ExptType: entity.ExptType_Online,
+			},
+			runID: 456,
+			setup: func() {
+				mgr.idem.(*idemMocks.MockIdempotentService).
+					EXPECT().
+					Exist(ctx, "FinishExpt:123").
+					Return(false, nil)
+				mgr.exptRepo.(*repoMocks.MockIExperimentRepo).
+					EXPECT().
+					Update(ctx, gomock.Any()).
+					Return(nil)
+				mgr.publisher.(*eventsMocks.MockExptEventPublisher).
+					EXPECT().
+					PublishExptScheduleEvent(ctx, gomock.Any(), gptr.Of(time.Second*3)).
+					Return(nil)
+				mgr.idem.(*idemMocks.MockIdempotentService).
+					EXPECT().
+					Set(ctx, "FinishExpt:123", time.Second*60).
+					Return(nil)
+			},
+			wantErr: false,
+		},
+		{
+			name: "publish_fails",
+			expt: &entity.Experiment{
+				ID:       123,
+				SpaceID:  789,
+				ExptType: entity.ExptType_Online,
+			},
+			runID: 456,
+			setup: func() {
+				mgr.idem.(*idemMocks.MockIdempotentService).
+					EXPECT().
+					Exist(ctx, "FinishExpt:123").
+					Return(false, nil)
+				mgr.exptRepo.(*repoMocks.MockIExperimentRepo).
+					EXPECT().
+					Update(ctx, gomock.Any()).
+					Return(nil)
+				mgr.publisher.(*eventsMocks.MockExptEventPublisher).
+					EXPECT().
+					PublishExptScheduleEvent(ctx, gomock.Any(), gptr.Of(time.Second*3)).
+					Return(errors.New("publish failed"))
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.setup()
+			err := mgr.Finish(ctx, tt.expt, tt.runID, session)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Finish() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestExptMangerImpl_fixTargetConf(t *testing.T) {
+	t.Run("loop_prompt_nil_target_conf", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		mgr := newTestExptManager(ctrl)
+
+		expt := &entity.Experiment{
+			TargetType:      entity.EvalTargetTypeLoopPrompt,
+			TargetVersionID: 101,
+			EvalConf: &entity.EvaluationConfiguration{
+				ConnectorConf: entity.Connector{
+					TargetConf: nil,
+				},
+			},
+		}
+		mgr.fixTargetConf(expt)
+		assert.NotNil(t, expt.EvalConf.ConnectorConf.TargetConf)
+		assert.Equal(t, int64(101), expt.EvalConf.ConnectorConf.TargetConf.TargetVersionID)
+		assert.NotNil(t, expt.EvalConf.ConnectorConf.TargetConf.IngressConf)
+		assert.NotNil(t, expt.EvalConf.ConnectorConf.TargetConf.IngressConf.EvalSetAdapter)
+	})
+
+	t.Run("loop_prompt_existing_target_conf", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		mgr := newTestExptManager(ctrl)
+
+		originalConf := &entity.TargetConf{TargetVersionID: 999}
+		expt := &entity.Experiment{
+			TargetType:      entity.EvalTargetTypeLoopPrompt,
+			TargetVersionID: 101,
+			EvalConf: &entity.EvaluationConfiguration{
+				ConnectorConf: entity.Connector{
+					TargetConf: originalConf,
+				},
+			},
+		}
+		mgr.fixTargetConf(expt)
+		assert.Equal(t, originalConf, expt.EvalConf.ConnectorConf.TargetConf)
+		assert.Equal(t, int64(999), expt.EvalConf.ConnectorConf.TargetConf.TargetVersionID)
+	})
+
+	t.Run("coze_bot_no_modification", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		mgr := newTestExptManager(ctrl)
+
+		expt := &entity.Experiment{
+			TargetType: entity.EvalTargetTypeCozeBot,
+			EvalConf: &entity.EvaluationConfiguration{
+				ConnectorConf: entity.Connector{
+					TargetConf: nil,
+				},
+			},
+		}
+		mgr.fixTargetConf(expt)
+		assert.Nil(t, expt.EvalConf.ConnectorConf.TargetConf)
+	})
+}
+
+func TestExptMangerImpl_Run_OnlineExpt(t *testing.T) {
+	ctx := context.Background()
+	session := &entity.Session{UserID: "test_user"}
+
+	t.Run("lock_with_renew_error", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		mgr := newTestExptManager(ctrl)
+
+		mgr.quotaRepo.(*repoMocks.MockQuotaRepo).
+			EXPECT().
+			CreateOrUpdate(ctx, int64(789), gomock.Any(), session).
+			Return(nil)
+		mgr.configer.(*componentMocks.MockIConfiger).
+			EXPECT().
+			GetExptExecConf(ctx, int64(789)).AnyTimes().
+			Return(&entity.ExptExecConf{SpaceExptConcurLimit: 10})
+		mgr.lwt.(*lwtMocks.MockILatestWriteTracker).
+			EXPECT().
+			CheckWriteFlagByID(ctx, gomock.Any(), int64(123)).
+			Return(false).AnyTimes()
+		mgr.exptRepo.(*repoMocks.MockIExperimentRepo).
+			EXPECT().
+			MGetByID(ctx, []int64{123}, int64(789)).
+			Return([]*entity.Experiment{{
+				ID:       123,
+				SpaceID:  789,
+				ExptType: entity.ExptType_Online,
+				StartAt:  gptr.Of(time.Now()),
+			}}, nil).AnyTimes()
+		mgr.evaluationSetService.(*svcMocks.MockIEvaluationSetService).
+			EXPECT().
+			GetEvaluationSet(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+			Return(&entity.EvaluationSet{}, nil).AnyTimes()
+		mgr.exptResultService.(*svcMocks.MockExptResultService).
+			EXPECT().
+			MGetStats(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+			Return([]*entity.ExptStats{}, nil).AnyTimes()
+		mgr.exptAggrResultService.(*svcMocks.MockExptAggrResultService).
+			EXPECT().
+			BatchGetExptAggrResultByExperimentIDs(gomock.Any(), gomock.Any(), gomock.Any()).
+			Return([]*entity.ExptAggregateResult{}, nil).AnyTimes()
+		mgr.mutex.(*lockMocks.MockILocker).
+			EXPECT().
+			LockWithRenew(ctx, gomock.Any(), time.Second*5, gomock.Any()).
+			Return(false, nil, nil, errors.New("lock error"))
+
+		err := mgr.Run(ctx, 123, 456, 789, 0, session, entity.EvaluationModeSubmit, nil)
+		assert.Error(t, err)
+	})
+
+	t.Run("lock_with_renew_not_locked", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		mgr := newTestExptManager(ctrl)
+
+		mgr.quotaRepo.(*repoMocks.MockQuotaRepo).
+			EXPECT().
+			CreateOrUpdate(ctx, int64(789), gomock.Any(), session).
+			Return(nil)
+		mgr.configer.(*componentMocks.MockIConfiger).
+			EXPECT().
+			GetExptExecConf(ctx, int64(789)).AnyTimes().
+			Return(&entity.ExptExecConf{SpaceExptConcurLimit: 10})
+		mgr.lwt.(*lwtMocks.MockILatestWriteTracker).
+			EXPECT().
+			CheckWriteFlagByID(ctx, gomock.Any(), int64(123)).
+			Return(false).AnyTimes()
+		mgr.exptRepo.(*repoMocks.MockIExperimentRepo).
+			EXPECT().
+			MGetByID(ctx, []int64{123}, int64(789)).
+			Return([]*entity.Experiment{{
+				ID:       123,
+				SpaceID:  789,
+				ExptType: entity.ExptType_Online,
+				StartAt:  gptr.Of(time.Now()),
+			}}, nil).AnyTimes()
+		mgr.evaluationSetService.(*svcMocks.MockIEvaluationSetService).
+			EXPECT().
+			GetEvaluationSet(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+			Return(&entity.EvaluationSet{}, nil).AnyTimes()
+		mgr.exptResultService.(*svcMocks.MockExptResultService).
+			EXPECT().
+			MGetStats(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+			Return([]*entity.ExptStats{}, nil).AnyTimes()
+		mgr.exptAggrResultService.(*svcMocks.MockExptAggrResultService).
+			EXPECT().
+			BatchGetExptAggrResultByExperimentIDs(gomock.Any(), gomock.Any(), gomock.Any()).
+			Return([]*entity.ExptAggregateResult{}, nil).AnyTimes()
+		mgr.mutex.(*lockMocks.MockILocker).
+			EXPECT().
+			LockWithRenew(ctx, gomock.Any(), time.Second*5, gomock.Any()).
+			Return(false, nil, nil, nil)
+
+		err := mgr.Run(ctx, 123, 456, 789, 0, session, entity.EvaluationModeSubmit, nil)
+		assert.NoError(t, err)
+	})
+
+	t.Run("lock_with_renew_locked_publish_success", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		mgr := newTestExptManager(ctrl)
+
+		mgr.quotaRepo.(*repoMocks.MockQuotaRepo).
+			EXPECT().
+			CreateOrUpdate(ctx, int64(789), gomock.Any(), session).
+			Return(nil)
+		mgr.configer.(*componentMocks.MockIConfiger).
+			EXPECT().
+			GetExptExecConf(ctx, int64(789)).AnyTimes().
+			Return(&entity.ExptExecConf{SpaceExptConcurLimit: 10})
+		mgr.lwt.(*lwtMocks.MockILatestWriteTracker).
+			EXPECT().
+			CheckWriteFlagByID(ctx, gomock.Any(), int64(123)).
+			Return(false).AnyTimes()
+		mgr.exptRepo.(*repoMocks.MockIExperimentRepo).
+			EXPECT().
+			MGetByID(ctx, []int64{123}, int64(789)).
+			Return([]*entity.Experiment{{
+				ID:       123,
+				SpaceID:  789,
+				ExptType: entity.ExptType_Online,
+				StartAt:  gptr.Of(time.Now()),
+			}}, nil).AnyTimes()
+		mgr.evaluationSetService.(*svcMocks.MockIEvaluationSetService).
+			EXPECT().
+			GetEvaluationSet(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+			Return(&entity.EvaluationSet{}, nil).AnyTimes()
+		mgr.exptResultService.(*svcMocks.MockExptResultService).
+			EXPECT().
+			MGetStats(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+			Return([]*entity.ExptStats{}, nil).AnyTimes()
+		mgr.exptAggrResultService.(*svcMocks.MockExptAggrResultService).
+			EXPECT().
+			BatchGetExptAggrResultByExperimentIDs(gomock.Any(), gomock.Any(), gomock.Any()).
+			Return([]*entity.ExptAggregateResult{}, nil).AnyTimes()
+		mgr.mutex.(*lockMocks.MockILocker).
+			EXPECT().
+			LockWithRenew(ctx, gomock.Any(), time.Second*5, gomock.Any()).
+			Return(true, ctx, func() {}, nil)
+		mgr.publisher.(*eventsMocks.MockExptEventPublisher).
+			EXPECT().
+			PublishExptScheduleEvent(ctx, gomock.Any(), gptr.Of(time.Second*3)).
+			Return(nil)
+		mgr.userProvider.(*mocks.MockIUserProvider).
+			EXPECT().
+			MGetUserInfo(gomock.Any(), gomock.Any()).
+			Return([]*entity.UserInfo{}, nil)
+
+		err := mgr.Run(ctx, 123, 456, 789, 0, session, entity.EvaluationModeSubmit, nil)
+		assert.NoError(t, err)
+	})
+}
+
+func TestExptMangerImpl_RecordExptData(t *testing.T) {
+	ctx := context.Background()
+	session := &entity.Session{UserID: "test_user"}
+
+	t.Run("success", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		mgr := newTestExptManager(ctrl)
+
+		runLog := &entity.ExptRunLog{
+			ID:        456,
+			ExptID:    123,
+			ExptRunID: 456,
+			Status:    int64(entity.ExptStatus_Pending),
+		}
+
+		mgr.runLogRepo.(*repoMocks.MockIExptRunLogRepo).
+			EXPECT().
+			Get(ctx, int64(123), int64(456)).
+			Return(runLog, nil)
+
+		mgr.turnResultRepo.(*repoMocks.MockIExptTurnResultRepo).
+			EXPECT().
+			ListTurnResult(ctx, int64(789), int64(123), nil, gomock.Any(), false).
+			Return([]*entity.ExptTurnResult{
+				{Status: int32(entity.TurnRunState_Success)},
+				{Status: int32(entity.TurnRunState_Processing)},
+			}, int64(2), nil)
+
+		mgr.runLogRepo.(*repoMocks.MockIExptRunLogRepo).
+			EXPECT().
+			Save(ctx, gomock.Any()).
+			Do(func(_ context.Context, rl *entity.ExptRunLog) {
+				assert.Equal(t, int64(entity.ExptStatus_Processing), rl.Status)
+			}).
+			Return(nil)
+
+		mgr.exptResultService.(*svcMocks.MockExptResultService).
+			EXPECT().
+			CalculateStats(ctx, int64(123), int64(789), session).
+			Return(&entity.ExptCalculateStats{
+				SuccessItemCnt:    3,
+				PendingItemCnt:    1,
+				FailItemCnt:       0,
+				ProcessingItemCnt: 2,
+				TerminatedItemCnt: 0,
+			}, nil)
+
+		mgr.statsRepo.(*repoMocks.MockIExptStatsRepo).
+			EXPECT().
+			UpdateByExptID(ctx, int64(123), int64(789), gomock.Any()).
+			Do(func(_ context.Context, _ int64, _ int64, stats *entity.ExptStats) {
+				assert.Equal(t, int32(3), stats.SuccessItemCnt)
+				assert.Equal(t, int32(1), stats.PendingItemCnt)
+				assert.Equal(t, int32(0), stats.FailItemCnt)
+				assert.Equal(t, int32(2), stats.ProcessingItemCnt)
+				assert.Equal(t, int32(0), stats.TerminatedItemCnt)
+			}).
+			Return(nil)
+
+		err := mgr.RecordExptData(ctx, 123, 456, 789, session)
+		assert.NoError(t, err)
+	})
+
+	t.Run("get_run_log_failure", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		mgr := newTestExptManager(ctrl)
+
+		mgr.runLogRepo.(*repoMocks.MockIExptRunLogRepo).
+			EXPECT().
+			Get(ctx, int64(123), int64(456)).
+			Return(nil, errors.New("run log not found"))
+
+		err := mgr.RecordExptData(ctx, 123, 456, 789, session)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "run log not found")
+	})
+
+	t.Run("calculate_run_log_stats_failure", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		mgr := newTestExptManager(ctrl)
+
+		runLog := &entity.ExptRunLog{
+			ID:        456,
+			ExptID:    123,
+			ExptRunID: 456,
+		}
+
+		mgr.runLogRepo.(*repoMocks.MockIExptRunLogRepo).
+			EXPECT().
+			Get(ctx, int64(123), int64(456)).
+			Return(runLog, nil)
+
+		mgr.turnResultRepo.(*repoMocks.MockIExptTurnResultRepo).
+			EXPECT().
+			ListTurnResult(ctx, int64(789), int64(123), nil, gomock.Any(), false).
+			Return(nil, int64(0), errors.New("list turn result error"))
+
+		err := mgr.RecordExptData(ctx, 123, 456, 789, session)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "list turn result error")
+	})
+
+	t.Run("save_run_log_failure", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		mgr := newTestExptManager(ctrl)
+
+		runLog := &entity.ExptRunLog{
+			ID:        456,
+			ExptID:    123,
+			ExptRunID: 456,
+		}
+
+		mgr.runLogRepo.(*repoMocks.MockIExptRunLogRepo).
+			EXPECT().
+			Get(ctx, int64(123), int64(456)).
+			Return(runLog, nil)
+
+		mgr.turnResultRepo.(*repoMocks.MockIExptTurnResultRepo).
+			EXPECT().
+			ListTurnResult(ctx, int64(789), int64(123), nil, gomock.Any(), false).
+			Return([]*entity.ExptTurnResult{}, int64(0), nil)
+
+		mgr.runLogRepo.(*repoMocks.MockIExptRunLogRepo).
+			EXPECT().
+			Save(ctx, gomock.Any()).
+			Return(errors.New("save run log error"))
+
+		err := mgr.RecordExptData(ctx, 123, 456, 789, session)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "save run log error")
+	})
+
+	t.Run("calculate_stats_failure", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		mgr := newTestExptManager(ctrl)
+
+		runLog := &entity.ExptRunLog{
+			ID:        456,
+			ExptID:    123,
+			ExptRunID: 456,
+		}
+
+		mgr.runLogRepo.(*repoMocks.MockIExptRunLogRepo).
+			EXPECT().
+			Get(ctx, int64(123), int64(456)).
+			Return(runLog, nil)
+
+		mgr.turnResultRepo.(*repoMocks.MockIExptTurnResultRepo).
+			EXPECT().
+			ListTurnResult(ctx, int64(789), int64(123), nil, gomock.Any(), false).
+			Return([]*entity.ExptTurnResult{}, int64(0), nil)
+
+		mgr.runLogRepo.(*repoMocks.MockIExptRunLogRepo).
+			EXPECT().
+			Save(ctx, gomock.Any()).
+			Return(nil)
+
+		mgr.exptResultService.(*svcMocks.MockExptResultService).
+			EXPECT().
+			CalculateStats(ctx, int64(123), int64(789), session).
+			Return(nil, errors.New("calculate stats error"))
+
+		err := mgr.RecordExptData(ctx, 123, 456, 789, session)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "calculate stats error")
+	})
+
+	t.Run("update_stats_failure", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		mgr := newTestExptManager(ctrl)
+
+		runLog := &entity.ExptRunLog{
+			ID:        456,
+			ExptID:    123,
+			ExptRunID: 456,
+		}
+
+		mgr.runLogRepo.(*repoMocks.MockIExptRunLogRepo).
+			EXPECT().
+			Get(ctx, int64(123), int64(456)).
+			Return(runLog, nil)
+
+		mgr.turnResultRepo.(*repoMocks.MockIExptTurnResultRepo).
+			EXPECT().
+			ListTurnResult(ctx, int64(789), int64(123), nil, gomock.Any(), false).
+			Return([]*entity.ExptTurnResult{}, int64(0), nil)
+
+		mgr.runLogRepo.(*repoMocks.MockIExptRunLogRepo).
+			EXPECT().
+			Save(ctx, gomock.Any()).
+			Return(nil)
+
+		mgr.exptResultService.(*svcMocks.MockExptResultService).
+			EXPECT().
+			CalculateStats(ctx, int64(123), int64(789), session).
+			Return(&entity.ExptCalculateStats{
+				SuccessItemCnt: 5,
+			}, nil)
+
+		mgr.statsRepo.(*repoMocks.MockIExptStatsRepo).
+			EXPECT().
+			UpdateByExptID(ctx, int64(123), int64(789), gomock.Any()).
+			Return(errors.New("update stats error"))
+
+		err := mgr.RecordExptData(ctx, 123, 456, 789, session)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "update stats error")
+	})
+}
+
+func TestBuildExptNotifyParam(t *testing.T) {
+	now := time.Date(2025, 1, 15, 10, 30, 0, 0, time.UTC)
+	later := time.Date(2025, 1, 15, 11, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name       string
+		expt       *entity.Experiment
+		wantCardID string
+		wantNil    bool
+		checkParam func(t *testing.T, param map[string]string)
+	}{
+		{
+			name: "success status",
+			expt: &entity.Experiment{
+				ID: 1, SpaceID: 100, Name: "expt1", Status: entity.ExptStatus_Success,
+				StartAt: &now, EndAt: &later,
+			},
+			wantCardID: consts.ExptEventNotifyCardID,
+			checkParam: func(t *testing.T, param map[string]string) {
+				assert.Equal(t, "expt1", param["expt_name"])
+				assert.Equal(t, "100", param["space_id"])
+				assert.Equal(t, "1", param["expt_id"])
+				assert.Equal(t, now.Format(time.DateTime), param["start_time"])
+				assert.Equal(t, later.Format(time.DateTime), param["end_time"])
+				assert.Equal(t, consts.ExptEventNotifyTitleSuccess, param[consts.ExptEventNotifyTitle])
+				assert.Equal(t, consts.ExptEventNotifyTitleColorSuccess, param[consts.ExptEventNotifyTitleColor])
+			},
+		},
+		{
+			name: "failed status",
+			expt: &entity.Experiment{
+				ID: 2, SpaceID: 200, Name: "expt2", Status: entity.ExptStatus_Failed,
+				StartAt: &now,
+			},
+			wantCardID: consts.ExptEventNotifyCardID,
+			checkParam: func(t *testing.T, param map[string]string) {
+				assert.Equal(t, consts.ExptEventNotifyTitleFailed, param[consts.ExptEventNotifyTitle])
+				assert.Equal(t, consts.ExptEventNotifyTitleColorFailed, param[consts.ExptEventNotifyTitleColor])
+				assert.Equal(t, "-", param["end_time"])
+			},
+		},
+		{
+			name: "terminated status",
+			expt: &entity.Experiment{
+				ID: 3, SpaceID: 300, Name: "expt3", Status: entity.ExptStatus_Terminated,
+			},
+			wantCardID: consts.ExptEventNotifyCardID,
+			checkParam: func(t *testing.T, param map[string]string) {
+				assert.Equal(t, consts.ExptEventNotifyTitleTerminated, param[consts.ExptEventNotifyTitle])
+				assert.Equal(t, consts.ExptEventNotifyTitleColorTerminated, param[consts.ExptEventNotifyTitleColor])
+				assert.Equal(t, "-", param["start_time"])
+				assert.Equal(t, "-", param["end_time"])
+			},
+		},
+		{
+			name: "system terminated status",
+			expt: &entity.Experiment{
+				ID: 4, SpaceID: 400, Name: "expt4", Status: entity.ExptStatus_SystemTerminated,
+			},
+			wantCardID: consts.ExptEventNotifyCardID,
+			checkParam: func(t *testing.T, param map[string]string) {
+				assert.Equal(t, consts.ExptEventNotifyTitleTerminated, param[consts.ExptEventNotifyTitle])
+				assert.Equal(t, consts.ExptEventNotifyTitleColorTerminated, param[consts.ExptEventNotifyTitleColor])
+			},
+		},
+		{
+			name: "pending status",
+			expt: &entity.Experiment{
+				ID: 5, SpaceID: 500, Name: "expt5", Status: entity.ExptStatus_Pending,
+			},
+			wantCardID: consts.ExptEventNotifyCardID,
+			checkParam: func(t *testing.T, param map[string]string) {
+				assert.Equal(t, consts.ExptEventNotifyTitleStarting, param[consts.ExptEventNotifyTitle])
+				assert.Equal(t, consts.ExptEventNotifyTitleColorStarting, param[consts.ExptEventNotifyTitleColor])
+			},
+		},
+		{
+			name: "unknown status returns empty",
+			expt: &entity.Experiment{
+				ID: 6, SpaceID: 600, Name: "expt6", Status: entity.ExptStatus_Processing,
+			},
+			wantCardID: "",
+			wantNil:    true,
+		},
+		{
+			name: "intelligent gen source type includes thread_id",
+			expt: &entity.Experiment{
+				ID: 7, SpaceID: 700, Name: "expt7", Status: entity.ExptStatus_Success,
+				SourceType: entity.SourceType_IntelligentGen,
+				ThreadID:   gptr.Of("thread_123"),
+			},
+			wantCardID: consts.ExptEventNotifyCardID,
+			checkParam: func(t *testing.T, param map[string]string) {
+				assert.Equal(t, "thread_123", param["thread_id"])
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cardID, param := buildExptNotifyParam(tt.expt)
+			assert.Equal(t, tt.wantCardID, cardID)
+			if tt.wantNil {
+				assert.Nil(t, param)
+			} else if tt.checkParam != nil {
+				tt.checkParam(t, param)
+			}
+		})
+	}
+}
+
+func TestExptMangerImpl_sendNotifyCard(t *testing.T) {
+	tests := []struct {
+		name      string
+		setupMock func(mgr *ExptMangerImpl)
+		expt      *entity.Experiment
+		wantErr   bool
+		errMsg    string
+	}{
+		{
+			name: "MGetUserInfo error",
+			expt: &entity.Experiment{CreatedBy: "user1", Status: entity.ExptStatus_Success},
+			setupMock: func(mgr *ExptMangerImpl) {
+				mgr.userProvider.(*mocks.MockIUserProvider).
+					EXPECT().
+					MGetUserInfo(gomock.Any(), []string{"user1"}).
+					Return(nil, errors.New("user error"))
+			},
+			wantErr: true,
+			errMsg:  "user error",
+		},
+		{
+			name: "empty user list returns nil",
+			expt: &entity.Experiment{CreatedBy: "user1", Status: entity.ExptStatus_Success},
+			setupMock: func(mgr *ExptMangerImpl) {
+				mgr.userProvider.(*mocks.MockIUserProvider).
+					EXPECT().
+					MGetUserInfo(gomock.Any(), []string{"user1"}).
+					Return([]*entity.UserInfo{}, nil)
+			},
+			wantErr: false,
+		},
+		{
+			name: "nil user returns nil",
+			expt: &entity.Experiment{CreatedBy: "user1", Status: entity.ExptStatus_Success},
+			setupMock: func(mgr *ExptMangerImpl) {
+				mgr.userProvider.(*mocks.MockIUserProvider).
+					EXPECT().
+					MGetUserInfo(gomock.Any(), []string{"user1"}).
+					Return([]*entity.UserInfo{nil}, nil)
+			},
+			wantErr: false,
+		},
+		{
+			name: "empty email returns nil",
+			expt: &entity.Experiment{CreatedBy: "user1", Status: entity.ExptStatus_Success},
+			setupMock: func(mgr *ExptMangerImpl) {
+				mgr.userProvider.(*mocks.MockIUserProvider).
+					EXPECT().
+					MGetUserInfo(gomock.Any(), []string{"user1"}).
+					Return([]*entity.UserInfo{{Email: gptr.Of("")}}, nil)
+			},
+			wantErr: false,
+		},
+		{
+			name: "send card success",
+			expt: &entity.Experiment{
+				ID: 1, SpaceID: 100, Name: "test", CreatedBy: "user1",
+				Status: entity.ExptStatus_Success,
+			},
+			setupMock: func(mgr *ExptMangerImpl) {
+				mgr.userProvider.(*mocks.MockIUserProvider).
+					EXPECT().
+					MGetUserInfo(gomock.Any(), []string{"user1"}).
+					Return([]*entity.UserInfo{{Email: gptr.Of("u@e.com")}}, nil)
+				mgr.notifyRPCAdapter.(*mocks.MockINotifyRPCAdapter).
+					EXPECT().
+					SendMessageCard(gomock.Any(), "u@e.com", gomock.Any(), gomock.Any()).
+					Return(nil)
+			},
+			wantErr: false,
+		},
+		{
+			name: "send card error",
+			expt: &entity.Experiment{
+				ID: 1, SpaceID: 100, Name: "test", CreatedBy: "user1",
+				Status: entity.ExptStatus_Success,
+			},
+			setupMock: func(mgr *ExptMangerImpl) {
+				mgr.userProvider.(*mocks.MockIUserProvider).
+					EXPECT().
+					MGetUserInfo(gomock.Any(), []string{"user1"}).
+					Return([]*entity.UserInfo{{Email: gptr.Of("u@e.com")}}, nil)
+				mgr.notifyRPCAdapter.(*mocks.MockINotifyRPCAdapter).
+					EXPECT().
+					SendMessageCard(gomock.Any(), "u@e.com", gomock.Any(), gomock.Any()).
+					Return(errors.New("card send fail"))
+			},
+			wantErr: true,
+			errMsg:  "card send fail",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+			mgr := newTestExptManager(ctrl)
+			tt.setupMock(mgr)
+			err := mgr.sendNotifyCard(context.Background(), tt.expt)
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errMsg)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestExptMangerImpl_sendExptCompleteEvent(t *testing.T) {
+	tests := []struct {
+		name       string
+		expt       *entity.Experiment
+		exptRunID  *int64
+		fromStatus entity.ExptStatus
+		setupMock  func(mgr *ExptMangerImpl)
+		wantErr    bool
+	}{
+		{
+			name:       "not finished status returns nil without publishing",
+			expt:       &entity.Experiment{ID: 1, Status: entity.ExptStatus_Processing},
+			fromStatus: entity.ExptStatus_Pending,
+			setupMock:  func(mgr *ExptMangerImpl) {},
+			wantErr:    false,
+		},
+		{
+			name:       "finished status publishes event successfully",
+			expt:       &entity.Experiment{ID: 1, SpaceID: 100, Status: entity.ExptStatus_Success, ExptType: entity.ExptType_Offline, SourceType: entity.SourceType_Evaluation},
+			exptRunID:  gptr.Of(int64(10)),
+			fromStatus: entity.ExptStatus_Processing,
+			setupMock: func(mgr *ExptMangerImpl) {
+				mgr.publisher.(*eventsMocks.MockExptEventPublisher).
+					EXPECT().
+					PublishExptLifecycleEvent(gomock.Any(), gomock.Any(), gomock.Any()).
+					Return(nil)
+			},
+			wantErr: false,
+		},
+		{
+			name:       "publish fails but returns nil with warn log",
+			expt:       &entity.Experiment{ID: 2, SpaceID: 200, Status: entity.ExptStatus_Failed, ExptType: entity.ExptType_Online, SourceType: entity.SourceType_Trace},
+			exptRunID:  gptr.Of(int64(20)),
+			fromStatus: entity.ExptStatus_Processing,
+			setupMock: func(mgr *ExptMangerImpl) {
+				mgr.publisher.(*eventsMocks.MockExptEventPublisher).
+					EXPECT().
+					PublishExptLifecycleEvent(gomock.Any(), gomock.Any(), gomock.Any()).
+					Return(errors.New("mq publish error")).
+					AnyTimes()
+			},
+			wantErr: false,
+		},
+		{
+			name:       "nil exptRunID publishes event successfully",
+			expt:       &entity.Experiment{ID: 3, SpaceID: 300, Status: entity.ExptStatus_Terminated},
+			exptRunID:  nil,
+			fromStatus: entity.ExptStatus_Terminating,
+			setupMock: func(mgr *ExptMangerImpl) {
+				mgr.publisher.(*eventsMocks.MockExptEventPublisher).
+					EXPECT().
+					PublishExptLifecycleEvent(gomock.Any(), gomock.Any(), gomock.Any()).
+					Return(nil)
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+			mgr := newTestExptManager(ctrl)
+			tt.setupMock(mgr)
+			err := mgr.sendExptCompleteEvent(context.Background(), tt.expt, tt.exptRunID, tt.fromStatus)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
 			}
 		})
 	}

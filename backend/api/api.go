@@ -25,16 +25,23 @@ import (
 	"github.com/coze-dev/coze-loop/backend/infra/middleware/validator"
 	"github.com/coze-dev/coze-loop/backend/infra/mq"
 	"github.com/coze-dev/coze-loop/backend/infra/redis"
+	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/observability/observabilitytraceservice"
+	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/observability/task/taskservice"
 	"github.com/coze-dev/coze-loop/backend/loop_gen/coze/loop/data/lodataset"
 	"github.com/coze-dev/coze-loop/backend/loop_gen/coze/loop/data/lotag"
 	"github.com/coze-dev/coze-loop/backend/loop_gen/coze/loop/evaluation/loeval_set"
 	"github.com/coze-dev/coze-loop/backend/loop_gen/coze/loop/evaluation/loevaluator"
+	"github.com/coze-dev/coze-loop/backend/loop_gen/coze/loop/evaluation/loexpt"
 	"github.com/coze-dev/coze-loop/backend/loop_gen/coze/loop/foundation/loauth"
 	"github.com/coze-dev/coze-loop/backend/loop_gen/coze/loop/foundation/lofile"
 	"github.com/coze-dev/coze-loop/backend/loop_gen/coze/loop/foundation/louser"
 	"github.com/coze-dev/coze-loop/backend/loop_gen/coze/loop/llm/loruntime"
+	"github.com/coze-dev/coze-loop/backend/loop_gen/coze/loop/observability/lotask"
+	"github.com/coze-dev/coze-loop/backend/loop_gen/coze/loop/observability/lotrace"
 	"github.com/coze-dev/coze-loop/backend/loop_gen/coze/loop/prompt/loexecute"
 	"github.com/coze-dev/coze-loop/backend/loop_gen/coze/loop/prompt/lomanage"
+	"github.com/coze-dev/coze-loop/backend/modules/observability/domain/task/service/taskexe/processor"
+	"github.com/coze-dev/coze-loop/backend/modules/observability/infra/storage"
 	"github.com/coze-dev/coze-loop/backend/pkg/conf"
 	"github.com/coze-dev/coze-loop/backend/pkg/lang/js_conv"
 	"github.com/coze-dev/coze-loop/backend/pkg/observability"
@@ -48,6 +55,7 @@ func Init(
 	idgen idgen.IIDGenerator,
 	db db.Provider,
 	cmdable redis.Cmdable,
+	persistentCmdable redis.PersistentCmdable,
 	configFactory conf.IConfigLoaderFactory,
 	mqFactory mq.IFactory,
 	objectStorage fileserver.ObjectStorage,
@@ -58,6 +66,7 @@ func Init(
 	limiterFactory limiter.IRateLimiterFactory,
 	ckDB ck.Provider,
 	translater i18n.ITranslater,
+	plainLimiterFactory limiter.IPlainRateLimiterFactory,
 ) (*apis.APIHandler, error) {
 	foundationHandler, err := apis.InitFoundationHandler(idgen, db, batchObjectStorage, configFactory)
 	if err != nil {
@@ -89,7 +98,12 @@ func Init(
 		return nil, err
 	}
 
-	evaluationHandler, err := apis.InitEvaluationHandler(
+	var (
+		observabilityHandler *apis.ObservabilityHandler
+		evaluationHandler    *apis.EvaluationHandler
+	)
+
+	evaluationHandler, err = apis.InitEvaluationHandler(
 		ctx, idgen, db, ckDB, cmdable, configFactory, mqFactory,
 		lodataset.NewLocalDatasetService(dataHandler.IDatasetApplication, validator.KiteXValidatorMW),
 		lomanage.NewLocalPromptManageService(promptHandler.PromptManageService),
@@ -104,12 +118,20 @@ func Init(
 		lofile.NewLocalFileService(foundationHandler.FileService),
 		lotag.NewLocalTagService(dataHandler.TagService),
 		objectStorage,
+		batchObjectStorage,
+		plainLimiterFactory,
+		func() observabilitytraceservice.Client {
+			return lotrace.NewLocalTraceService(observabilityHandler.ITraceApplication)
+		},
+		func() taskservice.Client {
+			return lotask.NewLocalTaskService(observabilityHandler.ITaskApplication)
+		},
 	)
 	if err != nil {
 		return nil, err
 	}
 
-	observabilityHandler, err := apis.InitObservabilityHandler(ctx, db, ckDB, meter, mqFactory, configFactory, idgen,
+	observabilityHandler, err = apis.InitObservabilityHandler(ctx, db, ckDB, meter, mqFactory, configFactory, idgen,
 		benefitSvc,
 		lofile.NewLocalFileService(foundationHandler.FileService),
 		loauth.NewLocalAuthService(foundationHandler.AuthService),
@@ -119,8 +141,17 @@ func Init(
 		lotag.NewLocalTagService(dataHandler.TagService),
 		limiterFactory,
 		lodataset.NewLocalDatasetService(dataHandler.IDatasetApplication),
+		cmdable,
+		persistentCmdable,
+		storage.NewTraceStorageProvider(),
+		loexpt.NewLocalExperimentService(evaluationHandler.IExperimentApplication),
+		processor.TaskProcessor{},
+		0,
 	)
 	if err != nil {
+		return nil, err
+	}
+	if err = observabilityHandler.RunTaskScheduleTask(ctx); err != nil {
 		return nil, err
 	}
 	observabilityHandler.RunAsync(ctx)

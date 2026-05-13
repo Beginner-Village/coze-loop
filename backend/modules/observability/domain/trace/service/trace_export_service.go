@@ -5,19 +5,30 @@ package service
 
 import (
 	"context"
+	"strconv"
+	"time"
 
+	"github.com/coze-dev/coze-loop/backend/modules/observability/domain/trace/service/trace/span_filter"
+	"github.com/coze-dev/coze-loop/backend/modules/observability/domain/trace/service/trace/span_processor"
+
+	"github.com/coze-dev/coze-loop/backend/modules/observability/application/convertor"
+
+	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/observability/domain/filter"
+
+	"github.com/bytedance/gg/gptr"
 	"github.com/coze-dev/coze-loop/backend/infra/middleware/session"
 	"github.com/coze-dev/coze-loop/backend/modules/observability/domain/component/config"
 	"github.com/coze-dev/coze-loop/backend/modules/observability/domain/component/metrics"
 	"github.com/coze-dev/coze-loop/backend/modules/observability/domain/component/mq"
 	"github.com/coze-dev/coze-loop/backend/modules/observability/domain/component/rpc"
+	"github.com/coze-dev/coze-loop/backend/modules/observability/domain/component/storage"
 	"github.com/coze-dev/coze-loop/backend/modules/observability/domain/component/tenant"
 	"github.com/coze-dev/coze-loop/backend/modules/observability/domain/trace/entity"
 	"github.com/coze-dev/coze-loop/backend/modules/observability/domain/trace/entity/loop_span"
 	"github.com/coze-dev/coze-loop/backend/modules/observability/domain/trace/repo"
-	"github.com/coze-dev/coze-loop/backend/modules/observability/domain/trace/service/trace/span_processor"
 	"github.com/coze-dev/coze-loop/backend/modules/observability/pkg/errno"
 	"github.com/coze-dev/coze-loop/backend/pkg/errorx"
+	"github.com/coze-dev/coze-loop/backend/pkg/lang/goroutine"
 	"github.com/coze-dev/coze-loop/backend/pkg/lang/ptr"
 	"github.com/coze-dev/coze-loop/backend/pkg/logs"
 	"github.com/samber/lo"
@@ -41,6 +52,8 @@ type ExportTracesToDatasetRequest struct {
 	// 导入方式，不填默认为追加
 	ExportType    ExportType
 	FieldMappings []entity.FieldMapping
+	SpanFilters   *filter.SpanFilterFields
+	Limit         *int64
 }
 
 type ExportTracesToDatasetResponse struct {
@@ -85,6 +98,7 @@ type ITraceExportService interface {
 
 func NewTraceExportServiceImpl(
 	tRepo repo.ITraceRepo,
+	storageProvider storage.IStorageProvider,
 	traceConfig config.ITraceConfig,
 	traceProducer mq.ITraceProducer,
 	annotationProducer mq.IAnnotationProducer,
@@ -92,6 +106,7 @@ func NewTraceExportServiceImpl(
 	tenantProvider tenant.ITenantProvider,
 	datasetServiceProvider *DatasetServiceAdaptor,
 	buildHelper TraceFilterProcessorBuilder,
+	traceService ITraceService,
 ) (ITraceExportService, error) {
 	return &TraceExportServiceImpl{
 		traceRepo:             tRepo,
@@ -102,6 +117,7 @@ func NewTraceExportServiceImpl(
 		metrics:               metrics,
 		DatasetServiceAdaptor: datasetServiceProvider,
 		buildHelper:           buildHelper,
+		traceService:          traceService,
 	}, nil
 }
 
@@ -114,6 +130,7 @@ type TraceExportServiceImpl struct {
 	tenantProvider        tenant.ITenantProvider
 	DatasetServiceAdaptor *DatasetServiceAdaptor
 	buildHelper           TraceFilterProcessorBuilder
+	traceService          ITraceService
 }
 
 func (r *TraceExportServiceImpl) ExportTracesToDataset(ctx context.Context, req *ExportTracesToDatasetRequest) (
@@ -121,7 +138,7 @@ func (r *TraceExportServiceImpl) ExportTracesToDataset(ctx context.Context, req 
 ) {
 	resp := &ExportTracesToDatasetResponse{}
 
-	spans, err := r.getSpans(ctx, req.WorkspaceID, req.SpanIds, req.StartTime, req.EndTime, req.PlatformType)
+	spans, err := r.getSpans(ctx, req.WorkspaceID, req.SpanIds, nil, req.StartTime, req.EndTime, req.PlatformType, nil)
 	if err != nil {
 		return resp, err
 	}
@@ -130,6 +147,22 @@ func (r *TraceExportServiceImpl) ExportTracesToDataset(ctx context.Context, req 
 		return nil, errorx.NewByCode(errno.ResourceNotFoundCode)
 	}
 	logs.CtxInfo(ctx, "Get spans success, total count:%v", len(spans))
+
+	var trajectoryMap map[string]*loop_span.Trajectory
+	if r.hasTrajectory(req.FieldMappings) {
+		traceIDs := lo.UniqMap(spans, func(item *loop_span.Span, index int) string {
+			return item.TraceID
+		})
+
+		// 前端传入的是当前span时间，不能直接使用。改为和ListTrajectory逻辑一致。
+		finalStartTime := r.traceConfig.GetTraceDataMaxDurationDay(ctx, lo.ToPtr(string(req.PlatformType)))
+		trajectoryMap, err = r.traceService.GetTrajectories(ctx, req.WorkspaceID, traceIDs, finalStartTime,
+			time.Now().UnixMilli(), req.PlatformType)
+		if err != nil {
+			return resp, err
+		}
+		logs.CtxInfo(ctx, "Get trajectories success, total count:%v", len(trajectoryMap))
+	}
 
 	dataset, err := r.createOrUpdateDataset(ctx, req.WorkspaceID, req.Category, req.Config)
 	if err != nil {
@@ -141,8 +174,11 @@ func (r *TraceExportServiceImpl) ExportTracesToDataset(ctx context.Context, req 
 	if err := r.clearDataset(ctx, datasetID, req); err != nil {
 		return resp, err
 	}
-
-	successItems, errorGroups, err := r.addToDataset(ctx, spans, req.FieldMappings, req.WorkspaceID, dataset)
+	err = r.traceService.MergeHistoryMessagesByRespIDBatch(ctx, spans, req.PlatformType)
+	if err != nil {
+		return resp, err
+	}
+	successItems, errorGroups, err := r.addToDataset(ctx, spans, req.FieldMappings, req.WorkspaceID, dataset, trajectoryMap)
 	if err != nil {
 		return resp, err
 	}
@@ -152,12 +188,14 @@ func (r *TraceExportServiceImpl) ExportTracesToDataset(ctx context.Context, req 
 	resp.SuccessCount = int32(len(successItems))
 	resp.Errors = errorGroups
 
-	if err := r.addSpanAnnotations(ctx, spans, successItems, datasetID, req.Category); err != nil {
-		logs.CtxError(ctx, "Add span annotations failed, err:%v", err)
-		// 忽略add annotations的错误，防止用户重复导入数据集。
-		return resp, nil
-	}
-	logs.CtxInfo(ctx, "Add span annotations success")
+	goroutine.Go(ctx, func() {
+		if err := r.addSpanAnnotations(ctx, spans, successItems, datasetID, req.Category); err != nil {
+			logs.CtxError(ctx, "Add span annotations failed, err:%v", err)
+			// 忽略add annotations的错误，防止用户重复导入数据集。
+			return
+		}
+		logs.CtxInfo(ctx, "Add span annotations success")
+	})
 
 	return resp, nil
 }
@@ -166,23 +204,48 @@ func (r *TraceExportServiceImpl) PreviewExportTracesToDataset(ctx context.Contex
 	*PreviewExportTracesToDatasetResponse, error,
 ) {
 	resp := &PreviewExportTracesToDatasetResponse{}
-	spans, err := r.getSpans(ctx, req.WorkspaceID, req.SpanIds, req.StartTime, req.EndTime, req.PlatformType)
+	var spans loop_span.SpanList
+	var err error
+
+	spans, err = r.getSpans(ctx, req.WorkspaceID, req.SpanIds, req.SpanFilters, req.StartTime, req.EndTime, req.PlatformType, req.Limit)
 	if err != nil {
 		return resp, err
 	}
 	logs.CtxInfo(ctx, "Get spans success, total count:%v", len(spans))
+
+	var trajectoryMap map[string]*loop_span.Trajectory
+	if r.hasTrajectory(req.FieldMappings) && len(req.SpanIds) < 20 {
+		traceIDs := lo.UniqMap(spans, func(item *loop_span.Span, index int) string {
+			return item.TraceID
+		})
+
+		// 前端传入的是当前span时间，不能直接使用。改为和ListTrajectory逻辑一致。
+		finalStartTime := r.traceConfig.GetTraceDataMaxDurationDay(ctx, lo.ToPtr(string(req.PlatformType)))
+		trajectoryMap, err = r.traceService.GetTrajectories(ctx, req.WorkspaceID, traceIDs, finalStartTime,
+			time.Now().UnixMilli(), req.PlatformType)
+		if err != nil {
+			return resp, err
+		}
+		logs.CtxInfo(ctx, "Get trajectories success, total count:%v", len(trajectoryMap))
+	}
 
 	dataset, err := r.buildPreviewDataset(ctx, req.WorkspaceID, req.Category, req.Config)
 	if err != nil {
 		return resp, err
 	}
 
-	successItems, failedItems, allItems := r.buildDatasetItems(ctx, spans, req.FieldMappings, req.WorkspaceID, dataset)
+	err = r.traceService.MergeHistoryMessagesByRespIDBatch(ctx, spans, req.PlatformType)
+	if err != nil {
+		return resp, err
+	}
+
+	successItems, failedItems, allItems := r.buildDatasetItems(ctx, spans, req.FieldMappings, req.WorkspaceID, dataset, trajectoryMap)
 
 	var ignoreCurrentCount *bool
 	if !req.Config.IsNewDataset && req.ExportType == ExportType_Overwrite {
 		ignoreCurrentCount = lo.ToPtr(true)
 	}
+
 	addSuccess, errorGroups, err := r.getDatasetProvider(dataset.DatasetCategory).ValidateDatasetItems(ctx, dataset, successItems, ignoreCurrentCount)
 	if err != nil {
 		return resp, err
@@ -217,6 +280,7 @@ func (r *TraceExportServiceImpl) createOrUpdateDataset(ctx context.Context, work
 			*config.DatasetName,
 			category,
 			config.DatasetSchema,
+			nil, nil, false, 0,
 		))
 		if err != nil {
 			return nil, err
@@ -240,6 +304,7 @@ func (r *TraceExportServiceImpl) createOrUpdateDataset(ctx context.Context, work
 				"",
 				category,
 				config.DatasetSchema,
+				nil, nil, false, 0,
 			)); err != nil {
 				return nil, err
 			}
@@ -250,16 +315,20 @@ func (r *TraceExportServiceImpl) createOrUpdateDataset(ctx context.Context, work
 	return r.getDatasetProvider(category).GetDataset(ctx, workspaceID, datasetID, category)
 }
 
-func (r *TraceExportServiceImpl) getSpans(ctx context.Context, workspaceID int64, sids []SpanID, startTime, endTime int64, platformType loop_span.PlatformType) (loop_span.SpanList, error) {
-	tenant, err := r.tenantProvider.GetTenantsByPlatformType(ctx, platformType)
+func (r *TraceExportServiceImpl) getSpans(ctx context.Context, workspaceID int64, sids []SpanID, spanFilters *filter.SpanFilterFields, startTime, endTime int64, platformType loop_span.PlatformType, limit *int64) (loop_span.SpanList, error) {
+	tenants, err := r.tenantProvider.GetTenantsByPlatformType(ctx, platformType)
 	if err != nil {
 		return nil, err
 	}
-	spanIDs := lo.Map(sids, func(s SpanID, _ int) string { return s.SpanID })
-	traceIDs := lo.UniqMap(sids, func(s SpanID, _ int) string { return s.TraceID })
-	result, err := r.traceRepo.ListSpans(ctx, &repo.ListSpansParam{
-		Tenants: tenant,
-		Filters: &loop_span.FilterFields{
+	var filters *loop_span.FilterFields
+	var spanLimit int32 = 10
+	if limit != nil {
+		spanLimit = int32(*limit)
+	}
+	if len(sids) > 0 {
+		spanIDs := lo.Map(sids, func(s SpanID, _ int) string { return s.SpanID })
+		traceIDs := lo.UniqMap(sids, func(s SpanID, _ int) string { return s.TraceID })
+		filters = &loop_span.FilterFields{
 			FilterFields: []*loop_span.FilterField{
 				{
 					FieldName: "trace_id",
@@ -274,10 +343,47 @@ func (r *TraceExportServiceImpl) getSpans(ctx context.Context, workspaceID int64
 					QueryType: ptr.Of(loop_span.QueryTypeEnumIn),
 				},
 			},
-		},
-		StartAt: startTime,
-		EndAt:   endTime,
-		Limit:   int32(len(sids)),
+		}
+		spanLimit = int32(len(sids)) * 2
+	} else {
+		// align with ListSpans logic
+		var userFilters *loop_span.FilterFields
+		var spanListType loop_span.SpanListType
+		if spanFilters != nil {
+			userFilters = convertor.FilterFieldsDTO2DO(spanFilters.Filters)
+			if err := userFilters.Traverse(processSpecificFilter); err != nil {
+				return nil, errorx.WrapByCode(err, errno.CommercialCommonInvalidParamCodeCode, errorx.WithExtraMsg("invalid filter"))
+			}
+			if spanFilters.SpanListType != nil {
+				spanListType = loop_span.SpanListType(spanFilters.GetSpanListType())
+			}
+		}
+
+		platformFilter, err := r.buildHelper.BuildPlatformRelatedFilter(ctx, platformType)
+		if err != nil {
+			return nil, err
+		}
+		env := &span_filter.SpanEnv{
+			WorkspaceID: workspaceID,
+		}
+		builtinFilter, err := BuildBuiltinFilters(ctx, platformFilter, env, spanListType)
+		if err != nil {
+			return nil, err
+		} else if builtinFilter == nil {
+			return loop_span.SpanList{}, nil
+		}
+		filters = CombineFilters(builtinFilter, userFilters)
+	}
+
+	result, err := r.traceRepo.ListSpans(ctx, &repo.ListSpansParam{
+		WorkSpaceID: strconv.FormatInt(workspaceID, 10),
+		Tenants:     tenants,
+		Filters:     filters,
+		StartAt:     startTime,
+		EndAt:       endTime,
+		// May have duplicate Spans
+		// wider limit to avoid emit
+		Limit: spanLimit,
 	})
 	if err != nil {
 		return nil, err
@@ -301,16 +407,20 @@ func (r *TraceExportServiceImpl) getSpans(ctx context.Context, workspaceID int64
 	}
 
 	// sort by sids
-	spanMap := lo.SliceToMap(spans, func(s *loop_span.Span) (string, *loop_span.Span) {
-		return s.SpanID, s
-	})
-	sortedSpans := make(loop_span.SpanList, 0, len(sids))
-	for _, sid := range sids {
-		if span, ok := spanMap[sid.SpanID]; ok {
-			sortedSpans = append(sortedSpans, span)
+	if len(sids) > 0 {
+		spanMap := lo.SliceToMap(spans, func(s *loop_span.Span) (string, *loop_span.Span) {
+			return s.SpanID, s
+		})
+		sortedSpans := make(loop_span.SpanList, 0, len(sids))
+		for _, sid := range sids {
+			if span, ok := spanMap[sid.SpanID]; ok {
+				sortedSpans = append(sortedSpans, span)
+			}
 		}
+		return sortedSpans, nil
 	}
-	return sortedSpans, nil
+
+	return spans, nil
 }
 
 func (r *TraceExportServiceImpl) clearDataset(ctx context.Context, datasetID int64, req *ExportTracesToDatasetRequest) error {
@@ -326,9 +436,9 @@ func (r *TraceExportServiceImpl) clearDataset(ctx context.Context, datasetID int
 }
 
 func (r *TraceExportServiceImpl) addToDataset(ctx context.Context, spans []*loop_span.Span, fieldMappings []entity.FieldMapping,
-	workspaceID int64, dataset *entity.Dataset,
+	workspaceID int64, dataset *entity.Dataset, trajectoryMap map[string]*loop_span.Trajectory,
 ) ([]*entity.DatasetItem, []entity.ItemErrorGroup, error) {
-	successItems, failedItems, _ := r.buildDatasetItems(ctx, spans, fieldMappings, workspaceID, dataset)
+	successItems, failedItems, _ := r.buildDatasetItems(ctx, spans, fieldMappings, workspaceID, dataset, trajectoryMap)
 	logs.CtxInfo(ctx, "Build dataset items success, success count:%v, failed count:%v", len(successItems), len(failedItems))
 
 	addSuccess, errorGroups, err := r.getDatasetProvider(dataset.DatasetCategory).AddDatasetItems(ctx, dataset.ID, dataset.DatasetCategory, successItems)
@@ -399,9 +509,11 @@ func (r *TraceExportServiceImpl) addSpanAnnotations(ctx context.Context, spans [
 			continue
 		}
 		err = r.traceRepo.InsertAnnotations(ctx, &repo.InsertAnnotationParam{
-			Tenant:      span.GetTenant(),
-			TTL:         span.GetTTL(ctx),
-			Annotations: []*loop_span.Annotation{annotation},
+			WorkSpaceID:    span.WorkspaceID,
+			Tenant:         span.GetTenant(),
+			TTL:            span.GetTTL(ctx),
+			Span:           span,
+			AnnotationType: gptr.Of(annotation.AnnotationType),
 		})
 		if err != nil {
 			// 忽略add annotations的错误，防止用户重复导入数据集。
@@ -414,13 +526,14 @@ func (r *TraceExportServiceImpl) addSpanAnnotations(ctx context.Context, spans [
 }
 
 func (r *TraceExportServiceImpl) buildDatasetItems(ctx context.Context, spans []*loop_span.Span, fieldMappings []entity.FieldMapping,
-	workspaceID int64, dataset *entity.Dataset,
+	workspaceID int64, dataset *entity.Dataset, trajectoryMap map[string]*loop_span.Trajectory,
 ) (successItems, failedItems, allItems []*entity.DatasetItem) {
 	successItems = make([]*entity.DatasetItem, 0, len(spans))
 	failedItems = make([]*entity.DatasetItem, 0)
 	allItems = make([]*entity.DatasetItem, 0, len(spans))
+
 	for i, span := range spans {
-		item := r.buildItem(ctx, span, i, fieldMappings, workspaceID, dataset)
+		item := r.buildItem(ctx, span, i, fieldMappings, workspaceID, dataset, trajectoryMap[span.TraceID])
 		allItems = append(allItems, item)
 		if len(item.Error) > 0 {
 			failedItems = append(failedItems, item)
@@ -432,18 +545,40 @@ func (r *TraceExportServiceImpl) buildDatasetItems(ctx context.Context, spans []
 	return successItems, failedItems, allItems
 }
 
-func (r *TraceExportServiceImpl) buildItem(ctx context.Context, span *loop_span.Span, i int, fieldMappings []entity.FieldMapping, workspaceID int64,
-	dataset *entity.Dataset,
-) *entity.DatasetItem {
-	item := entity.NewDatasetItem(workspaceID, dataset.ID, span)
-	for _, mapping := range fieldMappings {
-		value, err := span.ExtractByJsonpath(ctx, mapping.TraceFieldKey, mapping.TraceFieldJsonpath)
-		if err != nil {
-			// 非json但使用了jsonpath，也不报错，置空
-			logs.CtxInfo(ctx, "Extract field failed, err:%v", err)
+func (r *TraceExportServiceImpl) hasTrajectory(fieldMappings []entity.FieldMapping) bool {
+	for _, fieldMapping := range fieldMappings {
+		if fieldMapping.IsTrajectory() {
+			return true
 		}
+	}
+	return false
+}
 
+func (r *TraceExportServiceImpl) buildItem(ctx context.Context, span *loop_span.Span, i int, fieldMappings []entity.FieldMapping, workspaceID int64, dataset *entity.Dataset, trajectory *loop_span.Trajectory) *entity.DatasetItem {
+	item := entity.NewDatasetItem(workspaceID, dataset.ID, span, nil)
+	for _, mapping := range fieldMappings {
+		var value string
+		var err error
+		if mapping.IsTrajectory() {
+			if trajectory != nil {
+				value, err = trajectory.MarshalString()
+				if err != nil {
+					logs.CtxError(ctx, "Failed to marshal trajectory, spanID:%v, err:%+v", span.SpanID, err)
+					item.AddError("trajectory marshal error", entity.DatasetErrorType_InternalError, nil)
+				}
+			}
+		} else {
+			if mapping.FieldSchema.ContentType == entity.ContentType_MultiPart {
+				value, err = span.ExtractByJsonpathRaw(ctx, mapping.TraceFieldKey, mapping.TraceFieldJsonpath)
+			} else {
+				value, err = span.ExtractByJsonpath(ctx, mapping.TraceFieldKey, mapping.TraceFieldJsonpath)
+			}
+			if err != nil {
+				logs.CtxInfo(ctx, "Extract field failed, err:%v", err)
+			}
+		}
 		content, errCode := entity.GetContentInfo(ctx, mapping.FieldSchema.ContentType, value)
+
 		if errCode == entity.DatasetErrorType_MismatchSchema {
 			item.AddError("invalid multi part", entity.DatasetErrorType_MismatchSchema, nil)
 			continue
@@ -477,6 +612,7 @@ func (r *TraceExportServiceImpl) buildPreviewDataset(ctx context.Context, worksp
 		"",
 		category,
 		schema,
+		nil, nil, false, 0,
 	)
 	if config.DatasetID != nil {
 		dataset.ID = *config.DatasetID
@@ -488,7 +624,7 @@ func (r *TraceExportServiceImpl) buildPreviewDataset(ctx context.Context, worksp
 }
 
 func (r *TraceExportServiceImpl) getDatasetProvider(category entity.DatasetCategory) rpc.IDatasetProvider {
-	return r.DatasetServiceAdaptor.getDatasetProvider(category)
+	return r.DatasetServiceAdaptor.GetDatasetProvider(category)
 }
 
 type DatasetServiceAdaptor struct {
@@ -506,7 +642,7 @@ func (d *DatasetServiceAdaptor) Register(category entity.DatasetCategory, provid
 	d.datasetServiceMap[category] = provider
 }
 
-func (d *DatasetServiceAdaptor) getDatasetProvider(category entity.DatasetCategory) rpc.IDatasetProvider {
+func (d *DatasetServiceAdaptor) GetDatasetProvider(category entity.DatasetCategory) rpc.IDatasetProvider {
 	datasetProvider, ok := d.datasetServiceMap[category]
 	if !ok {
 		return rpc.NoopDatasetProvider

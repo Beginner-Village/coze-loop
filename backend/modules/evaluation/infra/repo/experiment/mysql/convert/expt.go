@@ -21,6 +21,11 @@ func NewExptConverter() ExptConverter {
 type ExptConverter struct{}
 
 func (ExptConverter) DO2PO(experiment *entity.Experiment) (*model.Experiment, error) {
+	var exptTemplateID int64
+	if experiment.ExptTemplateMeta != nil {
+		exptTemplateID = experiment.ExptTemplateMeta.ID
+	}
+
 	expt := &model.Experiment{
 		ID:               experiment.ID,
 		SpaceID:          experiment.SpaceID,
@@ -37,10 +42,14 @@ func (ExptConverter) DO2PO(experiment *entity.Experiment) (*model.Experiment, er
 		StartAt:          experiment.StartAt,
 		EndAt:            experiment.EndAt,
 		LatestRunID:      experiment.LatestRunID,
+		ExptTemplateID:   exptTemplateID,
 		CreditCost:       int32(experiment.CreditCost),
 		SourceType:       int32(experiment.SourceType),
 		SourceID:         experiment.SourceID,
 		ExptType:         int32(experiment.ExptType),
+		Visibility:       int32(experiment.Visibility),
+		ThreadID:         experiment.ThreadID,
+		TriggerType:      experiment.TriggerType,
 	}
 
 	if experiment.MaxAliveTime != 0 {
@@ -53,6 +62,9 @@ func (ExptConverter) DO2PO(experiment *entity.Experiment) (*model.Experiment, er
 			return nil, errorx.Wrapf(err, "EvaluationConfiguration json marshal fail")
 		}
 		expt.EvalConf = &bytes
+	}
+	if experiment.TrialRunItemCount != 0 {
+		expt.TrialRunItemCount = gptr.Of(experiment.TrialRunItemCount)
 	}
 
 	return expt, nil
@@ -76,7 +88,7 @@ func (ExptConverter) PO2DO(expt *model.Experiment, refs []*model.ExptEvaluatorRe
 		})
 	}
 
-	return &entity.Experiment{
+	res := &entity.Experiment{
 		ID:                  expt.ID,
 		SpaceID:             expt.SpaceID,
 		CreatedBy:           expt.CreatedBy,
@@ -99,5 +111,18 @@ func (ExptConverter) PO2DO(expt *model.Experiment, refs []*model.ExptEvaluatorRe
 		SourceID:            expt.SourceID,
 		ExptType:            entity.ExptType(expt.ExptType),
 		MaxAliveTime:        gptr.Indirect(expt.MaxAliveTime),
-	}, nil
+		Visibility:          entity.Visibility(expt.Visibility),
+		ThreadID:            expt.ThreadID,
+		TrialRunItemCount:   gptr.Indirect(expt.TrialRunItemCount),
+		TriggerType:         expt.TriggerType,
+	}
+
+	// 如果数据库中有模板 ID，则在 ExptTemplateMeta 中回填 ID，方便上层按模板 ID 查询和聚合
+	if expt.ExptTemplateID != 0 {
+		res.ExptTemplateMeta = &entity.ExptTemplateMeta{
+			ID: expt.ExptTemplateID,
+		}
+	}
+
+	return res, nil
 }

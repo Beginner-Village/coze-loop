@@ -9,7 +9,6 @@ import (
 	"context"
 
 	"github.com/cloudwego/hertz/pkg/app"
-
 	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/evaluation/evaluationsetservice"
 )
 
@@ -109,4 +108,34 @@ func BatchGetEvaluationSetItems(ctx context.Context, c *app.RequestContext) {
 // @router /api/evaluation/v3/evaluation_sets/:evaluation_set_id/items/clear [POST]
 func ClearEvaluationSetDraftItem(ctx context.Context, c *app.RequestContext) {
 	invokeAndRender(ctx, c, localEvalSetSvc.ClearEvaluationSetDraftItem)
+}
+
+// GetEvaluationSetItemField .
+// @router /api/evaluation/v1/evaluation_sets/:evaluation_set_id/items/:item_pk/field [GET]
+func GetEvaluationSetItemField(ctx context.Context, c *app.RequestContext) {
+	invokeAndRender(ctx, c, localEvalSetSvc.GetEvaluationSetItemField)
+}
+
+// CreateEvaluationSetWithImport .
+// @router /api/evaluation/v1/evaluation_sets/create_with_import [POST]
+func CreateEvaluationSetWithImport(ctx context.Context, c *app.RequestContext) {
+	invokeAndRender(ctx, c, localEvalSetSvc.CreateEvaluationSetWithImport)
+}
+
+// ParseImportSourceFile .
+// @router /api/evaluation/v1/evaluation_sets/parse_import_source_file [POST]
+func ParseImportSourceFile(ctx context.Context, c *app.RequestContext) {
+	invokeAndRender(ctx, c, localEvalSetSvc.ParseImportSourceFile)
+}
+
+// GetEvaluationItemField .
+// @router /api/evaluation/v1/evaluation_sets/:evaluation_set_id/items/:item_id/field [GET]
+func GetEvaluationItemField(ctx context.Context, c *app.RequestContext) {
+	invokeAndRender(ctx, c, localEvalSetSvc.GetEvaluationSetItemField)
+}
+
+// ValidateEvaluationSetMultiPartData .
+// @router /api/evaluation/v1/evaluation_sets/multi_part_data/validate [POST]
+func ValidateEvaluationSetMultiPartData(ctx context.Context, c *app.RequestContext) {
+	invokeAndRender(ctx, c, localEvalSetSvc.ValidateEvaluationSetMultiPartData)
 }

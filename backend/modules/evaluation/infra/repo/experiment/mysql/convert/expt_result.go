@@ -8,6 +8,7 @@ import (
 
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/domain/entity"
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/infra/repo/experiment/mysql/gorm_gen/model"
+	"github.com/coze-dev/coze-loop/backend/pkg/json"
 	"github.com/coze-dev/coze-loop/backend/pkg/lang/conv"
 )
 
@@ -42,6 +43,13 @@ func (ExptItemResultConvertor) PO2DO(rl *model.ExptItemResult) *entity.ExptItemR
 		ErrMsg:    conv.UnsafeBytesToString(gptr.Indirect(rl.ErrMsg)),
 		LogID:     rl.LogID,
 	}
+	// 反序列化 Ext 字段
+	if rl.Ext != nil && len(*rl.Ext) > 0 {
+		var ext map[string]string
+		if err := json.Unmarshal(*rl.Ext, &ext); err == nil {
+			po.Ext = ext
+		}
+	}
 	return po
 }
 
@@ -57,6 +65,13 @@ func (ExptItemResultConvertor) DO2PO(result *entity.ExptItemResult) *model.ExptI
 		ErrMsg:    gptr.Of(conv.UnsafeStringToBytes(result.ErrMsg)),
 		LogID:     result.LogID,
 	}
+	// 序列化 Ext 字段
+	if len(result.Ext) > 0 {
+		extBytes, err := json.Marshal(result.Ext)
+		if err == nil {
+			po.Ext = &extBytes
+		}
+	}
 
 	return po
 }
@@ -69,19 +84,22 @@ type ExptTurnResultConvertor struct{}
 
 func (ExptTurnResultConvertor) PO2DO(tr *model.ExptTurnResult, evaluatorResults *entity.EvaluatorResults) *entity.ExptTurnResult {
 	return &entity.ExptTurnResult{
-		ID:               tr.ID,
-		SpaceID:          tr.SpaceID,
-		ExptID:           tr.ExptID,
-		ExptRunID:        tr.ExptRunID,
-		ItemID:           tr.ItemID,
-		TurnID:           tr.TurnID,
-		Status:           tr.Status,
-		TraceID:          tr.TraceID,
-		TargetResultID:   tr.TargetResultID,
-		LogID:            tr.LogID,
-		ErrMsg:           conv.UnsafeBytesToString(gptr.Indirect(tr.ErrMsg)),
+		ID:             tr.ID,
+		SpaceID:        tr.SpaceID,
+		ExptID:         tr.ExptID,
+		ExptRunID:      tr.ExptRunID,
+		ItemID:         tr.ItemID,
+		TurnID:         tr.TurnID,
+		Status:         tr.Status,
+		TraceID:        tr.TraceID,
+		TargetResultID: tr.TargetResultID,
+		LogID:          tr.LogID,
+		ErrMsg:         conv.UnsafeBytesToString(gptr.Indirect(tr.ErrMsg)),
+		TurnIdx:        gptr.Indirect(tr.TurnIdx),
+
+		// 运行期补充字段
 		EvaluatorResults: evaluatorResults,
-		TurnIdx:          gptr.Indirect(tr.TurnIdx),
+		WeightedScore:    tr.WeightedScore,
 	}
 }
 
@@ -99,5 +117,7 @@ func (ExptTurnResultConvertor) DO2PO(tr *entity.ExptTurnResult) *model.ExptTurnR
 		LogID:          tr.LogID,
 		ErrMsg:         gptr.Of(conv.UnsafeStringToBytes(tr.ErrMsg)),
 		TurnIdx:        gptr.Of(tr.TurnIdx),
+
+		WeightedScore: tr.WeightedScore,
 	}
 }

@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/bytedance/gg/gptr"
@@ -52,7 +54,7 @@ func main() {
 		panic(err)
 	}
 
-	handler, err := api.Init(ctx, c.idgen, c.db, c.redis, c.cfgFactory, c.mqFactory, c.objectStorage, c.batchObjectStorage, c.benefitSvc, c.auditClient, c.metric, c.limiterFactory, c.ckDb, c.translater)
+	handler, err := api.Init(ctx, c.idgen, c.db, c.redis, c.redis, c.cfgFactory, c.mqFactory, c.objectStorage, c.batchObjectStorage, c.benefitSvc, c.auditClient, c.metric, c.limiterFactory, c.ckDb, c.translater, c.plainLimiterFactory)
 	if err != nil {
 		panic(err)
 	}
@@ -61,11 +63,20 @@ func main() {
 		panic(err)
 	}
 
-	if err := registry.NewConsumerRegistry(c.mqFactory).Register(mustInitConsumerWorkers(c.cfgFactory, handler, handler, handler)).StartAll(ctx); err != nil {
+	signalCtx, signalCancel := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
+	defer signalCancel()
+
+	r := registry.NewConsumerRegistryWithShutdown(signalCtx, c.mqFactory).Register(MustInitConsumerWorkers(c.cfgFactory, handler, handler, handler, handler))
+	if err := r.StartAll(ctx); err != nil {
 		panic(err)
 	}
 
-	api.Start(handler)
+	go api.Start(handler)
+	<-signalCtx.Done()
+
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer stopCancel()
+	_ = r.StopAll(stopCtx)
 }
 
 type ComponentConfig struct {
@@ -118,19 +129,20 @@ func getComponentConfig(configFactory conf.IConfigLoaderFactory) (*ComponentConf
 }
 
 type component struct {
-	idgen              idgen.IIDGenerator
-	db                 db.Provider
-	redis              redis.Cmdable
-	cfgFactory         conf.IConfigLoaderFactory
-	mqFactory          mq.IFactory
-	objectStorage      fileserver.ObjectStorage
-	batchObjectStorage fileserver.BatchObjectStorage
-	benefitSvc         benefit.IBenefitService
-	auditClient        audit.IAuditService
-	metric             metrics.Meter
-	limiterFactory     limiter.IRateLimiterFactory
-	ckDb               ck.Provider
-	translater         i18n.ITranslater
+	idgen               idgen.IIDGenerator
+	db                  db.Provider
+	redis               redis.Cmdable
+	cfgFactory          conf.IConfigLoaderFactory
+	mqFactory           mq.IFactory
+	objectStorage       fileserver.ObjectStorage
+	batchObjectStorage  fileserver.BatchObjectStorage
+	benefitSvc          benefit.IBenefitService
+	auditClient         audit.IAuditService
+	metric              metrics.Meter
+	limiterFactory      limiter.IRateLimiterFactory
+	ckDb                ck.Provider
+	translater          i18n.ITranslater
+	plainLimiterFactory limiter.IPlainRateLimiterFactory
 }
 
 func initTracer(handler *apis.APIHandler) error {
@@ -250,19 +262,20 @@ func newComponent(ctx context.Context) (*component, error) {
 	}
 
 	return &component{
-		idgen:              idgenerator,
-		db:                 db,
-		redis:              cmdable,
-		cfgFactory:         cfgFactory,
-		mqFactory:          rocketmq.NewFactory(),
-		objectStorage:      objectStorage,
-		batchObjectStorage: objectStorage,
-		benefitSvc:         benefit.NewNoopBenefitService(),
-		auditClient:        audit.NewNoopAuditService(),
-		metric:             metrics.GetMeter(),
-		limiterFactory:     dist.NewRateLimiterFactory(cmdable),
-		ckDb:               ckDb,
-		translater:         translater,
+		idgen:               idgenerator,
+		db:                  db,
+		redis:               cmdable,
+		cfgFactory:          cfgFactory,
+		mqFactory:           rocketmq.NewFactory(),
+		objectStorage:       objectStorage,
+		batchObjectStorage:  objectStorage,
+		benefitSvc:          benefit.NewNoopBenefitService(),
+		auditClient:         audit.NewNoopAuditService(),
+		metric:              metrics.GetMeter(),
+		limiterFactory:      dist.NewRateLimiterFactory(cmdable),
+		ckDb:                ckDb,
+		translater:          translater,
+		plainLimiterFactory: dist.NewPlainLimiterFactory(cmdable),
 	}, nil
 }
 

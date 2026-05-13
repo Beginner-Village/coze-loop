@@ -5,14 +5,13 @@ package trace
 
 import (
 	"github.com/bytedance/gg/gptr"
-
 	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/data/domain/dataset"
-	eval_common "github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/evaluation/domain/common"
 	dataset0 "github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/observability/domain/dataset"
 	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/observability/trace"
 	"github.com/coze-dev/coze-loop/backend/modules/observability/domain/trace/entity"
 	"github.com/coze-dev/coze-loop/backend/modules/observability/domain/trace/entity/loop_span"
 	"github.com/coze-dev/coze-loop/backend/modules/observability/domain/trace/service"
+	"github.com/coze-dev/coze-loop/backend/modules/observability/infra/rpc/evaluationset"
 )
 
 // ExportRequestDTO2DO 将导出请求从 DTO 转换为 DO
@@ -49,7 +48,7 @@ func ExportRequestDTO2DO(req *trace.ExportTracesToDatasetRequest) *service.Expor
 
 	// 转换字段映射
 	if req.IsSetFieldMappings() {
-		result.FieldMappings = convertFieldMappingsDTO2DO(req.GetFieldMappings())
+		result.FieldMappings = ConvertFieldMappingsDTO2DO(req.GetFieldMappings())
 	}
 
 	return result
@@ -85,6 +84,7 @@ func PreviewRequestDTO2DO(req *trace.PreviewExportTracesToDatasetRequest) *servi
 		SpanIds:     convertSpanIdsDTO2DO(req.GetSpanIds()),
 		Category:    convertDatasetCategoryDTO2DO(req.GetCategory()),
 		Config:      convertDatasetConfigDTO2DO(req.GetConfig()),
+		Limit:       req.Limit,
 	}
 	result.StartTime = req.GetStartTime()
 	result.EndTime = req.GetEndTime()
@@ -107,7 +107,11 @@ func PreviewRequestDTO2DO(req *trace.PreviewExportTracesToDatasetRequest) *servi
 
 	// 转换字段映射
 	if req.IsSetFieldMappings() {
-		result.FieldMappings = convertFieldMappingsDTO2DO(req.GetFieldMappings())
+		result.FieldMappings = ConvertFieldMappingsDTO2DO(req.GetFieldMappings())
+	}
+
+	if req.IsSetSpanFilters() {
+		result.SpanFilters = req.SpanFilters
 	}
 
 	return result
@@ -151,14 +155,14 @@ func convertDatasetConfigDTO2DO(config *trace.DatasetConfig) service.DatasetConf
 		result.DatasetName = config.DatasetName
 	}
 	if config.IsSetDatasetSchema() {
-		result.DatasetSchema = convertDatasetSchemaDTO2DO(config.GetDatasetSchema())
+		result.DatasetSchema = ConvertDatasetSchemaDTO2DO(config.GetDatasetSchema())
 	}
 
 	return result
 }
 
-// convertDatasetSchemaDTO2DO 转换数据集模式
-func convertDatasetSchemaDTO2DO(schema *dataset0.DatasetSchema) entity.DatasetSchema {
+// ConvertDatasetSchemaDTO2DO 转换数据集模式
+func ConvertDatasetSchemaDTO2DO(schema *dataset0.DatasetSchema) entity.DatasetSchema {
 	if schema == nil {
 		return entity.DatasetSchema{}
 	}
@@ -177,8 +181,9 @@ func convertDatasetSchemaDTO2DO(schema *dataset0.DatasetSchema) entity.DatasetSc
 				Key:         &key,
 				Name:        name,
 				Description: description,
-				ContentType: convertContentTypeDTO2DO(fs.GetContentType()),
+				ContentType: evaluationset.ConvertContentTypeDTO2DO(fs.GetContentType()),
 				TextSchema:  textSchema,
+				SchemaKey:   entity.SchemaKey(fs.GetSchemaKey()),
 			}
 		}
 	}
@@ -186,8 +191,8 @@ func convertDatasetSchemaDTO2DO(schema *dataset0.DatasetSchema) entity.DatasetSc
 	return result
 }
 
-// convertFieldMappingsDTO2DO 转换字段映射
-func convertFieldMappingsDTO2DO(mappings []*dataset0.FieldMapping) []entity.FieldMapping {
+// ConvertFieldMappingsDTO2DO 转换字段映射
+func ConvertFieldMappingsDTO2DO(mappings []*dataset0.FieldMapping) []entity.FieldMapping {
 	if len(mappings) == 0 {
 		return nil
 	}
@@ -199,7 +204,8 @@ func convertFieldMappingsDTO2DO(mappings []*dataset0.FieldMapping) []entity.Fiel
 				Key:         mapping.GetFieldSchema().Key,
 				Name:        mapping.GetFieldSchema().GetName(),
 				Description: mapping.GetFieldSchema().GetDescription(),
-				ContentType: convertContentTypeDTO2DO(mapping.GetFieldSchema().GetContentType()),
+				ContentType: evaluationset.ConvertContentTypeDTO2DO(mapping.GetFieldSchema().GetContentType()),
+				SchemaKey:   entity.SchemaKey(mapping.GetFieldSchema().GetSchemaKey()),
 				TextSchema:  mapping.GetFieldSchema().GetTextSchema(),
 			},
 			TraceFieldKey:      mapping.GetTraceFieldKey(),
@@ -293,6 +299,10 @@ func convertDatasetItemsDO2DTO(items []*entity.DatasetItem) []*dataset0.Item {
 	for i, item := range items {
 		result[i] = &dataset0.Item{
 			Status: dataset0.ItemStatusSuccess,
+			SpanInfo: &dataset0.ExportSpanInfo{
+				TraceID: &item.TraceID,
+				SpanID:  &item.SpanID,
+			},
 		}
 
 		// 转换字段数据为 map
@@ -343,20 +353,4 @@ func convertSpanIdsDTO2DO(spanIDs []*trace.SpanID) []service.SpanID {
 		})
 	}
 	return result
-}
-
-// convertContentTypeDTO2DO 转换内容类型
-func convertContentTypeDTO2DO(contentType eval_common.ContentType) entity.ContentType {
-	switch contentType {
-	case eval_common.ContentTypeText:
-		return entity.ContentType_Text
-	case eval_common.ContentTypeImage:
-		return entity.ContentType_Image
-	case eval_common.ContentTypeAudio:
-		return entity.ContentType_Audio
-	case eval_common.ContentTypeMultiPart:
-		return entity.ContentType_MultiPart
-	default:
-		return entity.ContentType_Text
-	}
 }

@@ -40,7 +40,64 @@ func (p *PromptEvaluator) IsValid() error {
 	}
 	return nil
 }
+func (p *AgentEvaluator) IsValid() error {
+	if p.AgentConfig != nil {
+		if err := p.AgentConfig.IsValid(); err != nil {
+			return fmt.Errorf("field AgentConfig not valid, %w", err)
+		}
+	}
+	if p.ModelConfig != nil {
+		if err := p.ModelConfig.IsValid(); err != nil {
+			return fmt.Errorf("field ModelConfig not valid, %w", err)
+		}
+	}
+	if p.PromptConfig != nil {
+		if err := p.PromptConfig.IsValid(); err != nil {
+			return fmt.Errorf("field PromptConfig not valid, %w", err)
+		}
+	}
+	return nil
+}
+func (p *AgentEvaluatorPromptConfig) IsValid() error {
+	if p.OutputRules != nil {
+		if err := p.OutputRules.IsValid(); err != nil {
+			return fmt.Errorf("field OutputRules not valid, %w", err)
+		}
+	}
+	return nil
+}
+func (p *AgentEvaluatorPromptConfigOutputRules) IsValid() error {
+	if p.ScorePrompt != nil {
+		if err := p.ScorePrompt.IsValid(); err != nil {
+			return fmt.Errorf("field ScorePrompt not valid, %w", err)
+		}
+	}
+	if p.ReasoningPrompt != nil {
+		if err := p.ReasoningPrompt.IsValid(); err != nil {
+			return fmt.Errorf("field ReasoningPrompt not valid, %w", err)
+		}
+	}
+	if p.ExtraOutputPrompt != nil {
+		if err := p.ExtraOutputPrompt.IsValid(); err != nil {
+			return fmt.Errorf("field ExtraOutputPrompt not valid, %w", err)
+		}
+	}
+	return nil
+}
 func (p *CodeEvaluator) IsValid() error {
+	return nil
+}
+func (p *CustomRPCEvaluator) IsValid() error {
+	if p.InvokeHTTPInfo != nil {
+		if err := p.InvokeHTTPInfo.IsValid(); err != nil {
+			return fmt.Errorf("field InvokeHTTPInfo not valid, %w", err)
+		}
+	}
+	if p.RateLimit != nil {
+		if err := p.RateLimit.IsValid(); err != nil {
+			return fmt.Errorf("field RateLimit not valid, %w", err)
+		}
+	}
 	return nil
 }
 func (p *EvaluatorVersion) IsValid() error {
@@ -67,6 +124,27 @@ func (p *EvaluatorContent) IsValid() error {
 			return fmt.Errorf("field CodeEvaluator not valid, %w", err)
 		}
 	}
+	if p.CustomRPCEvaluator != nil {
+		if err := p.CustomRPCEvaluator.IsValid(); err != nil {
+			return fmt.Errorf("field CustomRPCEvaluator not valid, %w", err)
+		}
+	}
+	if p.AgentEvaluator != nil {
+		if err := p.AgentEvaluator.IsValid(); err != nil {
+			return fmt.Errorf("field AgentEvaluator not valid, %w", err)
+		}
+	}
+	return nil
+}
+func (p *EvaluatorIDVersionItem) IsValid() error {
+	if p.RunConfig != nil {
+		if err := p.RunConfig.IsValid(); err != nil {
+			return fmt.Errorf("field RunConfig not valid, %w", err)
+		}
+	}
+	return nil
+}
+func (p *EvaluatorInfo) IsValid() error {
 	return nil
 }
 func (p *Evaluator) IsValid() error {
@@ -80,6 +158,43 @@ func (p *Evaluator) IsValid() error {
 			return fmt.Errorf("field CurrentVersion not valid, %w", err)
 		}
 	}
+	if p.EvaluatorInfo != nil {
+		if err := p.EvaluatorInfo.IsValid(); err != nil {
+			return fmt.Errorf("field EvaluatorInfo not valid, %w", err)
+		}
+	}
+	return nil
+}
+func (p *EvaluatorTemplate) IsValid() error {
+	if p.EvaluatorInfo != nil {
+		if err := p.EvaluatorInfo.IsValid(); err != nil {
+			return fmt.Errorf("field EvaluatorInfo not valid, %w", err)
+		}
+	}
+	if p.EvaluatorContent != nil {
+		if err := p.EvaluatorContent.IsValid(); err != nil {
+			return fmt.Errorf("field EvaluatorContent not valid, %w", err)
+		}
+	}
+	if p.BaseInfo != nil {
+		if err := p.BaseInfo.IsValid(); err != nil {
+			return fmt.Errorf("field BaseInfo not valid, %w", err)
+		}
+	}
+	return nil
+}
+func (p *EvaluatorFilterOption) IsValid() error {
+	if p.Filters != nil {
+		if err := p.Filters.IsValid(); err != nil {
+			return fmt.Errorf("field Filters not valid, %w", err)
+		}
+	}
+	return nil
+}
+func (p *EvaluatorFilters) IsValid() error {
+	return nil
+}
+func (p *EvaluatorFilterCondition) IsValid() error {
 	return nil
 }
 func (p *Correction) IsValid() error {
@@ -119,6 +234,11 @@ func (p *EvaluatorOutputData) IsValid() error {
 			return fmt.Errorf("field EvaluatorRunError not valid, %w", err)
 		}
 	}
+	if p.ExtraOutput != nil {
+		if err := p.ExtraOutput.IsValid(); err != nil {
+			return fmt.Errorf("field ExtraOutput not valid, %w", err)
+		}
+	}
 	return nil
 }
 func (p *EvaluatorResult_) IsValid() error {
@@ -135,6 +255,23 @@ func (p *EvaluatorUsage) IsValid() error {
 func (p *EvaluatorRunError) IsValid() error {
 	return nil
 }
+func (p *EvaluatorExtraOutputContent) IsValid() error {
+	return nil
+}
 func (p *EvaluatorInputData) IsValid() error {
+	return nil
+}
+func (p *EvaluatorHTTPInfo) IsValid() error {
+	return nil
+}
+func (p *EvaluatorRunConfig) IsValid() error {
+	if p.EvaluatorRuntimeParam != nil {
+		if err := p.EvaluatorRuntimeParam.IsValid(); err != nil {
+			return fmt.Errorf("field EvaluatorRuntimeParam not valid, %w", err)
+		}
+	}
+	return nil
+}
+func (p *EvaluatorProgressMessage) IsValid() error {
 	return nil
 }

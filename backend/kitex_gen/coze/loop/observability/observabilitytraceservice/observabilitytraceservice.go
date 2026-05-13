@@ -21,10 +21,24 @@ var serviceMethods = map[string]kitex.MethodInfo{
 		false,
 		kitex.WithStreamingMode(kitex.StreamingNone),
 	),
+	"ListPreSpan": kitex.NewMethodInfo(
+		listPreSpanHandler,
+		newTraceServiceListPreSpanArgs,
+		newTraceServiceListPreSpanResult,
+		false,
+		kitex.WithStreamingMode(kitex.StreamingNone),
+	),
 	"GetTrace": kitex.NewMethodInfo(
 		getTraceHandler,
 		newTraceServiceGetTraceArgs,
 		newTraceServiceGetTraceResult,
+		false,
+		kitex.WithStreamingMode(kitex.StreamingNone),
+	),
+	"SearchTraceTree": kitex.NewMethodInfo(
+		searchTraceTreeHandler,
+		newTraceServiceSearchTraceTreeArgs,
+		newTraceServiceSearchTraceTreeResult,
 		false,
 		kitex.WithStreamingMode(kitex.StreamingNone),
 	),
@@ -105,6 +119,13 @@ var serviceMethods = map[string]kitex.MethodInfo{
 		false,
 		kitex.WithStreamingMode(kitex.StreamingNone),
 	),
+	"ListWorkspaceAnnotations": kitex.NewMethodInfo(
+		listWorkspaceAnnotationsHandler,
+		newTraceServiceListWorkspaceAnnotationsArgs,
+		newTraceServiceListWorkspaceAnnotationsResult,
+		false,
+		kitex.WithStreamingMode(kitex.StreamingNone),
+	),
 	"ExportTracesToDataset": kitex.NewMethodInfo(
 		exportTracesToDatasetHandler,
 		newTraceServiceExportTracesToDatasetArgs,
@@ -116,6 +137,76 @@ var serviceMethods = map[string]kitex.MethodInfo{
 		previewExportTracesToDatasetHandler,
 		newTraceServicePreviewExportTracesToDatasetArgs,
 		newTraceServicePreviewExportTracesToDatasetResult,
+		false,
+		kitex.WithStreamingMode(kitex.StreamingNone),
+	),
+	"ChangeEvaluatorScore": kitex.NewMethodInfo(
+		changeEvaluatorScoreHandler,
+		newTraceServiceChangeEvaluatorScoreArgs,
+		newTraceServiceChangeEvaluatorScoreResult,
+		false,
+		kitex.WithStreamingMode(kitex.StreamingNone),
+	),
+	"ListAnnotationEvaluators": kitex.NewMethodInfo(
+		listAnnotationEvaluatorsHandler,
+		newTraceServiceListAnnotationEvaluatorsArgs,
+		newTraceServiceListAnnotationEvaluatorsResult,
+		false,
+		kitex.WithStreamingMode(kitex.StreamingNone),
+	),
+	"ExtractSpanInfo": kitex.NewMethodInfo(
+		extractSpanInfoHandler,
+		newTraceServiceExtractSpanInfoArgs,
+		newTraceServiceExtractSpanInfoResult,
+		false,
+		kitex.WithStreamingMode(kitex.StreamingNone),
+	),
+	"UpsertTrajectoryConfig": kitex.NewMethodInfo(
+		upsertTrajectoryConfigHandler,
+		newTraceServiceUpsertTrajectoryConfigArgs,
+		newTraceServiceUpsertTrajectoryConfigResult,
+		false,
+		kitex.WithStreamingMode(kitex.StreamingNone),
+	),
+	"GetTrajectoryConfig": kitex.NewMethodInfo(
+		getTrajectoryConfigHandler,
+		newTraceServiceGetTrajectoryConfigArgs,
+		newTraceServiceGetTrajectoryConfigResult,
+		false,
+		kitex.WithStreamingMode(kitex.StreamingNone),
+	),
+	"ListTrajectory": kitex.NewMethodInfo(
+		listTrajectoryHandler,
+		newTraceServiceListTrajectoryArgs,
+		newTraceServiceListTrajectoryResult,
+		false,
+		kitex.WithStreamingMode(kitex.StreamingNone),
+	),
+	"ListMetadata": kitex.NewMethodInfo(
+		listMetadataHandler,
+		newTraceServiceListMetadataArgs,
+		newTraceServiceListMetadataResult,
+		false,
+		kitex.WithStreamingMode(kitex.StreamingNone),
+	),
+	"ListTraceChat": kitex.NewMethodInfo(
+		listTraceChatHandler,
+		newTraceServiceListTraceChatArgs,
+		newTraceServiceListTraceChatResult,
+		false,
+		kitex.WithStreamingMode(kitex.StreamingNone),
+	),
+	"ListThreadChat": kitex.NewMethodInfo(
+		listThreadChatHandler,
+		newTraceServiceListThreadChatArgs,
+		newTraceServiceListThreadChatResult,
+		false,
+		kitex.WithStreamingMode(kitex.StreamingNone),
+	),
+	"GetThreadStat": kitex.NewMethodInfo(
+		getThreadStatHandler,
+		newTraceServiceGetThreadStatArgs,
+		newTraceServiceGetThreadStatResult,
 		false,
 		kitex.WithStreamingMode(kitex.StreamingNone),
 	),
@@ -171,6 +262,25 @@ func newTraceServiceListSpansResult() interface{} {
 	return trace.NewTraceServiceListSpansResult()
 }
 
+func listPreSpanHandler(ctx context.Context, handler interface{}, arg, result interface{}) error {
+	realArg := arg.(*trace.TraceServiceListPreSpanArgs)
+	realResult := result.(*trace.TraceServiceListPreSpanResult)
+	success, err := handler.(trace.TraceService).ListPreSpan(ctx, realArg.Req)
+	if err != nil {
+		return err
+	}
+	realResult.Success = success
+	return nil
+}
+
+func newTraceServiceListPreSpanArgs() interface{} {
+	return trace.NewTraceServiceListPreSpanArgs()
+}
+
+func newTraceServiceListPreSpanResult() interface{} {
+	return trace.NewTraceServiceListPreSpanResult()
+}
+
 func getTraceHandler(ctx context.Context, handler interface{}, arg, result interface{}) error {
 	realArg := arg.(*trace.TraceServiceGetTraceArgs)
 	realResult := result.(*trace.TraceServiceGetTraceResult)
@@ -188,6 +298,25 @@ func newTraceServiceGetTraceArgs() interface{} {
 
 func newTraceServiceGetTraceResult() interface{} {
 	return trace.NewTraceServiceGetTraceResult()
+}
+
+func searchTraceTreeHandler(ctx context.Context, handler interface{}, arg, result interface{}) error {
+	realArg := arg.(*trace.TraceServiceSearchTraceTreeArgs)
+	realResult := result.(*trace.TraceServiceSearchTraceTreeResult)
+	success, err := handler.(trace.TraceService).SearchTraceTree(ctx, realArg.Req)
+	if err != nil {
+		return err
+	}
+	realResult.Success = success
+	return nil
+}
+
+func newTraceServiceSearchTraceTreeArgs() interface{} {
+	return trace.NewTraceServiceSearchTraceTreeArgs()
+}
+
+func newTraceServiceSearchTraceTreeResult() interface{} {
+	return trace.NewTraceServiceSearchTraceTreeResult()
 }
 
 func batchGetTracesAdvanceInfoHandler(ctx context.Context, handler interface{}, arg, result interface{}) error {
@@ -399,6 +528,25 @@ func newTraceServiceListAnnotationsResult() interface{} {
 	return trace.NewTraceServiceListAnnotationsResult()
 }
 
+func listWorkspaceAnnotationsHandler(ctx context.Context, handler interface{}, arg, result interface{}) error {
+	realArg := arg.(*trace.TraceServiceListWorkspaceAnnotationsArgs)
+	realResult := result.(*trace.TraceServiceListWorkspaceAnnotationsResult)
+	success, err := handler.(trace.TraceService).ListWorkspaceAnnotations(ctx, realArg.Req)
+	if err != nil {
+		return err
+	}
+	realResult.Success = success
+	return nil
+}
+
+func newTraceServiceListWorkspaceAnnotationsArgs() interface{} {
+	return trace.NewTraceServiceListWorkspaceAnnotationsArgs()
+}
+
+func newTraceServiceListWorkspaceAnnotationsResult() interface{} {
+	return trace.NewTraceServiceListWorkspaceAnnotationsResult()
+}
+
 func exportTracesToDatasetHandler(ctx context.Context, handler interface{}, arg, result interface{}) error {
 	realArg := arg.(*trace.TraceServiceExportTracesToDatasetArgs)
 	realResult := result.(*trace.TraceServiceExportTracesToDatasetResult)
@@ -437,6 +585,196 @@ func newTraceServicePreviewExportTracesToDatasetResult() interface{} {
 	return trace.NewTraceServicePreviewExportTracesToDatasetResult()
 }
 
+func changeEvaluatorScoreHandler(ctx context.Context, handler interface{}, arg, result interface{}) error {
+	realArg := arg.(*trace.TraceServiceChangeEvaluatorScoreArgs)
+	realResult := result.(*trace.TraceServiceChangeEvaluatorScoreResult)
+	success, err := handler.(trace.TraceService).ChangeEvaluatorScore(ctx, realArg.Req)
+	if err != nil {
+		return err
+	}
+	realResult.Success = success
+	return nil
+}
+
+func newTraceServiceChangeEvaluatorScoreArgs() interface{} {
+	return trace.NewTraceServiceChangeEvaluatorScoreArgs()
+}
+
+func newTraceServiceChangeEvaluatorScoreResult() interface{} {
+	return trace.NewTraceServiceChangeEvaluatorScoreResult()
+}
+
+func listAnnotationEvaluatorsHandler(ctx context.Context, handler interface{}, arg, result interface{}) error {
+	realArg := arg.(*trace.TraceServiceListAnnotationEvaluatorsArgs)
+	realResult := result.(*trace.TraceServiceListAnnotationEvaluatorsResult)
+	success, err := handler.(trace.TraceService).ListAnnotationEvaluators(ctx, realArg.Req)
+	if err != nil {
+		return err
+	}
+	realResult.Success = success
+	return nil
+}
+
+func newTraceServiceListAnnotationEvaluatorsArgs() interface{} {
+	return trace.NewTraceServiceListAnnotationEvaluatorsArgs()
+}
+
+func newTraceServiceListAnnotationEvaluatorsResult() interface{} {
+	return trace.NewTraceServiceListAnnotationEvaluatorsResult()
+}
+
+func extractSpanInfoHandler(ctx context.Context, handler interface{}, arg, result interface{}) error {
+	realArg := arg.(*trace.TraceServiceExtractSpanInfoArgs)
+	realResult := result.(*trace.TraceServiceExtractSpanInfoResult)
+	success, err := handler.(trace.TraceService).ExtractSpanInfo(ctx, realArg.Req)
+	if err != nil {
+		return err
+	}
+	realResult.Success = success
+	return nil
+}
+
+func newTraceServiceExtractSpanInfoArgs() interface{} {
+	return trace.NewTraceServiceExtractSpanInfoArgs()
+}
+
+func newTraceServiceExtractSpanInfoResult() interface{} {
+	return trace.NewTraceServiceExtractSpanInfoResult()
+}
+
+func upsertTrajectoryConfigHandler(ctx context.Context, handler interface{}, arg, result interface{}) error {
+	realArg := arg.(*trace.TraceServiceUpsertTrajectoryConfigArgs)
+	realResult := result.(*trace.TraceServiceUpsertTrajectoryConfigResult)
+	success, err := handler.(trace.TraceService).UpsertTrajectoryConfig(ctx, realArg.Req)
+	if err != nil {
+		return err
+	}
+	realResult.Success = success
+	return nil
+}
+
+func newTraceServiceUpsertTrajectoryConfigArgs() interface{} {
+	return trace.NewTraceServiceUpsertTrajectoryConfigArgs()
+}
+
+func newTraceServiceUpsertTrajectoryConfigResult() interface{} {
+	return trace.NewTraceServiceUpsertTrajectoryConfigResult()
+}
+
+func getTrajectoryConfigHandler(ctx context.Context, handler interface{}, arg, result interface{}) error {
+	realArg := arg.(*trace.TraceServiceGetTrajectoryConfigArgs)
+	realResult := result.(*trace.TraceServiceGetTrajectoryConfigResult)
+	success, err := handler.(trace.TraceService).GetTrajectoryConfig(ctx, realArg.Req)
+	if err != nil {
+		return err
+	}
+	realResult.Success = success
+	return nil
+}
+
+func newTraceServiceGetTrajectoryConfigArgs() interface{} {
+	return trace.NewTraceServiceGetTrajectoryConfigArgs()
+}
+
+func newTraceServiceGetTrajectoryConfigResult() interface{} {
+	return trace.NewTraceServiceGetTrajectoryConfigResult()
+}
+
+func listTrajectoryHandler(ctx context.Context, handler interface{}, arg, result interface{}) error {
+	realArg := arg.(*trace.TraceServiceListTrajectoryArgs)
+	realResult := result.(*trace.TraceServiceListTrajectoryResult)
+	success, err := handler.(trace.TraceService).ListTrajectory(ctx, realArg.Req)
+	if err != nil {
+		return err
+	}
+	realResult.Success = success
+	return nil
+}
+
+func newTraceServiceListTrajectoryArgs() interface{} {
+	return trace.NewTraceServiceListTrajectoryArgs()
+}
+
+func newTraceServiceListTrajectoryResult() interface{} {
+	return trace.NewTraceServiceListTrajectoryResult()
+}
+
+func listMetadataHandler(ctx context.Context, handler interface{}, arg, result interface{}) error {
+	realArg := arg.(*trace.TraceServiceListMetadataArgs)
+	realResult := result.(*trace.TraceServiceListMetadataResult)
+	success, err := handler.(trace.TraceService).ListMetadata(ctx, realArg.Req)
+	if err != nil {
+		return err
+	}
+	realResult.Success = success
+	return nil
+}
+
+func newTraceServiceListMetadataArgs() interface{} {
+	return trace.NewTraceServiceListMetadataArgs()
+}
+
+func newTraceServiceListMetadataResult() interface{} {
+	return trace.NewTraceServiceListMetadataResult()
+}
+
+func listTraceChatHandler(ctx context.Context, handler interface{}, arg, result interface{}) error {
+	realArg := arg.(*trace.TraceServiceListTraceChatArgs)
+	realResult := result.(*trace.TraceServiceListTraceChatResult)
+	success, err := handler.(trace.TraceService).ListTraceChat(ctx, realArg.Req)
+	if err != nil {
+		return err
+	}
+	realResult.Success = success
+	return nil
+}
+
+func newTraceServiceListTraceChatArgs() interface{} {
+	return trace.NewTraceServiceListTraceChatArgs()
+}
+
+func newTraceServiceListTraceChatResult() interface{} {
+	return trace.NewTraceServiceListTraceChatResult()
+}
+
+func listThreadChatHandler(ctx context.Context, handler interface{}, arg, result interface{}) error {
+	realArg := arg.(*trace.TraceServiceListThreadChatArgs)
+	realResult := result.(*trace.TraceServiceListThreadChatResult)
+	success, err := handler.(trace.TraceService).ListThreadChat(ctx, realArg.Req)
+	if err != nil {
+		return err
+	}
+	realResult.Success = success
+	return nil
+}
+
+func newTraceServiceListThreadChatArgs() interface{} {
+	return trace.NewTraceServiceListThreadChatArgs()
+}
+
+func newTraceServiceListThreadChatResult() interface{} {
+	return trace.NewTraceServiceListThreadChatResult()
+}
+
+func getThreadStatHandler(ctx context.Context, handler interface{}, arg, result interface{}) error {
+	realArg := arg.(*trace.TraceServiceGetThreadStatArgs)
+	realResult := result.(*trace.TraceServiceGetThreadStatResult)
+	success, err := handler.(trace.TraceService).GetThreadStat(ctx, realArg.Req)
+	if err != nil {
+		return err
+	}
+	realResult.Success = success
+	return nil
+}
+
+func newTraceServiceGetThreadStatArgs() interface{} {
+	return trace.NewTraceServiceGetThreadStatArgs()
+}
+
+func newTraceServiceGetThreadStatResult() interface{} {
+	return trace.NewTraceServiceGetThreadStatResult()
+}
+
 type kClient struct {
 	c  client.Client
 	sc client.Streaming
@@ -459,11 +797,31 @@ func (p *kClient) ListSpans(ctx context.Context, req *trace.ListSpansRequest) (r
 	return _result.GetSuccess(), nil
 }
 
+func (p *kClient) ListPreSpan(ctx context.Context, req *trace.ListPreSpanRequest) (r *trace.ListPreSpanResponse, err error) {
+	var _args trace.TraceServiceListPreSpanArgs
+	_args.Req = req
+	var _result trace.TraceServiceListPreSpanResult
+	if err = p.c.Call(ctx, "ListPreSpan", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+
 func (p *kClient) GetTrace(ctx context.Context, req *trace.GetTraceRequest) (r *trace.GetTraceResponse, err error) {
 	var _args trace.TraceServiceGetTraceArgs
 	_args.Req = req
 	var _result trace.TraceServiceGetTraceResult
 	if err = p.c.Call(ctx, "GetTrace", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+
+func (p *kClient) SearchTraceTree(ctx context.Context, req *trace.SearchTraceTreeRequest) (r *trace.SearchTraceTreeResponse, err error) {
+	var _args trace.TraceServiceSearchTraceTreeArgs
+	_args.Req = req
+	var _result trace.TraceServiceSearchTraceTreeResult
+	if err = p.c.Call(ctx, "SearchTraceTree", &_args, &_result); err != nil {
 		return
 	}
 	return _result.GetSuccess(), nil
@@ -579,6 +937,16 @@ func (p *kClient) ListAnnotations(ctx context.Context, req *trace.ListAnnotation
 	return _result.GetSuccess(), nil
 }
 
+func (p *kClient) ListWorkspaceAnnotations(ctx context.Context, req *trace.ListWorkspaceAnnotationsRequest) (r *trace.ListWorkspaceAnnotationsResponse, err error) {
+	var _args trace.TraceServiceListWorkspaceAnnotationsArgs
+	_args.Req = req
+	var _result trace.TraceServiceListWorkspaceAnnotationsResult
+	if err = p.c.Call(ctx, "ListWorkspaceAnnotations", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+
 func (p *kClient) ExportTracesToDataset(ctx context.Context, req *trace.ExportTracesToDatasetRequest) (r *trace.ExportTracesToDatasetResponse, err error) {
 	var _args trace.TraceServiceExportTracesToDatasetArgs
 	_args.Req = req
@@ -594,6 +962,106 @@ func (p *kClient) PreviewExportTracesToDataset(ctx context.Context, req *trace.P
 	_args.Req = req
 	var _result trace.TraceServicePreviewExportTracesToDatasetResult
 	if err = p.c.Call(ctx, "PreviewExportTracesToDataset", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+
+func (p *kClient) ChangeEvaluatorScore(ctx context.Context, req *trace.ChangeEvaluatorScoreRequest) (r *trace.ChangeEvaluatorScoreResponse, err error) {
+	var _args trace.TraceServiceChangeEvaluatorScoreArgs
+	_args.Req = req
+	var _result trace.TraceServiceChangeEvaluatorScoreResult
+	if err = p.c.Call(ctx, "ChangeEvaluatorScore", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+
+func (p *kClient) ListAnnotationEvaluators(ctx context.Context, req *trace.ListAnnotationEvaluatorsRequest) (r *trace.ListAnnotationEvaluatorsResponse, err error) {
+	var _args trace.TraceServiceListAnnotationEvaluatorsArgs
+	_args.Req = req
+	var _result trace.TraceServiceListAnnotationEvaluatorsResult
+	if err = p.c.Call(ctx, "ListAnnotationEvaluators", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+
+func (p *kClient) ExtractSpanInfo(ctx context.Context, req *trace.ExtractSpanInfoRequest) (r *trace.ExtractSpanInfoResponse, err error) {
+	var _args trace.TraceServiceExtractSpanInfoArgs
+	_args.Req = req
+	var _result trace.TraceServiceExtractSpanInfoResult
+	if err = p.c.Call(ctx, "ExtractSpanInfo", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+
+func (p *kClient) UpsertTrajectoryConfig(ctx context.Context, req *trace.UpsertTrajectoryConfigRequest) (r *trace.UpsertTrajectoryConfigResponse, err error) {
+	var _args trace.TraceServiceUpsertTrajectoryConfigArgs
+	_args.Req = req
+	var _result trace.TraceServiceUpsertTrajectoryConfigResult
+	if err = p.c.Call(ctx, "UpsertTrajectoryConfig", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+
+func (p *kClient) GetTrajectoryConfig(ctx context.Context, req *trace.GetTrajectoryConfigRequest) (r *trace.GetTrajectoryConfigResponse, err error) {
+	var _args trace.TraceServiceGetTrajectoryConfigArgs
+	_args.Req = req
+	var _result trace.TraceServiceGetTrajectoryConfigResult
+	if err = p.c.Call(ctx, "GetTrajectoryConfig", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+
+func (p *kClient) ListTrajectory(ctx context.Context, req *trace.ListTrajectoryRequest) (r *trace.ListTrajectoryResponse, err error) {
+	var _args trace.TraceServiceListTrajectoryArgs
+	_args.Req = req
+	var _result trace.TraceServiceListTrajectoryResult
+	if err = p.c.Call(ctx, "ListTrajectory", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+
+func (p *kClient) ListMetadata(ctx context.Context, req *trace.ListMetadataRequest) (r *trace.ListMetadataResponse, err error) {
+	var _args trace.TraceServiceListMetadataArgs
+	_args.Req = req
+	var _result trace.TraceServiceListMetadataResult
+	if err = p.c.Call(ctx, "ListMetadata", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+
+func (p *kClient) ListTraceChat(ctx context.Context, req *trace.ListTraceChatRequest) (r *trace.ListTraceChatResponse, err error) {
+	var _args trace.TraceServiceListTraceChatArgs
+	_args.Req = req
+	var _result trace.TraceServiceListTraceChatResult
+	if err = p.c.Call(ctx, "ListTraceChat", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+
+func (p *kClient) ListThreadChat(ctx context.Context, req *trace.ListThreadChatRequest) (r *trace.ListThreadChatResponse, err error) {
+	var _args trace.TraceServiceListThreadChatArgs
+	_args.Req = req
+	var _result trace.TraceServiceListThreadChatResult
+	if err = p.c.Call(ctx, "ListThreadChat", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+
+func (p *kClient) GetThreadStat(ctx context.Context, req *trace.GetThreadStatRequest) (r *trace.GetThreadStatResponse, err error) {
+	var _args trace.TraceServiceGetThreadStatArgs
+	_args.Req = req
+	var _result trace.TraceServiceGetThreadStatResult
+	if err = p.c.Call(ctx, "GetThreadStat", &_args, &_result); err != nil {
 		return
 	}
 	return _result.GetSuccess(), nil

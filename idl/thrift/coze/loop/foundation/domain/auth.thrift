@@ -39,12 +39,14 @@ typedef string AuthEntityType (ts.enum="true")      // 鉴权实体类型
 const AuthEntityType AuthEntityType_Space = "Space" // 空间
 const AuthEntityType AuthEntityType_Prompt = "Prompt"
 const AuthEntityType AuthEntityType_EvaluationExperiment = "EvaluationExperiment"
+const AuthEntityType AuthEntityType_EvaluationExptTemplate = "EvaluationExptTemplate"
 const AuthEntityType AuthEntityType_EvaluationSet = "EvaluationSet"
 const AuthEntityType AuthEntityType_Evaluator = "Evaluator"
 const AuthEntityType AuthEntityType_EvaluationTarget = "EvaluationTarget"
 const AuthEntityType AuthEntityType_TraceView = "TraceView"
 const AuthEntityType AuthEntityType_Model = "Model"
 const AuthEntityType AuthEntityType_Annotation = "Annotation"
+const AuthEntityType AuthEntityType_TraceTask = "Task"
 
 // 鉴权资源，客体
 struct AuthEntity {

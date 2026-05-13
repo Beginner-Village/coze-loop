@@ -5,6 +5,7 @@ package prompt
 
 import (
 	"context"
+	"strings"
 
 	"github.com/bytedance/gg/gptr"
 
@@ -42,10 +43,16 @@ func (p PromptRPCAdapter) ExecutePrompt(ctx context.Context, spaceID int64, para
 		VariableVals: nil,
 		Scenario:     gptr.Of(prompt.ScenarioEvalTarget),
 	}
-	// logs.CtxInfo(ctx, "ExecutePrompt History=%v, Variables=%v", json.Jsonify(param.History), json.Jsonify(param.Variables))
 	req.VariableVals = ConvertVariables2Prompt(param.Variables)
 
-	req.Messages = ConvertMessages2Prompt(param.History)
+	var messages []*entity.Message
+	if len(param.History) > 0 {
+		messages = append(messages, param.History...)
+	}
+	if param.UserQuery != nil {
+		messages = append(messages, param.UserQuery)
+	}
+	req.Messages = ConvertMessages2Prompt(messages)
 
 	if runtimeParam, err := p.parseRuntimeParam(ctx, gptr.Indirect(param.RuntimeParam)); err != nil {
 		logs.CtxError(ctx, "prompt execute parse runtime param fail, err=%v", err)
@@ -53,7 +60,7 @@ func (p PromptRPCAdapter) ExecutePrompt(ctx context.Context, spaceID int64, para
 		if runtimeParam != nil && runtimeParam.ModelConfig != nil {
 			req.OverridePromptParams = &prompt.OverridePromptParams{
 				ModelConfig: &prompt.ModelConfig{
-					ModelID:     gptr.Of(runtimeParam.ModelConfig.ModelID),
+					ModelID:     runtimeParam.ModelConfig.ModelID,
 					MaxTokens:   runtimeParam.ModelConfig.MaxTokens,
 					Temperature: runtimeParam.ModelConfig.Temperature,
 					TopP:        runtimeParam.ModelConfig.TopP,
@@ -66,7 +73,6 @@ func (p PromptRPCAdapter) ExecutePrompt(ctx context.Context, spaceID int64, para
 	if err != nil {
 		return nil, err
 	}
-
 	if resp == nil {
 		return nil, errorx.NewByCode(errno.CommonRPCErrorCode)
 	}
@@ -84,7 +90,21 @@ func (p PromptRPCAdapter) ExecutePrompt(ctx context.Context, spaceID int64, para
 		InputTokens:  resp.GetUsage().GetInputTokens(),
 		OutputTokens: resp.GetUsage().GetOutputTokens(),
 	}
+	result.MultiContent = p.convMsgToContent(resp.Message)
 	return result, nil
+}
+
+func (p PromptRPCAdapter) convMsgToContent(msg *prompt.Message) *entity.Content {
+	if len(msg.GetParts()) == 0 {
+		if len(gptr.Indirect(msg.Content)) == 0 {
+			return nil
+		}
+		return &entity.Content{
+			ContentType: gptr.Of(entity.ContentTypeText),
+			Text:        msg.Content,
+		}
+	}
+	return ConvertFromContent(msg.GetParts())
 }
 
 func (p PromptRPCAdapter) parseRuntimeParam(ctx context.Context, rtp string) (*entity.PromptRuntimeParam, error) {
@@ -129,9 +149,15 @@ func (p PromptRPCAdapter) MGetPrompt(ctx context.Context, spaceID int64, promptQ
 		promptQuery := &manage.PromptQuery{
 			PromptID: &query.PromptID,
 		}
+		ver := ""
 		if query.Version != nil {
+			ver = strings.TrimSpace(*query.Version)
+		}
+		if ver != "" {
 			promptQuery.WithCommit = gptr.Of(true)
-			promptQuery.CommitVersion = query.Version
+			promptQuery.CommitVersion = gptr.Of(ver)
+		} else {
+			promptQuery.WithCommit = gptr.Of(false)
 		}
 		queries = append(queries, promptQuery)
 	}

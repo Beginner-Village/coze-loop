@@ -8,21 +8,27 @@ import (
 	dataapp "github.com/coze-dev/coze-loop/backend/modules/data/application"
 	dataconsumer "github.com/coze-dev/coze-loop/backend/modules/data/infra/mq/consumer"
 	exptapp "github.com/coze-dev/coze-loop/backend/modules/evaluation/application"
+	"github.com/coze-dev/coze-loop/backend/modules/evaluation/consts"
 	evalconsumer "github.com/coze-dev/coze-loop/backend/modules/evaluation/infra/mq/rocket/consumer"
 	obapp "github.com/coze-dev/coze-loop/backend/modules/observability/application"
 	obconsumer "github.com/coze-dev/coze-loop/backend/modules/observability/infra/mq/consumer"
 	"github.com/coze-dev/coze-loop/backend/pkg/conf"
 )
 
-func mustInitConsumerWorkers(
+func MustInitConsumerWorkers(
 	cfactory conf.IConfigLoaderFactory,
 	experimentApplication exptapp.IExperimentApplication,
 	datasetApplication dataapp.IJobRunMsgHandler,
 	obApplication obapp.IObservabilityOpenAPIApplication,
+	taskApplication obapp.ITaskApplication,
 ) []mq.IConsumerWorker {
 	var res []mq.IConsumerWorker
 
-	workers, err := evalconsumer.NewConsumerWorkers(cfactory, experimentApplication)
+	loader, err := cfactory.NewConfigLoader(consts.EvaluationConfigFileName)
+	if err != nil {
+		panic(err)
+	}
+	workers, err := evalconsumer.NewConsumerWorkers(loader, experimentApplication)
 	if err != nil {
 		panic(err)
 	}
@@ -34,11 +40,11 @@ func mustInitConsumerWorkers(
 	}
 	res = append(res, workers...)
 
-	loader, err := cfactory.NewConfigLoader("observability.yaml")
+	loader, err = cfactory.NewConfigLoader("observability.yaml")
 	if err != nil {
 		panic(err)
 	}
-	workers, err = obconsumer.NewConsumerWorkers(loader, obApplication)
+	workers, err = obconsumer.NewConsumerWorkers(loader, obApplication, taskApplication)
 	if err != nil {
 		panic(err)
 	}

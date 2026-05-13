@@ -6,7 +6,6 @@ package service
 import (
 	"context"
 	json2 "encoding/json"
-	"fmt"
 	"io"
 	"regexp"
 	"strconv"
@@ -72,7 +71,7 @@ func (p *EvaluatorSourcePromptServiceImpl) EvaluatorType() entity.EvaluatorType 
 	return entity.EvaluatorTypePrompt
 }
 
-func (p *EvaluatorSourcePromptServiceImpl) Run(ctx context.Context, evaluator *entity.Evaluator, input *entity.EvaluatorInputData, disableTracing bool) (output *entity.EvaluatorOutputData, runStatus entity.EvaluatorRunStatus, traceID string) {
+func (p *EvaluatorSourcePromptServiceImpl) Run(ctx context.Context, evaluator *entity.Evaluator, input *entity.EvaluatorInputData, evaluatorRunConf *entity.EvaluatorRunConfig, exptSpaceID int64, disableTracing bool) (output *entity.EvaluatorOutputData, runStatus entity.EvaluatorRunStatus, traceID string) {
 	observability.LoopEvaluatorInvocationTotal.WithLabelValues(evaluator.Name).Inc()
 
 	var err error
@@ -80,7 +79,7 @@ func (p *EvaluatorSourcePromptServiceImpl) Run(ctx context.Context, evaluator *e
 	var rootSpan *evaluatorSpan
 
 	if !disableTracing {
-		rootSpan, ctx = newEvaluatorSpan(ctx, evaluator.Name, "LoopEvaluation", strconv.FormatInt(evaluator.SpaceID, 10), false)
+		rootSpan, ctx = newEvaluatorSpan(ctx, evaluator.Name, "LoopEvaluation", strconv.FormatInt(exptSpaceID, 10), false)
 		traceID = rootSpan.GetTraceID()
 	} else {
 		traceID = ""
@@ -119,14 +118,14 @@ func (p *EvaluatorSourcePromptServiceImpl) Run(ctx context.Context, evaluator *e
 		}
 	}()
 
-	err = evaluator.GetEvaluatorVersion().ValidateBaseInfo()
+	err = evaluator.ValidateBaseInfo()
 	if err != nil {
 		logs.CtxInfo(ctx, "[RunEvaluator] ValidateBaseInfo fail, err: %v", err)
 		runStatus = entity.EvaluatorRunStatusFail
 		return nil, runStatus, traceID
 	}
 	// 校验输入数据
-	err = evaluator.GetEvaluatorVersion().ValidateInput(input)
+	err = evaluator.ValidateInput(input)
 	if err != nil {
 		logs.CtxInfo(ctx, "[RunEvaluator] ValidateInput fail, err: %v", err)
 		runStatus = entity.EvaluatorRunStatusFail
@@ -134,16 +133,16 @@ func (p *EvaluatorSourcePromptServiceImpl) Run(ctx context.Context, evaluator *e
 	}
 	defer func() {
 		var modelID string
-		if evaluator.PromptEvaluatorVersion.ModelConfig.ModelID == 0 {
+		if evaluator.PromptEvaluatorVersion.ModelConfig.GetModelID() == 0 {
 			modelID = ptr.From(evaluator.PromptEvaluatorVersion.ModelConfig.ProviderModelID)
 		} else {
-			modelID = strconv.FormatInt(evaluator.PromptEvaluatorVersion.ModelConfig.ModelID, 10)
+			modelID = strconv.FormatInt(evaluator.PromptEvaluatorVersion.ModelConfig.GetModelID(), 10)
 		}
 
-		p.metric.EmitRun(evaluator.SpaceID, err, startTime, modelID)
+		p.metric.EmitRun(exptSpaceID, err, startTime, modelID)
 	}()
 	// 渲染变量
-	err = renderTemplate(ctx, evaluator.PromptEvaluatorVersion, input, disableTracing)
+	err = renderTemplate(ctx, evaluator.PromptEvaluatorVersion, input, exptSpaceID, disableTracing)
 	if err != nil {
 		logs.CtxError(ctx, "[RunEvaluator] renderTemplate fail, err: %v", err)
 		runStatus = entity.EvaluatorRunStatusFail
@@ -151,13 +150,13 @@ func (p *EvaluatorSourcePromptServiceImpl) Run(ctx context.Context, evaluator *e
 	}
 	// 执行评估逻辑
 	userIDInContext := session.UserIDInCtxOrEmpty(ctx)
-	llmResp, err := p.chat(ctx, evaluator.PromptEvaluatorVersion, userIDInContext, disableTracing)
+	llmResp, err := p.chat(ctx, evaluator.PromptEvaluatorVersion, exptSpaceID, userIDInContext, disableTracing)
 	if err != nil {
 		logs.CtxError(ctx, "[RunEvaluator] chat fail, err: %v", err)
 		runStatus = entity.EvaluatorRunStatusFail
 		return nil, runStatus, traceID
 	}
-	output, err = parseOutput(ctx, evaluator.PromptEvaluatorVersion, llmResp, disableTracing)
+	output, err = parseOutput(ctx, evaluator.PromptEvaluatorVersion, llmResp, exptSpaceID, disableTracing)
 	if err != nil {
 		logs.CtxWarn(ctx, "[RunEvaluator] parseOutput fail, err: %v", err)
 		runStatus = entity.EvaluatorRunStatusFail
@@ -166,12 +165,12 @@ func (p *EvaluatorSourcePromptServiceImpl) Run(ctx context.Context, evaluator *e
 	return output, entity.EvaluatorRunStatusSuccess, traceID
 }
 
-func (p *EvaluatorSourcePromptServiceImpl) chat(ctx context.Context, evaluatorVersion *entity.PromptEvaluatorVersion, userIDInContext string, disableTracing bool) (resp *entity.ReplyItem, err error) {
+func (p *EvaluatorSourcePromptServiceImpl) chat(ctx context.Context, evaluatorVersion *entity.PromptEvaluatorVersion, exptSpaceID int64, userIDInContext string, disableTracing bool) (resp *entity.ReplyItem, err error) {
 	var modelSpan *evaluatorSpan
 	modelCtx := ctx
 
 	if !disableTracing {
-		modelSpan, modelCtx = newEvaluatorSpan(ctx, evaluatorVersion.ModelConfig.ModelName, "model", strconv.FormatInt(evaluatorVersion.SpaceID, 10), true)
+		modelSpan, modelCtx = newEvaluatorSpan(ctx, evaluatorVersion.ModelConfig.ModelName, "model", strconv.FormatInt(exptSpaceID, 10), true)
 		defer func() {
 			modelSpan.reportModelSpan(modelCtx, evaluatorVersion, resp, err)
 		}()
@@ -186,7 +185,7 @@ func (p *EvaluatorSourcePromptServiceImpl) chat(ctx context.Context, evaluatorVe
 	}
 
 	llmCallParam := &entity.LLMCallParam{
-		SpaceID:     evaluatorVersion.GetSpaceID(),
+		SpaceID:     exptSpaceID,
 		EvaluatorID: strconv.FormatInt(evaluatorVersion.EvaluatorID, 10),
 		UserID:      gptr.Of(userIDInContext),
 		Scenario:    entity.ScenarioEvaluator,
@@ -247,7 +246,7 @@ func (e *evaluatorSpan) reportRootSpan(ctx context.Context, reportRootSpanReques
 		e.SetStatusCode(ctx, 0)
 	case entity.EvaluatorRunStatusFail:
 		e.SetStatusCode(ctx, int(entity.EvaluatorRunStatusFail))
-		e.SetError(ctx, reportRootSpanRequest.errInfo)
+		e.SetError(ctx, tracer.SanitizeErrorForTrace(reportRootSpanRequest.errInfo))
 	default:
 		e.SetStatusCode(ctx, 0) // 默认为成功
 	}
@@ -266,7 +265,7 @@ func (e *evaluatorSpan) reportRootSpan(ctx context.Context, reportRootSpanReques
 func (e *evaluatorSpan) reportModelSpan(ctx context.Context, evaluatorVersion *entity.PromptEvaluatorVersion, replyItem *entity.ReplyItem, respErr error) {
 	if respErr != nil {
 		e.SetStatusCode(ctx, errno.InvalidOutputFromModelCode)
-		e.SetError(ctx, respErr)
+		e.SetError(ctx, tracer.SanitizeErrorForTrace(respErr))
 	}
 	if evaluatorVersion.ParseType == entity.ParseTypeFunctionCall {
 		if replyItem != nil && len(replyItem.ToolCalls) > 0 {
@@ -279,7 +278,7 @@ func (e *evaluatorSpan) reportModelSpan(ctx context.Context, evaluatorVersion *e
 			}
 		} else {
 			e.SetStatusCode(ctx, errno.InvalidOutputFromModelCode)
-			e.SetError(ctx, errorx.New("LLM response empty"))
+			e.SetError(ctx, tracer.SanitizeErrorForTrace(errorx.New("LLM response empty")))
 		}
 	} else {
 		if replyItem != nil {
@@ -290,7 +289,7 @@ func (e *evaluatorSpan) reportModelSpan(ctx context.Context, evaluatorVersion *e
 			}
 		} else {
 			e.SetStatusCode(ctx, errno.InvalidOutputFromModelCode)
-			e.SetError(ctx, errorx.New("LLM response empty"))
+			e.SetError(ctx, tracer.SanitizeErrorForTrace(errorx.New("LLM response empty")))
 		}
 	}
 	e.SetCallType("Evaluator")
@@ -315,7 +314,7 @@ func (e *evaluatorSpan) reportOutputParserSpan(ctx context.Context, replyItem *e
 	}
 	if errInfo != nil {
 		e.SetStatusCode(ctx, int(entity.EvaluatorRunStatusFail))
-		e.SetError(ctx, errInfo)
+		e.SetError(ctx, tracer.SanitizeErrorForTrace(errInfo))
 	} else {
 		e.SetStatusCode(ctx, 0)
 	}
@@ -329,13 +328,13 @@ func (e *evaluatorSpan) reportOutputParserSpan(ctx context.Context, replyItem *e
 	e.Finish(ctx)
 }
 
-func parseOutput(ctx context.Context, evaluatorVersion *entity.PromptEvaluatorVersion, replyItem *entity.ReplyItem, disableTracing bool) (output *entity.EvaluatorOutputData, err error) {
+func parseOutput(ctx context.Context, evaluatorVersion *entity.PromptEvaluatorVersion, replyItem *entity.ReplyItem, exptSpaceID int64, disableTracing bool) (output *entity.EvaluatorOutputData, err error) {
 	// 输出数据全空直接返回
 	var outputParserSpan *evaluatorSpan
 	if !disableTracing {
-		outputParserSpan, ctx = newEvaluatorSpan(ctx, "ParseOutput", "LoopEvaluation", strconv.FormatInt(evaluatorVersion.SpaceID, 10), true)
+		outputParserSpan, ctx = newEvaluatorSpan(ctx, "ParseOutput", "LoopEvaluation", strconv.FormatInt(exptSpaceID, 10), true)
 		defer func() {
-			outputParserSpan.reportOutputParserSpan(ctx, replyItem, output, strconv.FormatInt(evaluatorVersion.SpaceID, 10), err)
+			outputParserSpan.reportOutputParserSpan(ctx, replyItem, output, strconv.FormatInt(exptSpaceID, 10), err)
 		}()
 	}
 	output = &entity.EvaluatorOutputData{
@@ -366,46 +365,81 @@ type outputMsgFormat struct {
 	Reason string       `json:"reason"`
 }
 
-// 优化后的正则表达式，支持 score 为 number 或 string 类型
-var jsonRe = regexp.MustCompile(`\{(?s:.*?"score"\s*:\s*(?:"([\d.]+)"|([\d.]+)).*?"reason"\s*:\s*"((?:[^"\\]|\\.)*)".*?)}`)
+// 优化后的正则表达式，支持 score 和 reason 任意顺序，score 为 number 或 string 类型
+var jsonRe = regexp.MustCompile(`\{(?s:[^{}]*(?:"score"\s*:\s*(?:"[\d.]+"|\d+(?:\.\d+)?)[^{}]*"reason"\s*:\s*"(?:[^"\\]|\\.)*"|"reason"\s*:\s*"(?:[^"\\]|\\.)*"[^{}]*"score"\s*:\s*(?:"[\d.]+"|\d+(?:\.\d+)?))[^{}]*)}`)
 
 func parseContentOutput(ctx context.Context, evaluatorVersion *entity.PromptEvaluatorVersion, replyItem *entity.ReplyItem, output *entity.EvaluatorOutputData) error {
 	content := gptr.Indirect(replyItem.Content)
-	var outputMsg outputMsgFormat
-	b := []byte(content)
 
-	// 尝试直接解析整个 content
-	if err := sonic.Unmarshal(b, &outputMsg); err == nil {
-		if outputMsg.Reason != "" {
-			score, err := outputMsg.Score.Float64()
-			if err != nil {
-				err := fmt.Errorf("[parseContentOutput] convert score to float64 failed, score=%s", outputMsg.Score)
-				return errorx.WrapByCode(err, errno.InvalidOutputFromModelCode)
-			}
-			output.EvaluatorResult.Score = &score
-			output.EvaluatorResult.Reasoning = outputMsg.Reason
+	// 按优先级顺序执行解析策略
+	strategies := []func(context.Context, string, *entity.EvaluatorOutputData) (bool, error){
+		parseDirectJSON,         // 策略1：直接解析完整JSON
+		parseRepairedJSON,       // 策略2：修复后解析完整JSON
+		parseRegexExtractedJSON, // 策略3：正则提取JSON片段并解析
+		parseScoreWithRegex,     // 策略4：正则提取score，优先尝试用正则提取reason字段作为reason，否则使用完整内容作为reason
+	}
+
+	for _, strategy := range strategies {
+		success, err := strategy(ctx, content, output)
+		if err != nil {
+			return err
+		}
+		if success {
 			return nil
 		}
 	}
 
-	// 新增：尝试使用jsonrepair修复整个content
+	// 当所有解析策略都失败时，返回错误（Run方法的defer会处理错误并设置EvaluatorRunError）
+	logs.CtxWarn(ctx, "[parseContentOutput] All parsing strategies failed, original content: %s", content)
+	return errorx.NewByCode(errno.InvalidOutputFromModelCode, errorx.WithExtraMsg("All parsing strategies failed. Original content: "+content))
+}
+
+// parseDirectJSON 策略1：直接解析完整JSON内容
+func parseDirectJSON(ctx context.Context, content string, output *entity.EvaluatorOutputData) (bool, error) {
+	var outputMsg outputMsgFormat
+	b := []byte(content)
+
+	if err := sonic.Unmarshal(b, &outputMsg); err == nil {
+		if outputMsg.Reason != "" {
+			score, err := outputMsg.Score.Float64()
+			if err != nil {
+				return false, errorx.WrapByCode(err, errno.InvalidOutputFromModelCode)
+			}
+			output.EvaluatorResult.Score = &score
+			output.EvaluatorResult.Reasoning = outputMsg.Reason
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// parseRepairedJSON 策略2：使用jsonrepair修复后解析完整JSON内容
+func parseRepairedJSON(ctx context.Context, content string, output *entity.EvaluatorOutputData) (bool, error) {
+	var outputMsg outputMsgFormat
+
 	repairedContent, repairErr := jsonrepair.JSONRepair(content)
 	if repairErr == nil {
 		if err := sonic.Unmarshal([]byte(repairedContent), &outputMsg); err == nil {
 			if outputMsg.Reason != "" {
 				score, err := outputMsg.Score.Float64()
 				if err != nil {
-					err := fmt.Errorf("[parseContentOutput] convert score to float64 failed, score=%s", outputMsg.Score)
-					return errorx.WrapByCode(err, errno.InvalidOutputFromModelCode)
+					return false, errorx.WrapByCode(err, errno.InvalidOutputFromModelCode)
 				}
 				output.EvaluatorResult.Score = &score
 				output.EvaluatorResult.Reasoning = outputMsg.Reason
-				return nil
+				return true, nil
 			}
 		}
 	}
+	return false, nil
+}
 
-	// 保留原有逻辑：使用正则表达式查找 JSON 片段
+// parseRegexExtractedJSON 策略3：使用正则表达式提取JSON片段并解析
+func parseRegexExtractedJSON(ctx context.Context, content string, output *entity.EvaluatorOutputData) (bool, error) {
+	var outputMsg outputMsgFormat
+	b := []byte(content)
+
+	// 使用正则表达式查找JSON片段
 	all := jsonRe.FindAll(b, -1)
 	for _, bb := range all {
 		// 首先尝试直接解析原始片段
@@ -413,12 +447,11 @@ func parseContentOutput(ctx context.Context, evaluatorVersion *entity.PromptEval
 			if outputMsg.Reason != "" {
 				score, err := outputMsg.Score.Float64()
 				if err != nil {
-					err := fmt.Errorf("[parseContentOutput] convert score to float64 failed, score=%s", outputMsg.Score)
-					return errorx.WrapByCode(err, errno.InvalidOutputFromModelCode)
+					return false, errorx.WrapByCode(err, errno.InvalidOutputFromModelCode)
 				}
 				output.EvaluatorResult.Score = &score
 				output.EvaluatorResult.Reasoning = outputMsg.Reason
-				return nil
+				return true, nil
 			}
 		}
 
@@ -429,20 +462,112 @@ func parseContentOutput(ctx context.Context, evaluatorVersion *entity.PromptEval
 				if outputMsg.Reason != "" {
 					score, err := outputMsg.Score.Float64()
 					if err != nil {
-						err := fmt.Errorf("[parseContentOutput] convert score to float64 failed, score=%s", outputMsg.Score)
-						return errorx.WrapByCode(err, errno.InvalidOutputFromModelCode)
+						return false, errorx.WrapByCode(err, errno.InvalidOutputFromModelCode)
 					}
 					output.EvaluatorResult.Score = &score
 					output.EvaluatorResult.Reasoning = outputMsg.Reason
-					return nil
+					return true, nil
 				}
 			}
 		}
 	}
+	return false, nil
+}
 
-	// 若都没有找到合法的解析结果，返回错误
-	err := fmt.Errorf("[parseContentOutput] parse failed, content does not contain both score and reason: %s", content)
-	return errorx.WrapByCode(err, errno.InvalidOutputFromModelCode)
+// parseScoreWithRegex 策略4：通过正则解析score字段，优先尝试用正则提取reason字段作为reason，否则使用完整内容作为reason
+func parseScoreWithRegex(ctx context.Context, content string, output *entity.EvaluatorOutputData) (bool, error) {
+	scoreRegex := regexp.MustCompile(`(?i)score[^0-9]*([0-9]+(?:\.[0-9]+)?)`)
+	scoreMatches := scoreRegex.FindStringSubmatch(content)
+	if len(scoreMatches) > 1 {
+		scoreStr := scoreMatches[1]
+		score, err := strconv.ParseFloat(scoreStr, 64)
+		if err == nil {
+			// 尝试提取reason字段，处理未转义双引号的情况
+			// 方法：找到 "reason": " 后面的内容，提取到下一个字段或JSON对象结束之前
+			reasonFieldRegex := regexp.MustCompile(`(?i)"reason"\s*:\s*"`)
+			reasonStartMatches := reasonFieldRegex.FindStringIndex(content)
+			if reasonStartMatches != nil {
+				// 找到了reason字段的开始位置，reasonStartPos是reason值内容开始的位置（最后一个双引号之后）
+				reasonStartPos := reasonStartMatches[1]
+				reasonEndPos := -1
+
+				// 首先检查reason值是否为空字符串（连续的两个双引号）
+				if reasonStartPos < len(content) && content[reasonStartPos] == '"' {
+					// reason值为空字符串，结束位置就是开始位置（不包含任何内容）
+					reasonEndPos = reasonStartPos
+				} else {
+					// reason值不为空，需要找到结束位置
+					// 查找下一个字段的开始位置（如 ", "score": 或其他字段）
+					// 注意：需要查找reason之后的下一个字段
+					nextFieldRegex := regexp.MustCompile(`(?i)",\s*"[^"]+"\s*:`)
+					nextFieldMatches := nextFieldRegex.FindStringIndex(content[reasonStartPos:])
+					if nextFieldMatches != nil {
+						// 找到了下一个字段，且它在reason之后
+						potentialEndPos := reasonStartPos + nextFieldMatches[0]
+						// 从potentialEndPos向前查找最后一个双引号（reason值的结束双引号）
+						for i := potentialEndPos - 1; i >= reasonStartPos; i-- {
+							if content[i] == '"' {
+								// 检查这是否是真正的结束双引号（前面不是转义符）
+								if i == 0 || content[i-1] != '\\' {
+									reasonEndPos = i
+									break
+								}
+								// 如果是转义的双引号，继续向前查找
+							}
+						}
+					} else {
+						// 没找到下一个字段，尝试找到JSON对象的结束位置
+						// 从reasonStartPos开始，向后查找第一个未转义的双引号
+						for i := reasonStartPos; i < len(content); i++ {
+							if content[i] == '"' {
+								// 检查这是否是真正的结束双引号（前面不是转义符）
+								if i == 0 || content[i-1] != '\\' {
+									// 检查这个双引号后面是否是逗号、空格、}或其他字段
+									if i+1 < len(content) {
+										nextChar := content[i+1]
+										if nextChar == ',' || nextChar == '}' || nextChar == ' ' || nextChar == '\n' || nextChar == '\r' {
+											reasonEndPos = i
+											break
+										}
+									} else {
+										// 到达内容末尾
+										reasonEndPos = i
+										break
+									}
+								}
+							}
+						}
+					}
+				}
+
+				if reasonEndPos >= reasonStartPos {
+					// 提取reason值（从开始位置到结束位置，如果reason为空则extractedReason为空字符串）
+					extractedReason := content[reasonStartPos:reasonEndPos]
+					// 即使是空字符串也接受（reason可以为空）
+					logs.CtxWarn(ctx, "[parseScoreWithRegex] Hit regex parsing strategy with reason extraction (handling unescaped quotes), original content: %s", content)
+					output.EvaluatorResult.Score = &score
+					output.EvaluatorResult.Reasoning = extractedReason
+					return true, nil
+				}
+			}
+			// 如果无法通过定位字段的方式提取reason，尝试传统方式（可能在无未转义双引号时有效）
+			reasonRegex := regexp.MustCompile(`(?i)reason[^"]*"([^"]+)"`)
+			reasonMatches := reasonRegex.FindStringSubmatch(content)
+			if len(reasonMatches) > 1 && len(reasonMatches[1]) > 0 {
+				// 成功提取到reason字段（传统方式，适用于无未转义双引号的情况）
+				logs.CtxWarn(ctx, "[parseScoreWithRegex] Hit regex parsing strategy with reason extraction, original content: %s", content)
+				output.EvaluatorResult.Score = &score
+				output.EvaluatorResult.Reasoning = reasonMatches[1]
+				return true, nil
+			}
+			// 如果无法提取reason字段，使用完整输出作为reason
+			logs.CtxWarn(ctx, "[parseScoreWithRegex] Hit regex parsing strategy without reason extraction, original content: %s", content)
+			output.EvaluatorResult.Score = &score
+			output.EvaluatorResult.Reasoning = content // 使用完整输出作为reason
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func parseFunctionCallOutput(ctx context.Context, evaluatorVersion *entity.PromptEvaluatorVersion, replyItem *entity.ReplyItem, output *entity.EvaluatorOutputData) error {
@@ -484,8 +609,14 @@ func parseFunctionCallOutput(ctx context.Context, evaluatorVersion *entity.Promp
 	return nil
 }
 
-func renderTemplate(ctx context.Context, evaluatorVersion *entity.PromptEvaluatorVersion, input *entity.EvaluatorInputData, disableTracing bool) error {
+func renderTemplate(ctx context.Context, evaluatorVersion *entity.PromptEvaluatorVersion, input *entity.EvaluatorInputData, exptSpaceID int64, disableTracing bool) error {
 	// 实现渲染模板的逻辑
+	if input == nil {
+		input = &entity.EvaluatorInputData{}
+	}
+	if input.InputFields == nil {
+		input.InputFields = make(map[string]*entity.Content)
+	}
 	variables := make([]*tracespec.PromptArgument, 0)
 	for k, v := range input.InputFields {
 		if v == nil {
@@ -515,7 +646,7 @@ func renderTemplate(ctx context.Context, evaluatorVersion *entity.PromptEvaluato
 
 	var renderTemplateSpan *evaluatorSpan
 	if !disableTracing {
-		renderTemplateSpan, ctx = newEvaluatorSpan(ctx, "RenderTemplate", "prompt", strconv.FormatInt(evaluatorVersion.SpaceID, 10), true)
+		renderTemplateSpan, ctx = newEvaluatorSpan(ctx, "RenderTemplate", "prompt", strconv.FormatInt(exptSpaceID, 10), true)
 		renderTemplateSpan.SetInput(ctx, tracer.Convert2TraceString(tracer.ConvertPrompt2Ob(evaluatorVersion.MessageList, variables)))
 	}
 	for _, message := range evaluatorVersion.MessageList {
@@ -542,9 +673,17 @@ func renderTemplate(ctx context.Context, evaluatorVersion *entity.PromptEvaluato
 	return nil
 }
 
-func (p *EvaluatorSourcePromptServiceImpl) Debug(ctx context.Context, evaluator *entity.Evaluator, input *entity.EvaluatorInputData) (output *entity.EvaluatorOutputData, err error) {
+func (p *EvaluatorSourcePromptServiceImpl) AsyncRun(ctx context.Context, evaluator *entity.Evaluator, input *entity.EvaluatorInputData, evaluatorRunConf *entity.EvaluatorRunConfig, exptSpaceID int64, invokeID int64) (map[string]string, string, error) {
+	return nil, "", errorx.NewByCode(errno.InvalidEvaluatorTypeCode, errorx.WithExtraMsg("prompt evaluator does not support async run"))
+}
+
+func (p *EvaluatorSourcePromptServiceImpl) AsyncDebug(ctx context.Context, evaluator *entity.Evaluator, input *entity.EvaluatorInputData, evaluatorRunConf *entity.EvaluatorRunConfig, exptSpaceID int64, invokeID int64) (map[string]string, string, error) {
+	return nil, "", errorx.NewByCode(errno.InvalidEvaluatorTypeCode, errorx.WithExtraMsg("prompt evaluator does not support async debug"))
+}
+
+func (p *EvaluatorSourcePromptServiceImpl) Debug(ctx context.Context, evaluator *entity.Evaluator, input *entity.EvaluatorInputData, evaluatorRunConf *entity.EvaluatorRunConfig, exptSpaceID int64) (output *entity.EvaluatorOutputData, err error) {
 	// 实现调试评估的逻辑
-	output, _, _ = p.Run(ctx, evaluator, input, false)
+	output, _, _ = p.Run(ctx, evaluator, input, evaluatorRunConf, exptSpaceID, false)
 	if output != nil && output.EvaluatorRunError != nil {
 		return nil, errorx.NewByCode(output.EvaluatorRunError.Code, errorx.WithExtraMsg(output.EvaluatorRunError.Message))
 	}
@@ -561,25 +700,26 @@ func (p *EvaluatorSourcePromptServiceImpl) injectPromptTools(ctx context.Context
 	// 注入默认工具
 	tools := make([]*entity.Tool, 0, len(p.configer.GetEvaluatorToolConf(ctx)))
 
-	if toolKey, ok := p.configer.GetEvaluatorToolMapping(ctx)[evaluatorDO.GetEvaluatorVersion().GetPromptTemplateKey()]; ok {
+	if toolKey, ok := p.configer.GetEvaluatorToolMapping(ctx)[evaluatorDO.GetPromptTemplateKey()]; ok {
 		tools = append(tools, evaluator.ConvertToolDTO2DO(p.configer.GetEvaluatorToolConf(ctx)[toolKey]))
 	} else {
 		tools = append(tools, evaluator.ConvertToolDTO2DO(p.configer.GetEvaluatorToolConf(ctx)[consts.DefaultEvaluatorToolKey]))
 	}
-	evaluatorDO.GetEvaluatorVersion().SetTools(tools)
+	evaluatorDO.SetTools(tools)
 }
 
 func (p *EvaluatorSourcePromptServiceImpl) injectParseType(ctx context.Context, evaluatorDO *entity.Evaluator) {
 	// 注入后缀
-	if evaluatorDO.GetEvaluatorVersion() == nil || evaluatorDO.GetEvaluatorVersion().GetModelConfig() == nil {
+	if evaluatorDO.GetModelConfig() == nil {
 		return
 	}
-	if suffixKey, ok := p.configer.GetEvaluatorPromptSuffixMapping(ctx)[strconv.FormatInt(evaluatorDO.GetEvaluatorVersion().GetModelConfig().ModelID, 10)]; ok {
-		evaluatorDO.GetEvaluatorVersion().SetPromptSuffix(p.configer.GetEvaluatorPromptSuffix(ctx)[suffixKey])
-		evaluatorDO.GetEvaluatorVersion().SetParseType(entity.ParseType(suffixKey))
+
+	if suffixKey, ok := p.configer.GetEvaluatorPromptSuffixMapping(ctx)[strconv.FormatInt(evaluatorDO.GetModelConfig().GetModelID(), 10)]; ok {
+		evaluatorDO.SetPromptSuffix(p.configer.GetEvaluatorPromptSuffix(ctx)[suffixKey])
+		evaluatorDO.SetParseType(entity.ParseType(suffixKey))
 	} else {
-		evaluatorDO.GetEvaluatorVersion().SetPromptSuffix(p.configer.GetEvaluatorPromptSuffix(ctx)[consts.DefaultEvaluatorPromptSuffixKey])
-		evaluatorDO.GetEvaluatorVersion().SetParseType(entity.ParseTypeContent)
+		evaluatorDO.SetPromptSuffix(p.configer.GetEvaluatorPromptSuffix(ctx)[consts.DefaultEvaluatorPromptSuffixKey])
+		evaluatorDO.SetParseType(entity.ParseTypeContent)
 	}
 }
 
@@ -675,4 +815,10 @@ func expandMultiPartVariable(variablePart *entity.Content, inputFields map[strin
 		res = append(res, part)
 	}
 	return res, nil
+}
+
+// Validate 验证Prompt评估器（Prompt评估器暂时提供空实现）
+func (p *EvaluatorSourcePromptServiceImpl) Validate(ctx context.Context, evaluator *entity.Evaluator) error {
+	// Prompt评估器暂时提供空实现，返回nil表示验证通过
+	return nil
 }

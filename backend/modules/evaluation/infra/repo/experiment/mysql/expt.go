@@ -29,6 +29,8 @@ type IExptDAO interface {
 
 	Update(ctx context.Context, expt *model.Experiment) error
 
+	UpdateFields(ctx context.Context, id int64, ufields map[string]any) error
+
 	Delete(ctx context.Context, id int64) error
 
 	MDelete(ctx context.Context, ids []int64) error
@@ -54,6 +56,17 @@ const defaultLimit = 20
 type exptDAOImpl struct {
 	db    db.Provider
 	query *query.Query
+}
+
+func (d *exptDAOImpl) UpdateFields(ctx context.Context, id int64, ufields map[string]any) error {
+	q := query.Use(d.db.NewSession(ctx)).Experiment
+	_, err := q.WithContext(ctx).
+		Where(q.ID.Eq(id)).
+		UpdateColumns(ufields)
+	if err != nil {
+		return errorx.Wrapf(err, "update expt fail, expt_id: %v, ufields: %v", id, ufields)
+	}
+	return nil
 }
 
 func (d *exptDAOImpl) Create(ctx context.Context, expt *model.Experiment) error {
@@ -97,8 +110,10 @@ func (d *exptDAOImpl) List(ctx context.Context, page, size int32, filter *entity
 		db = db.Model(&model.Experiment{}).
 			Joins("INNER JOIN expt_evaluator_ref ON experiment.id = expt_evaluator_ref.expt_id").
 			Where("experiment.space_id = ?", spaceID)
+		db = db.Where("experiment.visibility <> ?", int32(entity.Visibility_Hidden))
 	} else {
 		db = db.Model(&model.Experiment{}).Where("space_id = ?", spaceID)
+		db = db.Where("visibility <> ?", int32(entity.Visibility_Hidden))
 	}
 
 	conds, ok := d.toConditions(filter, orders)
@@ -169,6 +184,11 @@ func (d *exptDAOImpl) toConditions(f *entity.ExptListFilter, orders []*entity.Or
 				return db.Where(fmt.Sprintf("%screated_by %s (?)", exptPrefix, scopeComparator), ffields.CreatedBy)
 			})
 		}
+		if ffields != nil && len(ffields.UpdatedBy) > 0 {
+			conds = append(conds, func(db *gorm.DB) *gorm.DB {
+				return db.Where(fmt.Sprintf("%supdated_by %s (?)", exptPrefix, scopeComparator), ffields.UpdatedBy)
+			})
+		}
 		if ffields != nil && len(ffields.TargetIDs) > 0 {
 			conds = append(conds, func(db *gorm.DB) *gorm.DB {
 				return db.Where(fmt.Sprintf("%starget_id %s (?)", exptPrefix, scopeComparator), ffields.TargetIDs)
@@ -204,9 +224,19 @@ func (d *exptDAOImpl) toConditions(f *entity.ExptListFilter, orders []*entity.Or
 				return db.Where(fmt.Sprintf("%sexpt_type %s (?)", exptPrefix, scopeComparator), ffields.ExptType)
 			})
 		}
+		if ffields != nil && len(ffields.ExptTemplateIDs) > 0 {
+			conds = append(conds, func(db *gorm.DB) *gorm.DB {
+				return db.Where(fmt.Sprintf("%sexpt_template_id %s (?)", exptPrefix, scopeComparator), ffields.ExptTemplateIDs)
+			})
+		}
 		if ffields != nil && len(ffields.SourceType) > 0 {
 			conds = append(conds, func(db *gorm.DB) *gorm.DB {
 				return db.Where(fmt.Sprintf("%ssource_type %s (?)", exptPrefix, scopeComparator), ffields.SourceType)
+			})
+		}
+		if ffields != nil && len(ffields.TriggerType) > 0 {
+			conds = append(conds, func(db *gorm.DB) *gorm.DB {
+				return db.Where(fmt.Sprintf("%strigger_type %s (?)", exptPrefix, scopeComparator), ffields.TriggerType)
 			})
 		}
 
@@ -219,8 +249,10 @@ func (d *exptDAOImpl) toConditions(f *entity.ExptListFilter, orders []*entity.Or
 		})
 	}
 
-	conditions = append(conditions, condFn("=", "IN", f.Includes)...)
-	conditions = append(conditions, condFn("!=", "NOT IN", f.Excludes)...)
+	if f != nil {
+		conditions = append(conditions, condFn("=", "IN", f.Includes)...)
+		conditions = append(conditions, condFn("!=", "NOT IN", f.Excludes)...)
+	}
 
 	ordered := false
 	for _, orderBy := range orders {

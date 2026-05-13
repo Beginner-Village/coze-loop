@@ -8,18 +8,17 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/bytedance/gg/gptr"
+	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/bytedance/gg/gptr"
 	"github.com/coze-dev/coze-loop/backend/infra/middleware/session"
 	dataset_domain "github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/data/domain/dataset"
 	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/evaluation/domain/common"
 	eval_set_domain "github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/evaluation/domain/eval_set"
 	"github.com/coze-dev/coze-loop/backend/modules/observability/domain/trace/entity"
-	"github.com/samber/lo"
 )
 
-//go:generate mockgen -source=evaluation_set.go -destination=mocks/mock_evaluation_set.go
 //go:generate mockgen -package=mocks -destination=mocks/mock_evaluationsetservice_client.go github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/evaluation/evaluationsetservice Client
 
 // Test helper functions
@@ -381,7 +380,7 @@ func TestDatasetItemsDO2DTO(t *testing.T) {
 
 func TestConvertContentDO2DTO(t *testing.T) {
 	t.Run("nil content", func(t *testing.T) {
-		got := convertContentDO2DTO(nil)
+		got := ConvertContentDO2DTO(nil)
 		assert.Nil(t, got)
 	})
 
@@ -391,7 +390,7 @@ func TestConvertContentDO2DTO(t *testing.T) {
 			Text:        "test text",
 		}
 
-		got := convertContentDO2DTO(content)
+		got := ConvertContentDO2DTO(content)
 		assert.NotNil(t, got)
 		assert.Equal(t, entity.CommonContentTypeDO2DTO(entity.ContentType_Text), got.ContentType)
 		assert.Equal(t, "test text", got.GetText())
@@ -408,7 +407,7 @@ func TestConvertContentDO2DTO(t *testing.T) {
 			},
 		}
 
-		got := convertContentDO2DTO(content)
+		got := ConvertContentDO2DTO(content)
 		assert.NotNil(t, got)
 		assert.Equal(t, entity.CommonContentTypeDO2DTO(entity.ContentType_MultiPart), got.ContentType)
 		assert.Equal(t, 1, len(got.MultiPart))

@@ -15,7 +15,7 @@
     "vitest@1.4.0>vite": "5.1.6",
     "debug": "4.3.3",
     "type-fest": "3.13.1",
-    "@types/node": "18.18.9",
+    "@types/node": "^24",
     "leveldown": "6.1.1",
     "ahooks": "3.7.8",
     "terser-webpack-plugin@5.3.10>webpack": "5.89.0",
@@ -24,7 +24,7 @@
     "tailwindcss@3.3.6>postcss": "8.4.49",
     "@types/react": "18.2.37",
     "@types/react-dom": "18.2.15",
-    "@coze-arch/coze-design": "0.0.6-alpha.101d0c",
+    "@coze-arch/coze-design": "0.0.7-alpha.5f0418",
     "typescript": "5.8.2"
   },
   "globalPeerDependencyRules": {},

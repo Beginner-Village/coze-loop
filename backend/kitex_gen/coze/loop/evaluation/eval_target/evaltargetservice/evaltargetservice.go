@@ -62,10 +62,31 @@ var serviceMethods = map[string]kitex.MethodInfo{
 		false,
 		kitex.WithStreamingMode(kitex.StreamingNone),
 	),
+	"GetSourceEvalTargetVersion": kitex.NewMethodInfo(
+		getSourceEvalTargetVersionHandler,
+		newEvalTargetServiceGetSourceEvalTargetVersionArgs,
+		newEvalTargetServiceGetSourceEvalTargetVersionResult,
+		false,
+		kitex.WithStreamingMode(kitex.StreamingNone),
+	),
+	"SearchCustomEvalTarget": kitex.NewMethodInfo(
+		searchCustomEvalTargetHandler,
+		newEvalTargetServiceSearchCustomEvalTargetArgs,
+		newEvalTargetServiceSearchCustomEvalTargetResult,
+		false,
+		kitex.WithStreamingMode(kitex.StreamingNone),
+	),
 	"ExecuteEvalTarget": kitex.NewMethodInfo(
 		executeEvalTargetHandler,
 		newEvalTargetServiceExecuteEvalTargetArgs,
 		newEvalTargetServiceExecuteEvalTargetResult,
+		false,
+		kitex.WithStreamingMode(kitex.StreamingNone),
+	),
+	"AsyncExecuteEvalTarget": kitex.NewMethodInfo(
+		asyncExecuteEvalTargetHandler,
+		newEvalTargetServiceAsyncExecuteEvalTargetArgs,
+		newEvalTargetServiceAsyncExecuteEvalTargetResult,
 		false,
 		kitex.WithStreamingMode(kitex.StreamingNone),
 	),
@@ -80,6 +101,34 @@ var serviceMethods = map[string]kitex.MethodInfo{
 		batchGetEvalTargetRecordsHandler,
 		newEvalTargetServiceBatchGetEvalTargetRecordsArgs,
 		newEvalTargetServiceBatchGetEvalTargetRecordsResult,
+		false,
+		kitex.WithStreamingMode(kitex.StreamingNone),
+	),
+	"GetEvalTargetOutputFieldContent": kitex.NewMethodInfo(
+		getEvalTargetOutputFieldContentHandler,
+		newEvalTargetServiceGetEvalTargetOutputFieldContentArgs,
+		newEvalTargetServiceGetEvalTargetOutputFieldContentResult,
+		false,
+		kitex.WithStreamingMode(kitex.StreamingNone),
+	),
+	"DebugEvalTarget": kitex.NewMethodInfo(
+		debugEvalTargetHandler,
+		newEvalTargetServiceDebugEvalTargetArgs,
+		newEvalTargetServiceDebugEvalTargetResult,
+		false,
+		kitex.WithStreamingMode(kitex.StreamingNone),
+	),
+	"AsyncDebugEvalTarget": kitex.NewMethodInfo(
+		asyncDebugEvalTargetHandler,
+		newEvalTargetServiceAsyncDebugEvalTargetArgs,
+		newEvalTargetServiceAsyncDebugEvalTargetResult,
+		false,
+		kitex.WithStreamingMode(kitex.StreamingNone),
+	),
+	"MockEvalTargetOutput": kitex.NewMethodInfo(
+		mockEvalTargetOutputHandler,
+		newEvalTargetServiceMockEvalTargetOutputArgs,
+		newEvalTargetServiceMockEvalTargetOutputResult,
 		false,
 		kitex.WithStreamingMode(kitex.StreamingNone),
 	),
@@ -249,6 +298,44 @@ func newEvalTargetServiceBatchGetSourceEvalTargetsResult() interface{} {
 	return eval_target.NewEvalTargetServiceBatchGetSourceEvalTargetsResult()
 }
 
+func getSourceEvalTargetVersionHandler(ctx context.Context, handler interface{}, arg, result interface{}) error {
+	realArg := arg.(*eval_target.EvalTargetServiceGetSourceEvalTargetVersionArgs)
+	realResult := result.(*eval_target.EvalTargetServiceGetSourceEvalTargetVersionResult)
+	success, err := handler.(eval_target.EvalTargetService).GetSourceEvalTargetVersion(ctx, realArg.Request)
+	if err != nil {
+		return err
+	}
+	realResult.Success = success
+	return nil
+}
+
+func newEvalTargetServiceGetSourceEvalTargetVersionArgs() interface{} {
+	return eval_target.NewEvalTargetServiceGetSourceEvalTargetVersionArgs()
+}
+
+func newEvalTargetServiceGetSourceEvalTargetVersionResult() interface{} {
+	return eval_target.NewEvalTargetServiceGetSourceEvalTargetVersionResult()
+}
+
+func searchCustomEvalTargetHandler(ctx context.Context, handler interface{}, arg, result interface{}) error {
+	realArg := arg.(*eval_target.EvalTargetServiceSearchCustomEvalTargetArgs)
+	realResult := result.(*eval_target.EvalTargetServiceSearchCustomEvalTargetResult)
+	success, err := handler.(eval_target.EvalTargetService).SearchCustomEvalTarget(ctx, realArg.Req)
+	if err != nil {
+		return err
+	}
+	realResult.Success = success
+	return nil
+}
+
+func newEvalTargetServiceSearchCustomEvalTargetArgs() interface{} {
+	return eval_target.NewEvalTargetServiceSearchCustomEvalTargetArgs()
+}
+
+func newEvalTargetServiceSearchCustomEvalTargetResult() interface{} {
+	return eval_target.NewEvalTargetServiceSearchCustomEvalTargetResult()
+}
+
 func executeEvalTargetHandler(ctx context.Context, handler interface{}, arg, result interface{}) error {
 	realArg := arg.(*eval_target.EvalTargetServiceExecuteEvalTargetArgs)
 	realResult := result.(*eval_target.EvalTargetServiceExecuteEvalTargetResult)
@@ -266,6 +353,25 @@ func newEvalTargetServiceExecuteEvalTargetArgs() interface{} {
 
 func newEvalTargetServiceExecuteEvalTargetResult() interface{} {
 	return eval_target.NewEvalTargetServiceExecuteEvalTargetResult()
+}
+
+func asyncExecuteEvalTargetHandler(ctx context.Context, handler interface{}, arg, result interface{}) error {
+	realArg := arg.(*eval_target.EvalTargetServiceAsyncExecuteEvalTargetArgs)
+	realResult := result.(*eval_target.EvalTargetServiceAsyncExecuteEvalTargetResult)
+	success, err := handler.(eval_target.EvalTargetService).AsyncExecuteEvalTarget(ctx, realArg.Request)
+	if err != nil {
+		return err
+	}
+	realResult.Success = success
+	return nil
+}
+
+func newEvalTargetServiceAsyncExecuteEvalTargetArgs() interface{} {
+	return eval_target.NewEvalTargetServiceAsyncExecuteEvalTargetArgs()
+}
+
+func newEvalTargetServiceAsyncExecuteEvalTargetResult() interface{} {
+	return eval_target.NewEvalTargetServiceAsyncExecuteEvalTargetResult()
 }
 
 func getEvalTargetRecordHandler(ctx context.Context, handler interface{}, arg, result interface{}) error {
@@ -304,6 +410,82 @@ func newEvalTargetServiceBatchGetEvalTargetRecordsArgs() interface{} {
 
 func newEvalTargetServiceBatchGetEvalTargetRecordsResult() interface{} {
 	return eval_target.NewEvalTargetServiceBatchGetEvalTargetRecordsResult()
+}
+
+func getEvalTargetOutputFieldContentHandler(ctx context.Context, handler interface{}, arg, result interface{}) error {
+	realArg := arg.(*eval_target.EvalTargetServiceGetEvalTargetOutputFieldContentArgs)
+	realResult := result.(*eval_target.EvalTargetServiceGetEvalTargetOutputFieldContentResult)
+	success, err := handler.(eval_target.EvalTargetService).GetEvalTargetOutputFieldContent(ctx, realArg.Request)
+	if err != nil {
+		return err
+	}
+	realResult.Success = success
+	return nil
+}
+
+func newEvalTargetServiceGetEvalTargetOutputFieldContentArgs() interface{} {
+	return eval_target.NewEvalTargetServiceGetEvalTargetOutputFieldContentArgs()
+}
+
+func newEvalTargetServiceGetEvalTargetOutputFieldContentResult() interface{} {
+	return eval_target.NewEvalTargetServiceGetEvalTargetOutputFieldContentResult()
+}
+
+func debugEvalTargetHandler(ctx context.Context, handler interface{}, arg, result interface{}) error {
+	realArg := arg.(*eval_target.EvalTargetServiceDebugEvalTargetArgs)
+	realResult := result.(*eval_target.EvalTargetServiceDebugEvalTargetResult)
+	success, err := handler.(eval_target.EvalTargetService).DebugEvalTarget(ctx, realArg.Request)
+	if err != nil {
+		return err
+	}
+	realResult.Success = success
+	return nil
+}
+
+func newEvalTargetServiceDebugEvalTargetArgs() interface{} {
+	return eval_target.NewEvalTargetServiceDebugEvalTargetArgs()
+}
+
+func newEvalTargetServiceDebugEvalTargetResult() interface{} {
+	return eval_target.NewEvalTargetServiceDebugEvalTargetResult()
+}
+
+func asyncDebugEvalTargetHandler(ctx context.Context, handler interface{}, arg, result interface{}) error {
+	realArg := arg.(*eval_target.EvalTargetServiceAsyncDebugEvalTargetArgs)
+	realResult := result.(*eval_target.EvalTargetServiceAsyncDebugEvalTargetResult)
+	success, err := handler.(eval_target.EvalTargetService).AsyncDebugEvalTarget(ctx, realArg.Request)
+	if err != nil {
+		return err
+	}
+	realResult.Success = success
+	return nil
+}
+
+func newEvalTargetServiceAsyncDebugEvalTargetArgs() interface{} {
+	return eval_target.NewEvalTargetServiceAsyncDebugEvalTargetArgs()
+}
+
+func newEvalTargetServiceAsyncDebugEvalTargetResult() interface{} {
+	return eval_target.NewEvalTargetServiceAsyncDebugEvalTargetResult()
+}
+
+func mockEvalTargetOutputHandler(ctx context.Context, handler interface{}, arg, result interface{}) error {
+	realArg := arg.(*eval_target.EvalTargetServiceMockEvalTargetOutputArgs)
+	realResult := result.(*eval_target.EvalTargetServiceMockEvalTargetOutputResult)
+	success, err := handler.(eval_target.EvalTargetService).MockEvalTargetOutput(ctx, realArg.Request)
+	if err != nil {
+		return err
+	}
+	realResult.Success = success
+	return nil
+}
+
+func newEvalTargetServiceMockEvalTargetOutputArgs() interface{} {
+	return eval_target.NewEvalTargetServiceMockEvalTargetOutputArgs()
+}
+
+func newEvalTargetServiceMockEvalTargetOutputResult() interface{} {
+	return eval_target.NewEvalTargetServiceMockEvalTargetOutputResult()
 }
 
 type kClient struct {
@@ -388,11 +570,41 @@ func (p *kClient) BatchGetSourceEvalTargets(ctx context.Context, request *eval_t
 	return _result.GetSuccess(), nil
 }
 
+func (p *kClient) GetSourceEvalTargetVersion(ctx context.Context, request *eval_target.GetSourceEvalTargetVersionRequest) (r *eval_target.GetSourceEvalTargetVersionResponse, err error) {
+	var _args eval_target.EvalTargetServiceGetSourceEvalTargetVersionArgs
+	_args.Request = request
+	var _result eval_target.EvalTargetServiceGetSourceEvalTargetVersionResult
+	if err = p.c.Call(ctx, "GetSourceEvalTargetVersion", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+
+func (p *kClient) SearchCustomEvalTarget(ctx context.Context, req *eval_target.SearchCustomEvalTargetRequest) (r *eval_target.SearchCustomEvalTargetResponse, err error) {
+	var _args eval_target.EvalTargetServiceSearchCustomEvalTargetArgs
+	_args.Req = req
+	var _result eval_target.EvalTargetServiceSearchCustomEvalTargetResult
+	if err = p.c.Call(ctx, "SearchCustomEvalTarget", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+
 func (p *kClient) ExecuteEvalTarget(ctx context.Context, request *eval_target.ExecuteEvalTargetRequest) (r *eval_target.ExecuteEvalTargetResponse, err error) {
 	var _args eval_target.EvalTargetServiceExecuteEvalTargetArgs
 	_args.Request = request
 	var _result eval_target.EvalTargetServiceExecuteEvalTargetResult
 	if err = p.c.Call(ctx, "ExecuteEvalTarget", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+
+func (p *kClient) AsyncExecuteEvalTarget(ctx context.Context, request *eval_target.AsyncExecuteEvalTargetRequest) (r *eval_target.AsyncExecuteEvalTargetResponse, err error) {
+	var _args eval_target.EvalTargetServiceAsyncExecuteEvalTargetArgs
+	_args.Request = request
+	var _result eval_target.EvalTargetServiceAsyncExecuteEvalTargetResult
+	if err = p.c.Call(ctx, "AsyncExecuteEvalTarget", &_args, &_result); err != nil {
 		return
 	}
 	return _result.GetSuccess(), nil
@@ -413,6 +625,46 @@ func (p *kClient) BatchGetEvalTargetRecords(ctx context.Context, request *eval_t
 	_args.Request = request
 	var _result eval_target.EvalTargetServiceBatchGetEvalTargetRecordsResult
 	if err = p.c.Call(ctx, "BatchGetEvalTargetRecords", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+
+func (p *kClient) GetEvalTargetOutputFieldContent(ctx context.Context, request *eval_target.GetEvalTargetOutputFieldContentRequest) (r *eval_target.GetEvalTargetOutputFieldContentResponse, err error) {
+	var _args eval_target.EvalTargetServiceGetEvalTargetOutputFieldContentArgs
+	_args.Request = request
+	var _result eval_target.EvalTargetServiceGetEvalTargetOutputFieldContentResult
+	if err = p.c.Call(ctx, "GetEvalTargetOutputFieldContent", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+
+func (p *kClient) DebugEvalTarget(ctx context.Context, request *eval_target.DebugEvalTargetRequest) (r *eval_target.DebugEvalTargetResponse, err error) {
+	var _args eval_target.EvalTargetServiceDebugEvalTargetArgs
+	_args.Request = request
+	var _result eval_target.EvalTargetServiceDebugEvalTargetResult
+	if err = p.c.Call(ctx, "DebugEvalTarget", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+
+func (p *kClient) AsyncDebugEvalTarget(ctx context.Context, request *eval_target.AsyncDebugEvalTargetRequest) (r *eval_target.AsyncDebugEvalTargetResponse, err error) {
+	var _args eval_target.EvalTargetServiceAsyncDebugEvalTargetArgs
+	_args.Request = request
+	var _result eval_target.EvalTargetServiceAsyncDebugEvalTargetResult
+	if err = p.c.Call(ctx, "AsyncDebugEvalTarget", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+
+func (p *kClient) MockEvalTargetOutput(ctx context.Context, request *eval_target.MockEvalTargetOutputRequest) (r *eval_target.MockEvalTargetOutputResponse, err error) {
+	var _args eval_target.EvalTargetServiceMockEvalTargetOutputArgs
+	_args.Request = request
+	var _result eval_target.EvalTargetServiceMockEvalTargetOutputResult
+	if err = p.c.Call(ctx, "MockEvalTargetOutput", &_args, &_result); err != nil {
 		return
 	}
 	return _result.GetSuccess(), nil

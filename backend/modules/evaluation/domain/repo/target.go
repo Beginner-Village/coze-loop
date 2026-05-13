@@ -14,13 +14,22 @@ type IEvalTargetRepo interface {
 	CreateEvalTarget(ctx context.Context, do *entity.EvalTarget) (id, versionID int64, err error)
 	GetEvalTarget(ctx context.Context, targetID int64) (do *entity.EvalTarget, err error)
 	GetEvalTargetVersion(ctx context.Context, spaceID, versionID int64) (do *entity.EvalTarget, err error)
+	GetEvalTargetVersionByTarget(ctx context.Context, spaceID, targetID int64, sourceTargetVersion string) (do *entity.EvalTarget, err error)
+	GetEvalTargetVersionBySourceTarget(ctx context.Context, spaceID int64, sourceTargetID, sourceTargetVersion string, targetType entity.EvalTargetType) (do *entity.EvalTarget, err error)
 	BatchGetEvalTargetBySource(ctx context.Context, param *BatchGetEvalTargetBySourceParam) (dos []*entity.EvalTarget, err error)
 	BatchGetEvalTargetVersion(ctx context.Context, spaceID int64, versionIDs []int64) (dos []*entity.EvalTarget, err error)
 
 	// target record start
-	CreateEvalTargetRecord(ctx context.Context, record *entity.EvalTargetRecord) (int64, error)
-	GetEvalTargetRecordByIDAndSpaceID(ctx context.Context, spaceID int64, recordID int64) (*entity.EvalTargetRecord, error)
+	CreateEvalTargetRecord(ctx context.Context, record *entity.EvalTargetRecord, truncateLargeContent *bool) (int64, error)
+	SaveEvalTargetRecord(ctx context.Context, record *entity.EvalTargetRecord, truncateLargeContent *bool) error
+	UpdateEvalTargetRecord(ctx context.Context, record *entity.EvalTargetRecord, truncateLargeContent *bool) error
+	GetEvalTargetRecordByIDAndSpaceID(ctx context.Context, spaceID, recordID int64) (*entity.EvalTargetRecord, error)
+	GetEvalTargetRecordByRunItemTurn(ctx context.Context, spaceID, runID, itemID, turnID int64) (*entity.EvalTargetRecord, error)
 	ListEvalTargetRecordByIDsAndSpaceID(ctx context.Context, spaceID int64, recordIDs []int64) ([]*entity.EvalTargetRecord, error)
+	// LoadEvalTargetRecordOutputFields 从 S3 加载 record output 中指定字段的大对象完整内容
+	LoadEvalTargetRecordOutputFields(ctx context.Context, record *entity.EvalTargetRecord, fieldKeys []string) error
+	// LoadEvalTargetRecordFullData 从 TOS 加载 record 中所有被省略的大对象完整内容（用于导出等需要完整字段的场景）
+	LoadEvalTargetRecordFullData(ctx context.Context, record *entity.EvalTargetRecord) error
 	// target record end
 }
 

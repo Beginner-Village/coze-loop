@@ -35,29 +35,31 @@ func ItemDTO2DO(dto *eval_set.EvaluationSetItem) *entity.EvaluationSetItem {
 		SchemaID:        gptr.Indirect(dto.SchemaID),
 		ItemID:          gptr.Indirect(dto.ItemID),
 		ItemKey:         gptr.Indirect(dto.ItemKey),
-		Turns:           TurnDTO2DOs(dto.Turns),
+		Turns:           TurnDTO2DOs(gptr.Indirect(dto.EvaluationSetID), gptr.Indirect(dto.ItemID), dto.Turns),
 		BaseInfo:        common.ConvertBaseInfoDTO2DO(dto.BaseInfo),
 	}
 }
 
-func TurnDTO2DOs(dtos []*eval_set.Turn) []*entity.Turn {
+func TurnDTO2DOs(evalSetID, itemID int64, dtos []*eval_set.Turn) []*entity.Turn {
 	if dtos == nil {
 		return nil
 	}
 	result := make([]*entity.Turn, 0)
 	for _, dto := range dtos {
-		result = append(result, TurnDTO2DO(dto))
+		result = append(result, TurnDTO2DO(evalSetID, itemID, dto))
 	}
 	return result
 }
 
-func TurnDTO2DO(dto *eval_set.Turn) *entity.Turn {
+func TurnDTO2DO(evalSetID, itemID int64, dto *eval_set.Turn) *entity.Turn {
 	if dto == nil {
 		return nil
 	}
 	return &entity.Turn{
 		ID:            gptr.Indirect(dto.ID),
 		FieldDataList: FieldDataDTO2DOs(dto.FieldDataList),
+		ItemID:        itemID,
+		EvalSetID:     evalSetID,
 	}
 }
 
@@ -80,6 +82,7 @@ func FieldDataDTO2DO(dto *eval_set.FieldData) *entity.FieldData {
 		Key:     gptr.Indirect(dto.Key),
 		Name:    gptr.Indirect(dto.Name),
 		Content: common.ConvertContentDTO2DO(dto.Content),
+		TraceID: gptr.Indirect(dto.TraceID),
 	}
 }
 
@@ -151,6 +154,7 @@ func FieldDataDO2DTO(do *entity.FieldData) *eval_set.FieldData {
 		Key:     gptr.Of(do.Key),
 		Name:    gptr.Of(do.Name),
 		Content: common.ConvertContentDO2DTO(do.Content),
+		TraceID: gptr.Of(do.TraceID),
 	}
 }
 
@@ -163,6 +167,29 @@ func ItemErrorGroupDO2DTOs(dos []*entity.ItemErrorGroup) []*dataset.ItemErrorGro
 		result = append(result, ItemErrorGroupDO2DTO(do))
 	}
 	return result
+}
+
+func CreateDatasetItemOutputDO2DTOs(dos []*entity.DatasetItemOutput) []*dataset.CreateDatasetItemOutput {
+	if dos == nil {
+		return nil
+	}
+	result := make([]*dataset.CreateDatasetItemOutput, 0)
+	for _, do := range dos {
+		result = append(result, CreateDatasetItemOutputDO2DTO(do))
+	}
+	return result
+}
+
+func CreateDatasetItemOutputDO2DTO(do *entity.DatasetItemOutput) *dataset.CreateDatasetItemOutput {
+	if do == nil {
+		return nil
+	}
+	return &dataset.CreateDatasetItemOutput{
+		ItemIndex: do.ItemIndex,
+		ItemKey:   do.ItemKey,
+		ItemID:    do.ItemID,
+		IsNewItem: do.IsNewItem,
+	}
 }
 
 func ItemErrorGroupDO2DTO(do *entity.ItemErrorGroup) *dataset.ItemErrorGroup {

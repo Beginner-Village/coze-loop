@@ -9,7 +9,6 @@ import (
 	"context"
 
 	"github.com/cloudwego/hertz/pkg/app"
-
 	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/prompt/manage/promptmanageservice"
 )
 
@@ -97,4 +96,16 @@ func UpdateCommitLabels(ctx context.Context, c *app.RequestContext) {
 // @router /api/prompt/v1/labels/batch_get [POST]
 func BatchGetLabel(ctx context.Context, c *app.RequestContext) {
 	invokeAndRender(ctx, c, promptManageSvc.BatchGetLabel)
+}
+
+// ListParentPrompt .
+// @router /api/prompt/v1/prompts/list_parent [POST]
+func ListParentPrompt(ctx context.Context, c *app.RequestContext) {
+	invokeAndRender(ctx, c, promptManageSvc.ListParentPrompt)
+}
+
+// BatchGetPromptBasic .
+// @router /api/prompt/v1/prompts/batch_get_prompt_basic [POST]
+func BatchGetPromptBasic(ctx context.Context, c *app.RequestContext) {
+	invokeAndRender(ctx, c, promptManageSvc.BatchGetPromptBasic)
 }

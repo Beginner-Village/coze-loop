@@ -22,12 +22,15 @@ type EvaluationSetItem struct {
 type Turn struct {
 	ID            int64        `json:"id,omitempty"`
 	FieldDataList []*FieldData `json:"field_data_list,omitempty"`
+	ItemID        int64        `json:"item_id,omitempty"`
+	EvalSetID     int64        `json:"eval_set_id,omitempty"`
 }
 
 type FieldData struct {
 	Key     string   `json:"key,omitempty"`
 	Name    string   `json:"name,omitempty"`
 	Content *Content `json:"content,omitempty"`
+	TraceID string   `json:"trace_id,omitempty"`
 }
 
 type ItemErrorGroup struct {
@@ -162,4 +165,14 @@ type ItemSnapshotFieldMapping struct {
 	MappingKey string `json:"mapping_key"`
 	// tag_array时，无值
 	MappingSubKey string `json:"mapping_subKey"`
+	RecordID      int64  `json:"record_id"`
+}
+
+type DatasetItemOutput struct {
+	// item 在 BatchCreateDatasetItemsReq.items 中的索引
+	ItemIndex *int32
+	ItemKey   *string
+	ItemID    *int64
+	// 是否是新的 Item。提供 itemKey 时，如果 itemKey 在数据集中已存在数据，则不算做「新 Item」，该字段为 false。
+	IsNewItem *bool
 }

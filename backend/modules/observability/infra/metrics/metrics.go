@@ -16,9 +16,10 @@ import (
 const (
 	traceSpansMetricsName = "trace_spans"
 
-	getTraceSuffix  = "get_trace"
-	listSpansSuffix = "list_spans"
-	traceOApiSuffix = "trace_oapi"
+	getTraceSuffix   = "get_trace"
+	listSpansSuffix  = "list_spans"
+	traceOApiSuffix  = "trace_oapi"
+	metricSendSuffix = "send_metric"
 
 	throughputSuffix = ".throughput"
 	latencySuffix    = ".latency"
@@ -30,6 +31,7 @@ const (
 	tagSpaceID      = "workspace_id"
 	tagPlatformType = "platform_type"
 	tagSpanType     = "span_list_type"
+	tagSrc          = "src"
 	tagIsErr        = "is_err"
 	tagErrCode      = "err_code"
 )
@@ -40,6 +42,7 @@ func traceQueryTagNames() []string {
 		tagSpaceID,
 		tagPlatformType,
 		tagSpanType,
+		tagSrc,
 		tagIsErr,
 		tagErrCode,
 	}
@@ -102,7 +105,7 @@ func (t *TraceMetricsImpl) EmitGetTrace(workspaceId int64, start time.Time, isEr
 		metrics.Timer(time.Since(start).Microseconds(), metrics.WithSuffix(getTraceSuffix+latencySuffix)))
 }
 
-func (t *TraceMetricsImpl) EmitTraceOapi(method string, workspaceId int64, platformType, spanListType string, spanSize int64, errorCode int, start time.Time, isError bool) {
+func (t *TraceMetricsImpl) EmitTraceOapi(method string, workspaceId int64, platformType, spanListType, src string, spanSize int64, errorCode int, start time.Time, isError bool) {
 	if t.spansMetrics == nil {
 		return
 	}
@@ -113,9 +116,22 @@ func (t *TraceMetricsImpl) EmitTraceOapi(method string, workspaceId int64, platf
 			{Name: tagIsErr, Value: strconv.FormatBool(isError)},
 			{Name: tagPlatformType, Value: platformType},
 			{Name: tagSpanType, Value: spanListType},
+			{Name: tagSrc, Value: src},
 			{Name: tagErrCode, Value: strconv.Itoa(errorCode)},
 		},
 		metrics.Counter(1, metrics.WithSuffix(traceOApiSuffix+throughputSuffix)),
 		metrics.Counter(spanSize, metrics.WithSuffix(traceOApiSuffix+sizeSuffix)),
 		metrics.Timer(time.Since(start).Microseconds(), metrics.WithSuffix(traceOApiSuffix+latencySuffix)))
+}
+
+func (t *TraceMetricsImpl) EmitSendMetric(start time.Time, isError bool) {
+	if t.spansMetrics == nil {
+		return
+	}
+	t.spansMetrics.Emit(
+		[]metrics.T{
+			{Name: tagIsErr, Value: strconv.FormatBool(isError)},
+		},
+		metrics.Counter(1, metrics.WithSuffix(metricSendSuffix+throughputSuffix)),
+		metrics.Timer(time.Since(start).Microseconds(), metrics.WithSuffix(metricSendSuffix+latencySuffix)))
 }

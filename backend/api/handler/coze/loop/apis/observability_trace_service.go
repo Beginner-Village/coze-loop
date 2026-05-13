@@ -12,7 +12,7 @@ import (
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
 
 	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/apis/observabilitytraceservice"
-	trace "github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/observability/trace"
+	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/observability/trace"
 )
 
 var observabilityClient observabilitytraceservice.Client
@@ -119,4 +119,92 @@ func PreviewExportTracesToDataset(ctx context.Context, c *app.RequestContext) {
 	resp := new(trace.PreviewExportTracesToDatasetResponse)
 
 	c.JSON(consts.StatusOK, resp)
+}
+
+// SearchTraceTree .
+// @router /api/observability/v1/traces/search_tree [POST]
+func SearchTraceTree(ctx context.Context, c *app.RequestContext) {
+	var err error
+	var req trace.SearchTraceTreeRequest
+	err = c.BindAndValidate(&req)
+	if err != nil {
+		c.String(consts.StatusBadRequest, err.Error())
+		return
+	}
+
+	resp := new(trace.SearchTraceTreeResponse)
+
+	c.JSON(consts.StatusOK, resp)
+}
+
+// ChangeEvaluatorScore .
+// @router /api/observability/v1/annotations/change_eEvaluator_sScore [POST]
+func ChangeEvaluatorScore(ctx context.Context, c *app.RequestContext) {
+	invokeAndRender(ctx, c, observabilityClient.ChangeEvaluatorScore)
+}
+
+// ListAnnotationEvaluators .
+// @router /api/observability/v1/annotations/lis_annotation_evaluators [POST]
+func ListAnnotationEvaluators(ctx context.Context, c *app.RequestContext) {
+	invokeAndRender(ctx, c, observabilityClient.ListAnnotationEvaluators)
+}
+
+// ExtractSpanInfo .
+// @router /api/observability/v1/traces/extract_span_info [POST]
+func ExtractSpanInfo(ctx context.Context, c *app.RequestContext) {
+	invokeAndRender(ctx, c, observabilityClient.ExtractSpanInfo)
+}
+
+// ListPreSpan .
+// @router /api/observability/v1/spans/pre_list [POST]
+func ListPreSpan(ctx context.Context, c *app.RequestContext) {
+	invokeAndRender(ctx, c, observabilityClient.ListPreSpan)
+}
+
+// UpsertTrajectoryConfig .
+// @router /api/observability/v1/trajectory_config [POST]
+func UpsertTrajectoryConfig(ctx context.Context, c *app.RequestContext) {
+	invokeAndRender(ctx, c, observabilityClient.UpsertTrajectoryConfig)
+}
+
+// GetTrajectoryConfig .
+// @router /api/observability/v1/trajectory_config [GET]
+func GetTrajectoryConfig(ctx context.Context, c *app.RequestContext) {
+	invokeAndRender(ctx, c, observabilityClient.GetTrajectoryConfig)
+}
+
+// ListTrajectory .
+// @router /api/observability/v1/traces/trajectory [POST]
+func ListTrajectory(ctx context.Context, c *app.RequestContext) {
+	invokeAndRender(ctx, c, observabilityClient.ListTrajectory)
+}
+
+// ListWorkspaceAnnotations .
+// @router /api/observability/v1/annotations/list_by_workspace [POST]
+func ListWorkspaceAnnotations(ctx context.Context, c *app.RequestContext) {
+	invokeAndRender(ctx, c, observabilityClient.ListWorkspaceAnnotations)
+}
+
+// ListMetadata .
+// @router /api/observability/v1/traces/metadata/list [POST]
+func ListMetadata(ctx context.Context, c *app.RequestContext) {
+	invokeAndRender(ctx, c, observabilityClient.ListMetadata)
+}
+
+// ListTraceChat .
+// @router /api/observability/v1/traces/chat/list [POST]
+func ListTraceChat(ctx context.Context, c *app.RequestContext) {
+	invokeAndRender(ctx, c, observabilityClient.ListTraceChat)
+}
+
+// ListThreadChat .
+// @router /api/observability/v1/threads/chat/list [POST]
+func ListThreadChat(ctx context.Context, c *app.RequestContext) {
+	invokeAndRender(ctx, c, observabilityClient.ListThreadChat)
+}
+
+// GetThreadStat .
+// @router /api/observability/v1/threads/stat [POST]
+func GetThreadStat(ctx context.Context, c *app.RequestContext) {
+	invokeAndRender(ctx, c, observabilityClient.GetThreadStat)
 }

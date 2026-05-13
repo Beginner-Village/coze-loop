@@ -3,7 +3,18 @@
 
 package entity
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+
+	"github.com/bytedance/gg/gptr"
+	"github.com/coze-dev/coze-loop/backend/kitex_gen/stone/fornax/ml_flow/domain/filter"
+)
+
+type (
+	Filter      = filter.Filter
+	FilterField = filter.FilterField
+)
 
 // ContentType 定义内容类型
 type ContentType string
@@ -12,6 +23,7 @@ const (
 	ContentTypeText  ContentType = "Text"
 	ContentTypeImage ContentType = "Image"
 	ContentTypeAudio ContentType = "Audio"
+	ContentTypeVideo ContentType = "Video"
 
 	ContentTypeMultipart         ContentType = "MultiPart"
 	ContentTypeMultipartVariable ContentType = "multi_part_variable"
@@ -26,14 +38,41 @@ type Image struct {
 	StorageProvider *StorageProvider `json:"storage_provider,omitempty"`
 }
 
+type Video struct {
+	Name            *string          `json:"name,omitempty"`
+	URL             *string          `json:"url,omitempty"`
+	URI             *string          `json:"uri,omitempty"`
+	ThumbURL        *string          `json:"thumb_url,omitempty"`
+	StorageProvider *StorageProvider `json:"storage_provider,omitempty"`
+}
+
 // Content 内容结构体
 type Content struct {
-	ContentType *ContentType        `json:"content_type,omitempty"`
-	Format      *FieldDisplayFormat `json:"format,omitempty"` // 假设 datasetv2.FieldDisplayFormat 为 interface{}
-	Text        *string             `json:"text,omitempty"`
-	Image       *Image              `json:"image,omitempty"`
-	MultiPart   []*Content          `json:"multi_part,omitempty"`
-	Audio       *Audio              `json:"audio,omitempty"`
+	ContentType      *ContentType        `json:"content_type,omitempty"`
+	Format           *FieldDisplayFormat `json:"format,omitempty"` // 假设 datasetv2.FieldDisplayFormat 为 interface{}
+	Text             *string             `json:"text,omitempty"`
+	Image            *Image              `json:"image,omitempty"`
+	MultiPart        []*Content          `json:"multi_part,omitempty"`
+	Audio            *Audio              `json:"audio,omitempty"`
+	Video            *Video              `json:"video,omitempty"`
+	ContentOmitted   *bool               `json:"content_omitted,omitempty"`
+	FullContent      *ObjectStorage      `json:"full_content,omitempty"`       // 被省略数据的完整信息，批量返回时会签发相应的 url，用户可以点击下载. 同时支持通过该字段传入已经上传好的超长数据(dataOmitted 为 true 时生效)
+	FullContentBytes *int32              `json:"full_content_bytes,omitempty"` // 超长数据完整内容的大小，单位 byte
+}
+
+func (c *Content) IsContentOmitted() bool {
+	if c == nil || !gptr.Indirect(c.ContentOmitted) {
+		return false
+	}
+	switch gptr.Indirect(c.ContentType) {
+	case ContentTypeText:
+		if b := int(gptr.Indirect(c.FullContentBytes)); b > 0 && b == len(gptr.Indirect(c.Text)) {
+			return false
+		}
+		return true
+	default:
+		return false
+	}
 }
 
 // GetText 获取内容文本
@@ -49,6 +88,13 @@ func (c *Content) SetText(text string) {
 	if c != nil {
 		c.Text = &text
 	}
+}
+
+func (c *Content) TextBytes() int {
+	if c == nil || c.Text == nil {
+		return 0
+	}
+	return len(*c.Text)
 }
 
 // GetContentType 获取内容类型
@@ -67,14 +113,18 @@ func (c *Content) SetContentType(contentType ContentType) {
 }
 
 type Audio struct {
-	Format *string `json:"format,omitempty"`
-	URL    *string `json:"url,omitempty"`
+	Format          *string          `json:"format,omitempty"`
+	URL             *string          `json:"url,omitempty"`
+	Name            *string          `json:"name,omitempty"`
+	URI             *string          `json:"uri,omitempty"`
+	StorageProvider *StorageProvider `json:"storage_provider,omitempty"`
 }
 
 // OrderBy 排序结构体
 type OrderBy struct {
-	Field *string `json:"field,omitempty"`
-	IsAsc *bool   `json:"is_asc,omitempty"`
+	Field      *string `json:"field,omitempty"`
+	IsAsc      *bool   `json:"is_asc,omitempty"`
+	IsFieldKey *bool   `json:"is_field_key,omitempty"`
 }
 
 const (
@@ -114,9 +164,11 @@ type VariableVal struct {
 
 // ArgsSchema 参数模式结构体
 type ArgsSchema struct {
-	Key                 *string       `json:"key,omitempty"`
-	SupportContentTypes []ContentType `json:"support_content_types,omitempty"`
-	JsonSchema          *string       `json:"json_schema,omitempty"`
+	Key                  *string       `json:"key,omitempty"`
+	SupportContentTypes  []ContentType `json:"support_content_types,omitempty"`
+	JsonSchema           *string       `json:"json_schema,omitempty"`
+	DefaultValue         *Content      `json:"default_value,omitempty"`
+	OperationInstruction *string       `json:"operation_instruction,omitempty"` // 操作说明
 }
 
 // UserInfo 用户信息结构体
@@ -242,16 +294,26 @@ type FunctionCall struct {
 }
 
 type ModelConfig struct {
-	ModelID     int64          `json:"model_id"`
-	ModelName   string         `json:"model_name"`
-	MaxTokens   *int32         `json:"max_tokens,omitempty"`
-	Temperature *float64       `json:"temperature,omitempty"`
-	TopP        *float64       `json:"top_p,omitempty"`
-	ToolChoice  ToolChoiceType `json:"tool_choice" jsonschema:"-"`
+	ModelID        *int64         `json:"model_id"`
+	ModelName      string         `json:"model_name"`
+	MaxTokens      *int32         `json:"max_tokens,omitempty"`
+	Temperature    *float64       `json:"temperature,omitempty"`
+	TopP           *float64       `json:"top_p,omitempty"`
+	ToolChoice     ToolChoiceType `json:"tool_choice" jsonschema:"-"`
+	Protocol       *string        `json:"protocol,omitempty"`
+	Identification *string        `json:"identification,omitempty"`
+	PresetModel    *bool          `json:"preset_model,omitempty"`
 
 	ProviderModelID *string `json:"provider_model_id,omitempty" jsonschema:"-"`
 
 	JSONExt *string `json:"json_ext,omitempty"`
+}
+
+func (m *ModelConfig) GetModelID() int64 {
+	if m != nil && m.ModelID != nil {
+		return *m.ModelID
+	}
+	return 0
 }
 
 type Reply struct {
@@ -299,11 +361,12 @@ const (
 type StorageProvider int64
 
 const (
-	StorageProvider_TOS    StorageProvider = 1
-	StorageProvider_VETOS  StorageProvider = 2
-	StorageProvider_HDFS   StorageProvider = 3
-	StorageProvider_ImageX StorageProvider = 4
-	StorageProvider_S3     StorageProvider = 5
+	StorageProvider_TOS         StorageProvider = 1
+	StorageProvider_VETOS       StorageProvider = 2
+	StorageProvider_HDFS        StorageProvider = 3
+	StorageProvider_ImageX      StorageProvider = 4
+	StorageProvider_S3          StorageProvider = 5
+	StorageProvider_ExternalUrl StorageProvider = 6
 	/* 后端内部使用 */
 	StorageProvider_Abase   StorageProvider = 100
 	StorageProvider_RDS     StorageProvider = 101
@@ -328,6 +391,8 @@ func (p StorageProvider) String() string {
 		return "RDS"
 	case StorageProvider_LocalFS:
 		return "LocalFS"
+	case StorageProvider_ExternalUrl:
+		return "ExternalUrl"
 	}
 	return "<UNSET>"
 }
@@ -350,8 +415,73 @@ func StorageProviderFromString(s string) (StorageProvider, error) {
 		return StorageProvider_RDS, nil
 	case "LocalFS":
 		return StorageProvider_LocalFS, nil
+	case "ExternalUrl":
+		return StorageProvider_ExternalUrl, nil
 	}
 	return StorageProvider(0), fmt.Errorf("not a valid StorageProvider string")
 }
 
 func StorageProviderPtr(v StorageProvider) *StorageProvider { return &v }
+
+type SystemMaintainerConf struct {
+	UserIDs []string `json:"user_ids" mapstructure:"user_ids"`
+}
+
+type ObjectStorage struct {
+	Provider *StorageProvider `json:"provider,omitempty"`
+	Name     *string          `json:"name,omitempty"`
+	URI      *string          `json:"uri,omitempty"`
+	URL      *string          `json:"url,omitempty"`
+	ThumbURL *string          `json:"thumb_url,omitempty"`
+}
+
+type RateLimit struct {
+	Rate   *int32         `json:"rate,omitempty"`
+	Burst  *int32         `json:"burst,omitempty"`
+	Period *time.Duration `json:"period,omitempty"`
+}
+
+type FileFormat int64
+
+const (
+	FileFormat_JSONL   FileFormat = 1
+	FileFormat_Parquet FileFormat = 2
+	FileFormat_CSV     FileFormat = 3
+	FileFormat_XLSX    FileFormat = 4
+	/*[100, 200) 压缩格式*/
+	FileFormat_ZIP FileFormat = 100
+)
+
+func (p FileFormat) String() string {
+	switch p {
+	case FileFormat_JSONL:
+		return "JSONL"
+	case FileFormat_Parquet:
+		return "Parquet"
+	case FileFormat_CSV:
+		return "CSV"
+	case FileFormat_XLSX:
+		return "XLSX"
+	case FileFormat_ZIP:
+		return "ZIP"
+	}
+	return "<UNSET>"
+}
+
+type RuntimeParam struct {
+	JSONValue *string `json:"json_value,omitempty"`
+	JSONDemo  *string `json:"json_demo,omitempty"`
+}
+
+type AgentType string
+
+const AgentType_Vibe AgentType = "vibe"
+
+type AgentConfig struct {
+	AgentType AgentType `json:"agent_type,omitempty"`
+}
+
+type SkillConfig struct {
+	SkillID *int64  `json:"skill_id,omitempty"` // skill id
+	Version *string `json:"version,omitempty"`  // skill version
+}

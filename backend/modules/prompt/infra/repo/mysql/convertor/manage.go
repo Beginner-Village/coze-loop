@@ -71,6 +71,7 @@ func BasicPO2DO(promptPO *model.PromptBasic) *entity.PromptBasic {
 		return nil
 	}
 	return &entity.PromptBasic{
+		PromptType:        PromptTypePO2DO(promptPO.PromptType),
 		DisplayName:       promptPO.Name,
 		Description:       promptPO.Description,
 		LatestVersion:     promptPO.LatestVersion,
@@ -79,6 +80,7 @@ func BasicPO2DO(promptPO *model.PromptBasic) *entity.PromptBasic {
 		CreatedAt:         promptPO.CreatedAt,
 		UpdatedAt:         promptPO.UpdatedAt,
 		LatestCommittedAt: promptPO.LatestCommitTime,
+		SecurityLevel:     entity.SecurityLevel(promptPO.SecurityLevel),
 	}
 }
 
@@ -147,6 +149,8 @@ func PromptDO2BasicPO(do *entity.Prompt) *model.PromptBasic {
 		LatestVersion: do.PromptBasic.LatestVersion,
 		CreatedAt:     do.PromptBasic.CreatedAt,
 		UpdatedAt:     do.PromptBasic.UpdatedAt,
+		PromptType:    PromptTypeDO2PO(do.PromptBasic.PromptType),
+		SecurityLevel: string(do.PromptBasic.SecurityLevel),
 	}
 }
 
@@ -180,6 +184,9 @@ func PromptDO2CommitPO(do *entity.Prompt) *model.PromptCommit {
 			if do.PromptCommit.PromptDetail.ToolCallConfig != nil {
 				po.ToolCallConfig = ptr.Of(json.Jsonify(do.PromptCommit.PromptDetail.ToolCallConfig))
 			}
+			if do.PromptCommit.PromptDetail.McpConfig != nil {
+				po.McpConfig = ptr.Of(json.Jsonify(do.PromptCommit.PromptDetail.McpConfig))
+			}
 			if do.PromptCommit.PromptDetail.PromptTemplate != nil {
 				po.TemplateType = ptr.Of(string(do.PromptCommit.PromptDetail.PromptTemplate.TemplateType))
 				if do.PromptCommit.PromptDetail.PromptTemplate.Messages != nil {
@@ -188,6 +195,11 @@ func PromptDO2CommitPO(do *entity.Prompt) *model.PromptCommit {
 				if do.PromptCommit.PromptDetail.PromptTemplate.VariableDefs != nil {
 					po.VariableDefs = ptr.Of(json.Jsonify(do.PromptCommit.PromptDetail.PromptTemplate.VariableDefs))
 				}
+				if do.PromptCommit.PromptDetail.PromptTemplate.Metadata != nil {
+					po.Metadata = ptr.Of(json.Jsonify(do.PromptCommit.PromptDetail.PromptTemplate.Metadata))
+				}
+				// 设置has_snippets标志
+				po.HasSnippets = do.PromptCommit.PromptDetail.PromptTemplate.HasSnippets
 			}
 			// 序列化ExtInfos到ExtInfo字段
 			if do.PromptCommit.PromptDetail.ExtInfos != nil {
@@ -219,6 +231,10 @@ func PromptDO2DraftPO(promptDO *entity.Prompt) *model.PromptUserDraft {
 				if detailDO.PromptTemplate.VariableDefs != nil {
 					po.VariableDefs = ptr.Of(json.Jsonify(detailDO.PromptTemplate.VariableDefs))
 				}
+				if detailDO.PromptTemplate.Metadata != nil {
+					po.Metadata = ptr.Of(json.Jsonify(detailDO.PromptTemplate.Metadata))
+				}
+				po.HasSnippets = detailDO.PromptTemplate.HasSnippets
 			}
 			if detailDO.ModelConfig != nil {
 				po.ModelConfig = ptr.Of(json.Jsonify(detailDO.ModelConfig))
@@ -228,6 +244,9 @@ func PromptDO2DraftPO(promptDO *entity.Prompt) *model.PromptUserDraft {
 			}
 			if detailDO.ToolCallConfig != nil {
 				po.ToolCallConfig = ptr.Of(json.Jsonify(detailDO.ToolCallConfig))
+			}
+			if detailDO.McpConfig != nil {
+				po.McpConfig = ptr.Of(json.Jsonify(detailDO.McpConfig))
 			}
 			// 序列化ExtInfos到ExtInfo字段
 			if detailDO.ExtInfos != nil {
@@ -269,10 +288,13 @@ func PromptUserDraftPO2PromptDetailDO(draftPO *model.PromptUserDraft) *entity.Pr
 			Messages:     UnmarshalMessageDOs(draftPO.Messages),
 			VariableDefs: UnmarshalVariableDefDOs(draftPO.VariableDefs),
 			TemplateType: UnmarshalTemplateType(draftPO.TemplateType),
+			Metadata:     UnmarshalMetadata(draftPO.Metadata),
+			HasSnippets:  draftPO.HasSnippets,
 		},
 		Tools:          UnmarshalToolDOs(draftPO.Tools),
 		ToolCallConfig: UnmarshalToolCallConfig(draftPO.ToolCallConfig),
 		ModelConfig:    UnmarshalModelConfig(draftPO.ModelConfig),
+		McpConfig:      UnmarshalMcpConfig(draftPO.McpConfig),
 		ExtInfos:       UnmarshalExtInfos(draftPO.ExtInfo),
 	}
 }
@@ -286,10 +308,13 @@ func PromptCommitPO2PromptDetailDO(commitPO *model.PromptCommit) *entity.PromptD
 			Messages:     UnmarshalMessageDOs(commitPO.Messages),
 			VariableDefs: UnmarshalVariableDefDOs(commitPO.VariableDefs),
 			TemplateType: UnmarshalTemplateType(commitPO.TemplateType),
+			Metadata:     UnmarshalMetadata(commitPO.Metadata),
+			HasSnippets:  commitPO.HasSnippets,
 		},
 		Tools:          UnmarshalToolDOs(commitPO.Tools),
 		ToolCallConfig: UnmarshalToolCallConfig(commitPO.ToolCallConfig),
 		ModelConfig:    UnmarshalModelConfig(commitPO.ModelConfig),
+		McpConfig:      UnmarshalMcpConfig(commitPO.McpConfig),
 		ExtInfos:       UnmarshalExtInfos(commitPO.ExtInfo),
 	}
 }
@@ -346,6 +371,15 @@ func UnmarshalToolDOs(text *string) []*entity.Tool {
 	return tools
 }
 
+func UnmarshalMetadata(text *string) map[string]string {
+	if text == nil {
+		return nil
+	}
+	metadata := make(map[string]string)
+	_ = json.Unmarshal([]byte(*text), &metadata)
+	return metadata
+}
+
 func UnmarshalExtInfos(text *string) map[string]string {
 	if text == nil {
 		return nil
@@ -355,10 +389,41 @@ func UnmarshalExtInfos(text *string) map[string]string {
 	return extInfos
 }
 
+func UnmarshalMcpConfig(text *string) *entity.McpConfig {
+	if text == nil {
+		return nil
+	}
+	mcpConfig := &entity.McpConfig{}
+	_ = json.Unmarshal([]byte(*text), &mcpConfig)
+	return mcpConfig
+}
+
 func UnmarshalBool(val int32) bool {
 	return val != 0
 }
 
 func MarshalBool(val bool) int32 {
 	return int32(lo.Ternary(val, 1, 0))
+}
+
+func PromptTypePO2DO(po string) entity.PromptType {
+	switch po {
+	case string(entity.PromptTypeSnippet):
+		return entity.PromptTypeSnippet
+	case string(entity.PromptTypeNormal):
+		return entity.PromptTypeNormal
+	default:
+		return entity.PromptTypeNormal
+	}
+}
+
+func PromptTypeDO2PO(do entity.PromptType) string {
+	switch do {
+	case entity.PromptTypeSnippet:
+		return string(entity.PromptTypeSnippet)
+	case entity.PromptTypeNormal:
+		return string(entity.PromptTypeNormal)
+	default:
+		return string(entity.PromptTypeNormal)
+	}
 }

@@ -9,7 +9,7 @@ import (
 
 	"github.com/bytedance/gg/gptr"
 
-	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/data/dataset"
+	datasetdto "github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/data/dataset"
 	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/data/dataset/datasetservice"
 	domain_dataset "github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/data/domain/dataset"
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/domain/component/rpc"
@@ -38,7 +38,7 @@ func (a *DatasetRPCAdapter) CreateDataset(ctx context.Context, param *rpc.Create
 			return 0, err
 		}
 	}
-	resp, err := a.client.CreateDataset(ctx, &dataset.CreateDatasetRequest{
+	resp, err := a.client.CreateDataset(ctx, &datasetdto.CreateDatasetRequest{
 		WorkspaceID: param.SpaceID,
 		Name:        param.Name,
 		AppID:       &param.EvaluationSetItems.AppID,
@@ -63,8 +63,60 @@ func (a *DatasetRPCAdapter) CreateDataset(ctx context.Context, param *rpc.Create
 	return resp.GetDatasetID(), nil
 }
 
-func (a *DatasetRPCAdapter) UpdateDataset(ctx context.Context, spaceID int64, evaluationSetID int64, name *string, desc *string) (err error) {
-	resp, err := a.client.UpdateDataset(ctx, &dataset.UpdateDatasetRequest{
+func (a *DatasetRPCAdapter) CreateDatasetWithImport(ctx context.Context, param *rpc.CreateDatasetWithImportParam) (id, jobID int64, err error) {
+	return 0, 0, nil
+}
+
+func (a *DatasetRPCAdapter) ImportDataset(ctx context.Context, param *rpc.ImportDatasetParam) (jobID int64, err error) {
+	req := &datasetdto.ImportDatasetRequest{
+		WorkspaceID:   gptr.Of(param.WorkspaceID),
+		DatasetID:     param.DatasetID,
+		File:          convert2ThriftDatasetIOFile(ctx, param.File),
+		FieldMappings: convert2ThriftFieldMappings(ctx, param.FieldMappings),
+		Option:        convert2ThriftDatasetIOJobOption(ctx, param.Option),
+	}
+	resp, err := a.client.ImportDataset(ctx, req)
+	if err != nil {
+		return 0, err
+	}
+	if resp == nil {
+		return 0, errorx.NewByCode(errno.CommonRPCErrorCode)
+	}
+	if resp.BaseResp != nil && resp.BaseResp.StatusCode != 0 {
+		return 0, errorx.NewByCode(resp.BaseResp.StatusCode, errorx.WithExtraMsg(resp.BaseResp.StatusMessage))
+	}
+	return gptr.Indirect(resp.JobID), nil
+}
+
+func (a *DatasetRPCAdapter) GetDatasetIOJob(ctx context.Context, spaceID, jobID int64) (job *entity.DatasetIOJob, err error) {
+	req := &datasetdto.GetDatasetIOJobRequest{
+		WorkspaceID: gptr.Of(spaceID),
+		JobID:       jobID,
+	}
+	resp, err := a.client.GetDatasetIOJob(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return nil, errorx.NewByCode(errno.CommonRPCErrorCode)
+	}
+	if resp.BaseResp != nil && resp.BaseResp.StatusCode != 0 {
+		return nil, errorx.NewByCode(resp.BaseResp.StatusCode, errorx.WithExtraMsg(resp.BaseResp.StatusMessage))
+	}
+	return convert2DatasetIOJob(ctx, resp.Job), nil
+}
+
+func (a *DatasetRPCAdapter) ParseImportSourceFile(ctx context.Context, param *entity.ParseImportSourceFileParam) (*entity.ParseImportSourceFileResult, error) {
+	return nil, errorx.NewByCode(errno.CommonInternalErrorCode, errorx.WithExtraMsg("ParseImportSourceFile not implemented"))
+}
+
+func (a *DatasetRPCAdapter) ValidateMultiPartData(ctx context.Context, spaceID int64, previewData []string, storeOption *entity.MultiModalStoreOption) ([]*entity.UploadAttachmentDetail, error) {
+	// notice: only implement in commercial
+	return nil, errorx.NewByCode(errno.CommonInternalErrorCode, errorx.WithExtraMsg("ValidateMultiPartData not implemented"))
+}
+
+func (a *DatasetRPCAdapter) UpdateDataset(ctx context.Context, spaceID, evaluationSetID int64, name, desc *string) (err error) {
+	resp, err := a.client.UpdateDataset(ctx, &datasetdto.UpdateDatasetRequest{
 		WorkspaceID: &spaceID,
 		DatasetID:   evaluationSetID,
 		Name:        name,
@@ -82,8 +134,8 @@ func (a *DatasetRPCAdapter) UpdateDataset(ctx context.Context, spaceID int64, ev
 	return nil
 }
 
-func (a *DatasetRPCAdapter) DeleteDataset(ctx context.Context, spaceID int64, evaluationSetID int64) (err error) {
-	resp, err := a.client.DeleteDataset(ctx, &dataset.DeleteDatasetRequest{
+func (a *DatasetRPCAdapter) DeleteDataset(ctx context.Context, spaceID, evaluationSetID int64) (err error) {
+	resp, err := a.client.DeleteDataset(ctx, &datasetdto.DeleteDatasetRequest{
 		WorkspaceID: &spaceID,
 		DatasetID:   evaluationSetID,
 	})
@@ -100,7 +152,7 @@ func (a *DatasetRPCAdapter) DeleteDataset(ctx context.Context, spaceID int64, ev
 }
 
 func (a *DatasetRPCAdapter) GetDataset(ctx context.Context, spaceID *int64, evaluationSetID int64, deletedAt *bool) (set *entity.EvaluationSet, err error) {
-	resp, err := a.client.GetDataset(ctx, &dataset.GetDatasetRequest{
+	resp, err := a.client.GetDataset(ctx, &datasetdto.GetDatasetRequest{
 		WorkspaceID: spaceID,
 		DatasetID:   evaluationSetID,
 		WithDeleted: deletedAt,
@@ -118,7 +170,7 @@ func (a *DatasetRPCAdapter) GetDataset(ctx context.Context, spaceID *int64, eval
 }
 
 func (a *DatasetRPCAdapter) BatchGetDatasets(ctx context.Context, spaceID *int64, evaluationSetID []int64, deletedAt *bool) (sets []*entity.EvaluationSet, err error) {
-	resp, err := a.client.BatchGetDatasets(ctx, &dataset.BatchGetDatasetsRequest{
+	resp, err := a.client.BatchGetDatasets(ctx, &datasetdto.BatchGetDatasetsRequest{
 		WorkspaceID: gptr.Indirect(spaceID),
 		DatasetIds:  evaluationSetID,
 		WithDeleted: deletedAt,
@@ -136,7 +188,7 @@ func (a *DatasetRPCAdapter) BatchGetDatasets(ctx context.Context, spaceID *int64
 }
 
 func (a *DatasetRPCAdapter) ListDatasets(ctx context.Context, param *rpc.ListDatasetsParam) (sets []*entity.EvaluationSet, total *int64, nextPageToken *string, err error) {
-	resp, err := a.client.ListDatasets(ctx, &dataset.ListDatasetsRequest{
+	resp, err := a.client.ListDatasets(ctx, &datasetdto.ListDatasetsRequest{
 		WorkspaceID: param.SpaceID,
 		DatasetIds:  param.EvaluationSetIDs,
 		Name:        param.Name,
@@ -159,8 +211,8 @@ func (a *DatasetRPCAdapter) ListDatasets(ctx context.Context, param *rpc.ListDat
 	return convert2EvaluationSets(ctx, resp.Datasets), resp.Total, resp.NextPageToken, nil
 }
 
-func (a *DatasetRPCAdapter) CreateDatasetVersion(ctx context.Context, spaceID int64, evaluationSetID int64, version string, desc *string) (id int64, err error) {
-	resp, err := a.client.CreateDatasetVersion(ctx, &dataset.CreateDatasetVersionRequest{
+func (a *DatasetRPCAdapter) CreateDatasetVersion(ctx context.Context, spaceID, evaluationSetID int64, version string, desc *string) (id int64, err error) {
+	resp, err := a.client.CreateDatasetVersion(ctx, &datasetdto.CreateDatasetVersionRequest{
 		WorkspaceID: &spaceID,
 		DatasetID:   evaluationSetID,
 		Version:     version,
@@ -178,8 +230,8 @@ func (a *DatasetRPCAdapter) CreateDatasetVersion(ctx context.Context, spaceID in
 	return resp.GetID(), nil
 }
 
-func (a *DatasetRPCAdapter) GetDatasetVersion(ctx context.Context, spaceID int64, versionID int64, deletedAt *bool) (version *entity.EvaluationSetVersion, set *entity.EvaluationSet, err error) {
-	resp, err := a.client.GetDatasetVersion(ctx, &dataset.GetDatasetVersionRequest{
+func (a *DatasetRPCAdapter) GetDatasetVersion(ctx context.Context, spaceID, versionID int64, deletedAt *bool) (version *entity.EvaluationSetVersion, set *entity.EvaluationSet, err error) {
+	resp, err := a.client.GetDatasetVersion(ctx, &datasetdto.GetDatasetVersionRequest{
 		WorkspaceID: &spaceID,
 		VersionID:   versionID,
 		WithDeleted: deletedAt,
@@ -203,7 +255,7 @@ func (a *DatasetRPCAdapter) GetDatasetVersion(ctx context.Context, spaceID int64
 }
 
 func (a *DatasetRPCAdapter) BatchGetVersionedDatasets(ctx context.Context, spaceID *int64, versionIDs []int64, deletedAt *bool) (sets []*rpc.BatchGetVersionedDatasetsResult, err error) {
-	resp, err := a.client.BatchGetDatasetVersions(ctx, &dataset.BatchGetDatasetVersionsRequest{
+	resp, err := a.client.BatchGetDatasetVersions(ctx, &datasetdto.BatchGetDatasetVersionsRequest{
 		WorkspaceID: spaceID,
 		VersionIds:  versionIDs,
 		WithDeleted: deletedAt,
@@ -233,14 +285,14 @@ func (a *DatasetRPCAdapter) BatchGetVersionedDatasets(ctx context.Context, space
 	return sets, nil
 }
 
-func (a *DatasetRPCAdapter) ListDatasetVersions(ctx context.Context, spaceID int64, evaluationSetID int64, pageToken *string, pageNumber, pageSize *int32, versionLike *string) (version []*entity.EvaluationSetVersion, total *int64, nextPageToken *string, err error) {
-	resp, err := a.client.ListDatasetVersions(ctx, &dataset.ListDatasetVersionsRequest{
+func (a *DatasetRPCAdapter) ListDatasetVersions(ctx context.Context, spaceID, evaluationSetID int64, pageToken *string, pageNumber, pageSize *int32, versionLike *string, versions []string) (version []*entity.EvaluationSetVersion, total *int64, nextPageToken *string, err error) {
+	resp, err := a.client.ListDatasetVersions(ctx, &datasetdto.ListDatasetVersionsRequest{
 		WorkspaceID: &spaceID,
 		DatasetID:   evaluationSetID,
 		PageToken:   pageToken,
 		PageSize:    pageSize,
 		PageNumber:  pageNumber,
-		VersionLike: versionLike,
+		VersionLike: versionLike, // 模糊搜索
 	})
 	if err != nil {
 		return nil, nil, nil, err
@@ -254,12 +306,12 @@ func (a *DatasetRPCAdapter) ListDatasetVersions(ctx context.Context, spaceID int
 	return convert2EvaluationSetVersions(ctx, resp.Versions), resp.Total, resp.NextPageToken, nil
 }
 
-func (a *DatasetRPCAdapter) UpdateDatasetSchema(ctx context.Context, spaceID int64, evaluationSetID int64, schemas []*entity.FieldSchema) (err error) {
+func (a *DatasetRPCAdapter) UpdateDatasetSchema(ctx context.Context, spaceID, evaluationSetID int64, schemas []*entity.FieldSchema) (err error) {
 	fieldSchemas, err := convert2DatasetFieldSchemas(ctx, schemas)
 	if err != nil {
 		return err
 	}
-	resp, err := a.client.UpdateDatasetSchema(ctx, &dataset.UpdateDatasetSchemaRequest{
+	resp, err := a.client.UpdateDatasetSchema(ctx, &datasetdto.UpdateDatasetSchemaRequest{
 		WorkspaceID: &spaceID,
 		DatasetID:   evaluationSetID,
 		Fields:      fieldSchemas,
@@ -276,41 +328,51 @@ func (a *DatasetRPCAdapter) UpdateDatasetSchema(ctx context.Context, spaceID int
 	return nil
 }
 
-func (a *DatasetRPCAdapter) BatchCreateDatasetItems(ctx context.Context, param *rpc.BatchCreateDatasetItemsParam) (idMap map[int64]int64, errorGroup []*entity.ItemErrorGroup, err error) {
+func (a *DatasetRPCAdapter) BatchCreateDatasetItems(ctx context.Context, param *rpc.BatchCreateDatasetItemsParam) (idMap map[int64]int64, errorGroup []*entity.ItemErrorGroup, itemOutputs []*entity.DatasetItemOutput, err error) {
 	datasetItems, err := convert2DatasetItems(ctx, param.Items)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	resp, err := a.client.BatchCreateDatasetItems(ctx, &dataset.BatchCreateDatasetItemsRequest{
-		WorkspaceID:      &param.SpaceID,
-		DatasetID:        param.EvaluationSetID,
-		Items:            datasetItems,
-		SkipInvalidItems: param.SkipInvalidItems,
-		AllowPartialAdd:  param.AllowPartialAdd,
+	resp, err := a.client.BatchCreateDatasetItems(ctx, &datasetdto.BatchCreateDatasetItemsRequest{
+		WorkspaceID:       &param.SpaceID,
+		DatasetID:         param.EvaluationSetID,
+		Items:             datasetItems,
+		SkipInvalidItems:  param.SkipInvalidItems,
+		AllowPartialAdd:   param.AllowPartialAdd,
+		FieldWriteOptions: convert2DatasetFieldWriteOptions(ctx, param.FieldWriteOptions),
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if resp == nil {
-		return nil, nil, errorx.NewByCode(errno.CommonRPCErrorCode)
+		return nil, nil, nil, errorx.NewByCode(errno.CommonRPCErrorCode)
 	}
 	if resp.BaseResp != nil && resp.BaseResp.StatusCode != 0 {
 		logs.CtxInfo(ctx, "BatchCreateDatasetItems resp: %v", json.Jsonify(resp))
-		return nil, nil, errorx.NewByCode(resp.BaseResp.StatusCode, errorx.WithExtraMsg(resp.BaseResp.StatusMessage))
+		return nil, nil, nil, errorx.NewByCode(resp.BaseResp.StatusCode, errorx.WithExtraMsg(resp.BaseResp.StatusMessage))
 	}
-	return resp.GetAddedItems(), convert2EvaluationSetErrorGroups(ctx, resp.GetErrors()), nil
+	return resp.GetAddedItems(), convert2EvaluationSetErrorGroups(ctx, resp.GetErrors()), nil, nil
 }
 
-func (a *DatasetRPCAdapter) UpdateDatasetItem(ctx context.Context, spaceID int64, evaluationSetID int64, itemID int64, turns []*entity.Turn) (err error) {
+func (a *DatasetRPCAdapter) BatchUpdateDatasetItems(ctx context.Context, param *rpc.BatchUpdateDatasetItemsParam) (errorGroup []*entity.ItemErrorGroup, itemOutputs []*entity.DatasetItemOutput, err error) {
+	if param == nil {
+		return nil, nil, errorx.NewByCode(errno.CommonInvalidParamCode)
+	}
+	// TODO: call underlying dataset service and map response
+	return nil, nil, errorx.NewByCode(errno.CommonInternalErrorCode, errorx.WithExtraMsg("BatchUpdateDatasetItems not implemented"))
+}
+
+func (a *DatasetRPCAdapter) UpdateDatasetItem(ctx context.Context, spaceID, evaluationSetID, itemID int64, turns []*entity.Turn, fieldWriteOptions []*entity.FieldWriteOption) (err error) {
 	data, err := convert2DatasetData(ctx, turns)
 	if err != nil {
 		return err
 	}
-	resp, err := a.client.UpdateDatasetItem(ctx, &dataset.UpdateDatasetItemRequest{
-		WorkspaceID: &spaceID,
-		DatasetID:   evaluationSetID,
-		ItemID:      itemID,
-		Data:        data,
+	resp, err := a.client.UpdateDatasetItem(ctx, &datasetdto.UpdateDatasetItemRequest{
+		WorkspaceID:       &spaceID,
+		DatasetID:         evaluationSetID,
+		ItemID:            itemID,
+		Data:              data,
+		FieldWriteOptions: convert2DatasetFieldWriteOptions(ctx, fieldWriteOptions),
 	})
 	if err != nil {
 		return err
@@ -324,8 +386,8 @@ func (a *DatasetRPCAdapter) UpdateDatasetItem(ctx context.Context, spaceID int64
 	return nil
 }
 
-func (a *DatasetRPCAdapter) BatchDeleteDatasetItems(ctx context.Context, spaceID int64, evaluationSetID int64, itemIDs []int64) (err error) {
-	resp, err := a.client.BatchDeleteDatasetItems(ctx, &dataset.BatchDeleteDatasetItemsRequest{
+func (a *DatasetRPCAdapter) BatchDeleteDatasetItems(ctx context.Context, spaceID, evaluationSetID int64, itemIDs []int64) (err error) {
+	resp, err := a.client.BatchDeleteDatasetItems(ctx, &datasetdto.BatchDeleteDatasetItemsRequest{
 		WorkspaceID: &spaceID,
 		DatasetID:   evaluationSetID,
 		ItemIds:     itemIDs,
@@ -342,8 +404,8 @@ func (a *DatasetRPCAdapter) BatchDeleteDatasetItems(ctx context.Context, spaceID
 	return nil
 }
 
-func (a *DatasetRPCAdapter) ListDatasetItems(ctx context.Context, param *rpc.ListDatasetItemsParam) (items []*entity.EvaluationSetItem, total *int64, nextPageToken *string, err error) {
-	resp, err := a.client.ListDatasetItems(ctx, &dataset.ListDatasetItemsRequest{
+func (a *DatasetRPCAdapter) ListDatasetItems(ctx context.Context, param *rpc.ListDatasetItemsParam) (items []*entity.EvaluationSetItem, total, filterTotal *int64, nextPageToken *string, err error) {
+	resp, err := a.client.ListDatasetItems(ctx, &datasetdto.ListDatasetItemsRequest{
 		WorkspaceID: &param.SpaceID,
 		DatasetID:   param.EvaluationSetID,
 		PageNumber:  param.PageNumber,
@@ -354,19 +416,19 @@ func (a *DatasetRPCAdapter) ListDatasetItems(ctx context.Context, param *rpc.Lis
 		// ItemIDsNotIn: param.ItemIDsNotIn,
 	})
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	if resp == nil {
-		return nil, nil, nil, errorx.NewByCode(errno.CommonRPCErrorCode)
+		return nil, nil, nil, nil, errorx.NewByCode(errno.CommonRPCErrorCode)
 	}
 	if resp.BaseResp != nil && resp.BaseResp.StatusCode != 0 {
-		return nil, nil, nil, errorx.NewByCode(resp.BaseResp.StatusCode, errorx.WithExtraMsg(resp.BaseResp.StatusMessage))
+		return nil, nil, nil, nil, errorx.NewByCode(resp.BaseResp.StatusCode, errorx.WithExtraMsg(resp.BaseResp.StatusMessage))
 	}
-	return convert2EvaluationSetItems(ctx, resp.Items), resp.Total, resp.NextPageToken, nil
+	return convert2EvaluationSetItems(ctx, resp.Items), resp.Total, resp.FilterTotal, resp.NextPageToken, nil
 }
 
-func (a *DatasetRPCAdapter) ListDatasetItemsByVersion(ctx context.Context, param *rpc.ListDatasetItemsParam) (items []*entity.EvaluationSetItem, total *int64, nextPageToken *string, err error) {
-	resp, err := a.client.ListDatasetItemsByVersion(ctx, &dataset.ListDatasetItemsByVersionRequest{
+func (a *DatasetRPCAdapter) ListDatasetItemsByVersion(ctx context.Context, param *rpc.ListDatasetItemsParam) (items []*entity.EvaluationSetItem, total, filterTotal *int64, nextPageToken *string, err error) {
+	resp, err := a.client.ListDatasetItemsByVersion(ctx, &datasetdto.ListDatasetItemsByVersionRequest{
 		WorkspaceID: &param.SpaceID,
 		DatasetID:   param.EvaluationSetID,
 		VersionID:   gptr.Indirect(param.VersionID),
@@ -376,19 +438,19 @@ func (a *DatasetRPCAdapter) ListDatasetItemsByVersion(ctx context.Context, param
 		OrderBys:    convert2DatasetOrderBys(ctx, param.OrderBys),
 	})
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	if resp == nil {
-		return nil, nil, nil, errorx.NewByCode(errno.CommonRPCErrorCode)
+		return nil, nil, nil, nil, errorx.NewByCode(errno.CommonRPCErrorCode)
 	}
 	if resp.BaseResp != nil && resp.BaseResp.StatusCode != 0 {
-		return nil, nil, nil, errorx.NewByCode(resp.BaseResp.StatusCode, errorx.WithExtraMsg(resp.BaseResp.StatusMessage))
+		return nil, nil, nil, nil, errorx.NewByCode(resp.BaseResp.StatusCode, errorx.WithExtraMsg(resp.BaseResp.StatusMessage))
 	}
-	return convert2EvaluationSetItems(ctx, resp.Items), resp.Total, resp.NextPageToken, nil
+	return convert2EvaluationSetItems(ctx, resp.Items), resp.Total, resp.FilterTotal, resp.NextPageToken, nil
 }
 
 func (a *DatasetRPCAdapter) BatchGetDatasetItems(ctx context.Context, param *rpc.BatchGetDatasetItemsParam) (items []*entity.EvaluationSetItem, err error) {
-	resp, err := a.client.BatchGetDatasetItems(ctx, &dataset.BatchGetDatasetItemsRequest{
+	resp, err := a.client.BatchGetDatasetItems(ctx, &datasetdto.BatchGetDatasetItemsRequest{
 		WorkspaceID: &param.SpaceID,
 		DatasetID:   param.EvaluationSetID,
 		ItemIds:     param.ItemIDs,
@@ -406,7 +468,7 @@ func (a *DatasetRPCAdapter) BatchGetDatasetItems(ctx context.Context, param *rpc
 }
 
 func (a *DatasetRPCAdapter) BatchGetDatasetItemsByVersion(ctx context.Context, param *rpc.BatchGetDatasetItemsParam) (items []*entity.EvaluationSetItem, err error) {
-	resp, err := a.client.BatchGetDatasetItemsByVersion(ctx, &dataset.BatchGetDatasetItemsByVersionRequest{
+	resp, err := a.client.BatchGetDatasetItemsByVersion(ctx, &datasetdto.BatchGetDatasetItemsByVersionRequest{
 		WorkspaceID: &param.SpaceID,
 		DatasetID:   param.EvaluationSetID,
 		ItemIds:     param.ItemIDs,
@@ -425,13 +487,17 @@ func (a *DatasetRPCAdapter) BatchGetDatasetItemsByVersion(ctx context.Context, p
 }
 
 func (a *DatasetRPCAdapter) ClearEvaluationSetDraftItem(ctx context.Context, spaceID, evaluationSetID int64) (err error) {
-	_, err = a.client.ClearDatasetItem(ctx, &dataset.ClearDatasetItemRequest{WorkspaceID: &spaceID, DatasetID: evaluationSetID})
+	_, err = a.client.ClearDatasetItem(ctx, &datasetdto.ClearDatasetItemRequest{WorkspaceID: &spaceID, DatasetID: evaluationSetID})
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func (a *DatasetRPCAdapter) QueryItemSnapshotMappings(ctx context.Context, spaceID, datasetID int64, versionID *int64) (fieldMappings []*entity.ItemSnapshotFieldMapping, syncCkDate string, err error) {
+func (a *DatasetRPCAdapter) QueryItemSnapshotMappings(ctx context.Context, req *rpc.QueryItemSnapshotMappingRequest) (fieldMappings []*entity.ItemSnapshotFieldMapping, syncCkDate string, err error) {
 	return nil, "", nil
+}
+
+func (a *DatasetRPCAdapter) GetDatasetItemField(ctx context.Context, param *rpc.GetDatasetItemFieldParam) (fieldData *entity.FieldData, err error) {
+	return nil, nil
 }

@@ -57,14 +57,16 @@ func (p *CreateAnnotationRequest) IsValid() error {
 	if p.WorkspaceID <= int64(0) {
 		return fmt.Errorf("field WorkspaceID gt rule failed, current value: %v", p.WorkspaceID)
 	}
-	if len(p.SpanID) < int(1) {
-		return fmt.Errorf("field SpanID min_len rule failed, current value: %d", len(p.SpanID))
-	}
 	if len(p.TraceID) < int(1) {
 		return fmt.Errorf("field TraceID min_len rule failed, current value: %d", len(p.TraceID))
 	}
 	if len(p.AnnotationKey) < int(1) {
 		return fmt.Errorf("field AnnotationKey min_len rule failed, current value: %d", len(p.AnnotationKey))
+	}
+	if p.Extra != nil {
+		if err := p.Extra.IsValid(); err != nil {
+			return fmt.Errorf("field Extra not valid, %w", err)
+		}
 	}
 	if p.Base != nil {
 		if err := p.Base.IsValid(); err != nil {
@@ -85,14 +87,16 @@ func (p *DeleteAnnotationRequest) IsValid() error {
 	if p.WorkspaceID <= int64(0) {
 		return fmt.Errorf("field WorkspaceID gt rule failed, current value: %v", p.WorkspaceID)
 	}
-	if len(p.SpanID) < int(1) {
-		return fmt.Errorf("field SpanID min_len rule failed, current value: %d", len(p.SpanID))
-	}
 	if len(p.TraceID) < int(1) {
 		return fmt.Errorf("field TraceID min_len rule failed, current value: %d", len(p.TraceID))
 	}
 	if len(p.AnnotationKey) < int(1) {
 		return fmt.Errorf("field AnnotationKey min_len rule failed, current value: %d", len(p.AnnotationKey))
+	}
+	if p.Extra != nil {
+		if err := p.Extra.IsValid(); err != nil {
+			return fmt.Errorf("field Extra not valid, %w", err)
+		}
 	}
 	if p.Base != nil {
 		if err := p.Base.IsValid(); err != nil {
@@ -112,6 +116,16 @@ func (p *DeleteAnnotationResponse) IsValid() error {
 func (p *SearchTraceOApiRequest) IsValid() error {
 	if p.WorkspaceID <= int64(0) {
 		return fmt.Errorf("field WorkspaceID gt rule failed, current value: %v", p.WorkspaceID)
+	}
+	if p.Filters != nil {
+		if err := p.Filters.IsValid(); err != nil {
+			return fmt.Errorf("field Filters not valid, %w", err)
+		}
+	}
+	if p.Extra != nil {
+		if err := p.Extra.IsValid(); err != nil {
+			return fmt.Errorf("field Extra not valid, %w", err)
+		}
 	}
 	if p.Base != nil {
 		if err := p.Base.IsValid(); err != nil {
@@ -141,6 +155,45 @@ func (p *SearchTraceOApiData) IsValid() error {
 	}
 	return nil
 }
+func (p *SearchTraceTreeOApiRequest) IsValid() error {
+	if p.Filters != nil {
+		if err := p.Filters.IsValid(); err != nil {
+			return fmt.Errorf("field Filters not valid, %w", err)
+		}
+	}
+	if p.Extra != nil {
+		if err := p.Extra.IsValid(); err != nil {
+			return fmt.Errorf("field Extra not valid, %w", err)
+		}
+	}
+	if p.Base != nil {
+		if err := p.Base.IsValid(); err != nil {
+			return fmt.Errorf("field Base not valid, %w", err)
+		}
+	}
+	return nil
+}
+func (p *SearchTraceTreeOApiResponse) IsValid() error {
+	if p.Data != nil {
+		if err := p.Data.IsValid(); err != nil {
+			return fmt.Errorf("field Data not valid, %w", err)
+		}
+	}
+	if p.BaseResp != nil {
+		if err := p.BaseResp.IsValid(); err != nil {
+			return fmt.Errorf("field BaseResp not valid, %w", err)
+		}
+	}
+	return nil
+}
+func (p *SearchTraceTreeOApiData) IsValid() error {
+	if p.TracesAdvanceInfo != nil {
+		if err := p.TracesAdvanceInfo.IsValid(); err != nil {
+			return fmt.Errorf("field TracesAdvanceInfo not valid, %w", err)
+		}
+	}
+	return nil
+}
 func (p *ListSpansOApiRequest) IsValid() error {
 	if p.WorkspaceID <= int64(0) {
 		return fmt.Errorf("field WorkspaceID gt rule failed, current value: %v", p.WorkspaceID)
@@ -148,6 +201,11 @@ func (p *ListSpansOApiRequest) IsValid() error {
 	if p.Filters != nil {
 		if err := p.Filters.IsValid(); err != nil {
 			return fmt.Errorf("field Filters not valid, %w", err)
+		}
+	}
+	if p.Extra != nil {
+		if err := p.Extra.IsValid(); err != nil {
+			return fmt.Errorf("field Extra not valid, %w", err)
 		}
 	}
 	if p.Base != nil {
@@ -173,9 +231,38 @@ func (p *ListSpansOApiResponse) IsValid() error {
 func (p *ListSpansOApiData) IsValid() error {
 	return nil
 }
+func (p *ListPreSpanOApiRequest) IsValid() error {
+	if p.WorkspaceID <= int64(0) {
+		return fmt.Errorf("field WorkspaceID gt rule failed, current value: %v", p.WorkspaceID)
+	}
+	if p.Extra != nil {
+		if err := p.Extra.IsValid(); err != nil {
+			return fmt.Errorf("field Extra not valid, %w", err)
+		}
+	}
+	if p.Base != nil {
+		if err := p.Base.IsValid(); err != nil {
+			return fmt.Errorf("field Base not valid, %w", err)
+		}
+	}
+	return nil
+}
+func (p *ListPreSpanOApiResponse) IsValid() error {
+	if p.BaseResp != nil {
+		if err := p.BaseResp.IsValid(); err != nil {
+			return fmt.Errorf("field BaseResp not valid, %w", err)
+		}
+	}
+	return nil
+}
 func (p *ListTracesOApiRequest) IsValid() error {
 	if p.WorkspaceID <= int64(0) {
 		return fmt.Errorf("field WorkspaceID gt rule failed, current value: %v", p.WorkspaceID)
+	}
+	if p.Extra != nil {
+		if err := p.Extra.IsValid(); err != nil {
+			return fmt.Errorf("field Extra not valid, %w", err)
+		}
 	}
 	if p.Base != nil {
 		if err := p.Base.IsValid(); err != nil {

@@ -58,6 +58,56 @@ type PromptManageApplicationImpl struct {
 	configProvider   conf.IConfigProvider
 }
 
+func (app *PromptManageApplicationImpl) ListParentPrompt(ctx context.Context, request *manage.ListParentPromptRequest) (r *manage.ListParentPromptResponse, err error) {
+	r = manage.NewListParentPromptResponse()
+
+	// 用户验证
+	userID, ok := session.UserIDInCtx(ctx)
+	if !ok || lo.IsEmpty(userID) {
+		return r, errorx.NewByCode(prompterr.CommonInvalidParamCode, errorx.WithExtraMsg("User not found"))
+	}
+
+	// 参数验证
+	if request.GetPromptID() <= 0 {
+		return r, errorx.NewByCode(prompterr.CommonInvalidParamCode, errorx.WithExtraMsg("Prompt ID is required"))
+	}
+
+	// 权限检查
+	err = app.authRPCProvider.MCheckPromptPermission(ctx, request.GetWorkspaceID(), []int64{request.GetPromptID()}, consts.ActionLoopPromptRead)
+	if err != nil {
+		return r, err
+	}
+
+	// 调用repository层查询父prompt
+	result, err := app.manageRepo.ListParentPrompt(ctx, repo.ListParentPromptParam{
+		SubPromptID:       request.GetPromptID(),
+		SubPromptVersions: request.GetCommitVersions(),
+	})
+	if err != nil {
+		return r, err
+	}
+
+	// 转换结果
+	parentPrompts := make(map[string][]*prompt.PromptCommitVersions)
+	for version, promptCommitVersions := range result {
+		promptVersionDTOs := make([]*prompt.PromptCommitVersions, 0, len(promptCommitVersions))
+		for _, promptCommitVersion := range promptCommitVersions {
+			promptVersionDTO := &prompt.PromptCommitVersions{
+				ID:             ptr.Of(promptCommitVersion.PromptID),
+				WorkspaceID:    ptr.Of(promptCommitVersion.SpaceID),
+				PromptKey:      ptr.Of(promptCommitVersion.PromptKey),
+				PromptBasic:    convertor.PromptBasicDO2DTO(promptCommitVersion.PromptBasic),
+				CommitVersions: promptCommitVersion.CommitVersions,
+			}
+			promptVersionDTOs = append(promptVersionDTOs, promptVersionDTO)
+		}
+		parentPrompts[version] = promptVersionDTOs
+	}
+
+	r.ParentPrompts = parentPrompts
+	return r, nil
+}
+
 func (app *PromptManageApplicationImpl) CreatePrompt(ctx context.Context, request *manage.CreatePromptRequest) (r *manage.CreatePromptResponse, err error) {
 	r = manage.NewCreatePromptResponse()
 
@@ -73,15 +123,23 @@ func (app *PromptManageApplicationImpl) CreatePrompt(ctx context.Context, reques
 		return r, err
 	}
 
+	if request.PromptType == nil {
+		request.PromptType = ptr.Of(prompt.PromptTypeNormal)
+	}
+	if request.SecurityLevel == nil {
+		request.SecurityLevel = ptr.Of(prompt.SecurityLevelL3)
+	}
 	// create prompt
 	promptDTO := &prompt.Prompt{
 		WorkspaceID: request.WorkspaceID,
 		PromptKey:   request.PromptKey,
 		PromptBasic: &prompt.PromptBasic{
-			DisplayName: request.PromptName,
-			Description: request.PromptDescription,
-			CreatedBy:   ptr.Of(userID),
-			UpdatedBy:   ptr.Of(userID),
+			PromptType:    request.PromptType,
+			DisplayName:   request.PromptName,
+			Description:   request.PromptDescription,
+			CreatedBy:     ptr.Of(userID),
+			UpdatedBy:     ptr.Of(userID),
+			SecurityLevel: request.SecurityLevel,
 		},
 		PromptDraft: func() *prompt.PromptDraft {
 			if request.DraftDetail == nil {
@@ -104,8 +162,9 @@ func (app *PromptManageApplicationImpl) CreatePrompt(ctx context.Context, reques
 		return r, err
 	}
 
-	// create prompt
-	promptID, err := app.manageRepo.CreatePrompt(ctx, promptDO)
+	// create prompt using domain service with snippet validation
+	var promptID int64
+	promptID, err = app.promptService.CreatePrompt(ctx, promptDO)
 	if err != nil {
 		return r, err
 	}
@@ -146,10 +205,20 @@ func (app *PromptManageApplicationImpl) ClonePrompt(ctx context.Context, request
 	// clone prompt
 	clonedPromptDO := promptDO.CloneDetail()
 	clonedPromptDO.PromptKey = request.GetClonedPromptKey()
+
+	promptType := entity.PromptTypeNormal
+	securityLevel := entity.SecurityLevelL3
+	if promptDO.PromptBasic != nil && promptDO.PromptBasic.PromptType != "" {
+		promptType = promptDO.PromptBasic.PromptType
+		securityLevel = promptDO.PromptBasic.SecurityLevel
+	}
+
 	clonedPromptDO.PromptBasic = &entity.PromptBasic{
-		DisplayName: request.GetClonedPromptName(),
-		Description: request.GetClonedPromptDescription(),
-		CreatedBy:   userID,
+		DisplayName:   request.GetClonedPromptName(),
+		Description:   request.GetClonedPromptDescription(),
+		CreatedBy:     userID,
+		PromptType:    promptType,
+		SecurityLevel: securityLevel,
 	}
 	clonedPromptDO.PromptDraft = &entity.PromptDraft{
 		DraftInfo: &entity.DraftInfo{
@@ -159,7 +228,7 @@ func (app *PromptManageApplicationImpl) ClonePrompt(ctx context.Context, request
 		PromptDetail: clonedPromptDO.PromptCommit.PromptDetail,
 	}
 	clonedPromptDO.PromptCommit = nil
-	clonedPromptID, err := app.manageRepo.CreatePrompt(ctx, clonedPromptDO)
+	clonedPromptID, err := app.promptService.CreatePrompt(ctx, clonedPromptDO)
 	if err != nil {
 		return r, err
 	}
@@ -183,6 +252,9 @@ func (app *PromptManageApplicationImpl) DeletePrompt(ctx context.Context, reques
 	promptDO, err := app.manageRepo.GetPrompt(ctx, getPromptParam)
 	if err != nil {
 		return r, err
+	}
+	if promptDO.PromptBasic.PromptType == entity.PromptTypeSnippet {
+		return r, errorx.NewByCode(prompterr.CommonInvalidParamCode, errorx.WithExtraMsg("Snippet prompt can not be deleted"))
 	}
 
 	// 权限
@@ -219,16 +291,17 @@ func (app *PromptManageApplicationImpl) GetPrompt(ctx context.Context, request *
 	}
 
 	// prompt
-	getPromptParam := repo.GetPromptParam{
+	getPromptParam := service.GetPromptParam{
 		PromptID: request.GetPromptID(),
 
 		WithCommit:    !lo.IsEmpty(commitVersion),
 		CommitVersion: commitVersion,
 
-		WithDraft: request.GetWithDraft(),
-		UserID:    userID,
+		WithDraft:     request.GetWithDraft(),
+		UserID:        userID,
+		ExpandSnippet: request.GetExpandSnippet(),
 	}
-	promptDO, err := app.manageRepo.GetPrompt(ctx, getPromptParam)
+	promptDO, err := app.promptService.GetPrompt(ctx, getPromptParam)
 	if err != nil {
 		return r, err
 	}
@@ -254,6 +327,38 @@ func (app *PromptManageApplicationImpl) GetPrompt(ctx context.Context, request *
 			return r, err
 		}
 		r.DefaultConfig = defaultConfig
+	}
+
+	// [prompt片段]返回被引用总次数
+	if promptDO.PromptBasic != nil && promptDO.PromptBasic.PromptType == entity.PromptTypeSnippet {
+		var commitVersionParams []string
+		if request.GetWithCommit() && lo.IsNotEmpty(request.GetCommitVersion()) {
+			commitVersionParams = append(commitVersionParams, commitVersion)
+		} else {
+			commitVersions, err := app.manageRepo.MGetVersionsByPromptID(ctx, request.GetPromptID())
+			if err != nil {
+				return r, err
+			}
+			commitVersionParams = append(commitVersionParams, commitVersions...)
+		}
+		if len(commitVersionParams) > 0 {
+			parentPromptCommitVersions, err := app.manageRepo.ListParentPrompt(ctx, repo.ListParentPromptParam{
+				SubPromptID:       request.GetPromptID(),
+				SubPromptVersions: commitVersionParams,
+			})
+			if err != nil {
+				return r, err
+			}
+			if len(parentPromptCommitVersions) > 0 {
+				var total int32
+				for _, parents := range parentPromptCommitVersions {
+					for _, parent := range parents {
+						total += int32(len(parent.CommitVersions))
+					}
+				}
+				r.TotalParentReferences = ptr.Of(total)
+			}
+		}
 	}
 	return r, err
 }
@@ -300,14 +405,26 @@ func (app *PromptManageApplicationImpl) ListPrompt(ctx context.Context, request 
 		return r, err
 	}
 
-	// list prompt
+	// Default filtering behavior: if no filter_prompt_types specified, only show normal prompts
+	filterPromptTypes := request.GetFilterPromptTypes()
+	if len(filterPromptTypes) == 0 {
+		filterPromptTypes = []prompt.PromptType{prompt.PromptTypeNormal}
+	}
+
+	// Convert prompt.PromptType to entity.PromptType
+	var entityFilterPromptTypes []entity.PromptType
+	for _, pt := range filterPromptTypes {
+		entityFilterPromptTypes = append(entityFilterPromptTypes, convertor.PromptTypeDTO2DO(pt))
+	}
+
 	listPromptParam := repo.ListPromptParam{
 		SpaceID: request.GetWorkspaceID(),
 
-		KeyWord:       request.GetKeyWord(),
-		CreatedBys:    request.GetCreatedBys(),
-		UserID:        userID,
-		CommittedOnly: request.GetCommittedOnly(),
+		KeyWord:           request.GetKeyWord(),
+		CreatedBys:        request.GetCreatedBys(),
+		UserID:            userID,
+		CommittedOnly:     request.GetCommittedOnly(),
+		FilterPromptTypes: entityFilterPromptTypes,
 
 		PageNum:  int(request.GetPageNum()),
 		PageSize: int(request.GetPageSize()),
@@ -329,6 +446,9 @@ func (app *PromptManageApplicationImpl) ListPrompt(ctx context.Context, request 
 			continue
 		}
 		userIDSet[promptDTO.PromptBasic.GetCreatedBy()] = struct{}{}
+		if lo.IsNotEmpty(promptDTO.PromptBasic.GetUpdatedBy()) {
+			userIDSet[promptDTO.PromptBasic.GetUpdatedBy()] = struct{}{}
+		}
 	}
 	userDOs, err := app.userRPCProvider.MGetUserInfo(ctx, maps.Keys(userIDSet))
 	if err != nil {
@@ -361,6 +481,13 @@ func (app *PromptManageApplicationImpl) UpdatePrompt(ctx context.Context, reques
 	if err != nil {
 		return r, err
 	}
+	securityLevel := convertor.SecurityLevelDTO2DO(request.GetSecurityLevel())
+	if promptDO.PromptBasic != nil && promptDO.PromptBasic.SecurityLevel != securityLevel {
+		err = app.authRPCProvider.MCheckPromptPermission(ctx, promptDO.SpaceID, []int64{request.GetPromptID()}, consts.ActionLoopPromptEditSecLevel)
+		if err != nil {
+			return r, err
+		}
+	}
 
 	// 审核
 	err = app.auditRPCProvider.AuditPrompt(ctx, &entity.Prompt{
@@ -381,6 +508,7 @@ func (app *PromptManageApplicationImpl) UpdatePrompt(ctx context.Context, reques
 
 		PromptName:        request.GetPromptName(),
 		PromptDescription: request.GetPromptDescription(),
+		SecurityLevel:     securityLevel,
 	}
 	return r, app.manageRepo.UpdatePrompt(ctx, updatePromptParam)
 }
@@ -422,14 +550,8 @@ func (app *PromptManageApplicationImpl) SaveDraft(ctx context.Context, request *
 	savingPromptDTO.PromptDraft.DraftInfo.UserID = ptr.Of(userID)
 	savingPromptDO := convertor.PromptDTO2DO(savingPromptDTO)
 
-	// 审核
-	err = app.auditRPCProvider.AuditPrompt(ctx, savingPromptDO)
-	if err != nil {
-		return r, err
-	}
-
 	// save draft
-	draftInfoDO, err := app.manageRepo.SaveDraft(ctx, savingPromptDO)
+	draftInfoDO, err := app.promptService.SaveDraft(ctx, savingPromptDO)
 	if err != nil {
 		return r, err
 	}
@@ -454,7 +576,9 @@ func (app *PromptManageApplicationImpl) CommitDraft(ctx context.Context, request
 
 	// prompt
 	getPromptParam := repo.GetPromptParam{
-		PromptID: request.GetPromptID(),
+		PromptID:  request.GetPromptID(),
+		UserID:    userID,
+		WithDraft: true,
 	}
 	promptDO, err := app.manageRepo.GetPrompt(ctx, getPromptParam)
 	if err != nil {
@@ -463,6 +587,12 @@ func (app *PromptManageApplicationImpl) CommitDraft(ctx context.Context, request
 
 	// 权限
 	err = app.authRPCProvider.MCheckPromptPermission(ctx, promptDO.SpaceID, []int64{request.GetPromptID()}, consts.ActionLoopPromptEdit)
+	if err != nil {
+		return r, err
+	}
+
+	// 审核
+	err = app.auditRPCProvider.AuditPrompt(ctx, promptDO)
 	if err != nil {
 		return r, err
 	}
@@ -547,6 +677,17 @@ func (app *PromptManageApplicationImpl) ListCommit(ctx context.Context, request 
 		r.HasMore = ptr.Of(true)
 	}
 	r.PromptCommitInfos = convertor.BatchCommitInfoDO2DTO(listCommitResult.CommitInfoDOs)
+	if request.GetWithCommitDetail() {
+		commitDTOs := convertor.BatchPromptCommitDO2DTO(listCommitResult.CommitDOs)
+		promptCommitDetailMap := make(map[string]*prompt.PromptDetail)
+		for _, commitDTO := range commitDTOs {
+			if commitDTO == nil || commitDTO.CommitInfo == nil || lo.IsEmpty(commitDTO.CommitInfo.Version) {
+				continue
+			}
+			promptCommitDetailMap[commitDTO.GetCommitInfo().GetVersion()] = commitDTO.Detail
+		}
+		r.PromptCommitDetailMapping = promptCommitDetailMap
+	}
 	userIDSet := make(map[string]struct{})
 	for _, commitInfoDTO := range r.PromptCommitInfos {
 		if commitInfoDTO == nil || lo.IsEmpty(commitInfoDTO.GetCommittedBy()) {
@@ -560,7 +701,6 @@ func (app *PromptManageApplicationImpl) ListCommit(ctx context.Context, request 
 	}
 	r.Users = convertor.BatchUserInfoDO2DTO(userDOs)
 
-	// 填充commit版本标签映射
 	if len(r.PromptCommitInfos) > 0 {
 		var commitVersions []string
 		for _, commitInfo := range r.PromptCommitInfos {
@@ -569,6 +709,7 @@ func (app *PromptManageApplicationImpl) ListCommit(ctx context.Context, request 
 			}
 		}
 
+		// 填充commit版本标签映射
 		if len(commitVersions) > 0 {
 			// 查询这些版本的标签映射，使用labelService
 			commitLabelMapping, err := app.promptService.BatchGetCommitLabels(ctx, request.GetPromptID(), commitVersions)
@@ -589,6 +730,30 @@ func (app *PromptManageApplicationImpl) ListCommit(ctx context.Context, request 
 			}
 
 			r.CommitVersionLabelMapping = commitVersionLabelMapping
+		}
+		// 填充被引用次数映射
+		if len(commitVersions) > 0 && promptDO.PromptBasic != nil && promptDO.PromptBasic.PromptType == entity.PromptTypeSnippet {
+			// 查询这些版本的被引用次数，使用labelService
+			parentPromptCommitVersions, err := app.manageRepo.ListParentPrompt(ctx, repo.ListParentPromptParam{
+				SubPromptID:       request.GetPromptID(),
+				SubPromptVersions: commitVersions,
+			})
+			if err != nil {
+				return r, err
+			}
+
+			// 构建版本到被引用次数的映射
+			commitVersionReferencesMapping := make(map[string]int32)
+			for version, parents := range parentPromptCommitVersions {
+				for _, parent := range parents {
+					if parent == nil {
+						continue
+					}
+					commitVersionReferencesMapping[version] += int32(len(parent.CommitVersions))
+				}
+			}
+
+			r.ParentReferencesMapping = commitVersionReferencesMapping
 		}
 	}
 
@@ -634,13 +799,13 @@ func (app *PromptManageApplicationImpl) RevertDraftFromCommit(ctx context.Contex
 		},
 		PromptDetail: promptDO.PromptCommit.PromptDetail,
 	}
-	_, err = app.manageRepo.SaveDraft(ctx, promptDO)
+	_, err = app.promptService.SaveDraft(ctx, promptDO)
 	return r, err
 }
 
 func (app *PromptManageApplicationImpl) listPromptOrderBy(dtoEnum *manage.ListPromptOrderBy) int {
 	if dtoEnum == nil {
-		return mysql.ListPromptBasicOrderByID
+		return mysql.ListPromptBasicOrderByCreatedAt
 	}
 	switch *dtoEnum {
 	case manage.ListPromptOrderByCreatedAt:
@@ -807,6 +972,31 @@ func (app *PromptManageApplicationImpl) UpdateCommitLabels(ctx context.Context, 
 	if err != nil {
 		return r, err
 	}
+
+	return r, nil
+}
+
+func (app *PromptManageApplicationImpl) BatchGetPromptBasic(ctx context.Context, request *manage.BatchGetPromptBasicRequest) (r *manage.BatchGetPromptBasicResponse, err error) {
+	r = manage.NewBatchGetPromptBasicResponse()
+	// 用户
+	userID, ok := session.UserIDInCtx(ctx)
+	if !ok || lo.IsEmpty(userID) {
+		return r, errorx.NewByCode(prompterr.CommonInvalidParamCode, errorx.WithExtraMsg("User not found"))
+	}
+
+	// 权限检查
+	err = app.authRPCProvider.MCheckPromptPermission(ctx, request.GetWorkspaceID(), request.GetPromptIds(), consts.ActionLoopPromptRead)
+	if err != nil {
+		return r, err
+	}
+
+	// 调用domain层服务查询PromptBasic列表
+	promptBasics, err := app.manageRepo.BatchGetPromptBasic(ctx, request.GetPromptIds())
+	if err != nil {
+		return r, err
+	}
+	// 转换结果
+	r.Prompts = convertor.BatchPromptDO2DTO(maps.Values(promptBasics))
 
 	return r, nil
 }

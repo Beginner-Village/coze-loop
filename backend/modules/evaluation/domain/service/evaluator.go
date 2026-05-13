@@ -13,24 +13,41 @@ import (
 type EvaluatorService interface {
 	// ListEvaluator 按查询条件查询 evaluator_version
 	ListEvaluator(ctx context.Context, request *entity.ListEvaluatorRequest) ([]*entity.Evaluator, int64, error)
+	// ListBuiltinEvaluator 查询内置评估器
+	ListBuiltinEvaluator(ctx context.Context, request *entity.ListBuiltinEvaluatorRequest) ([]*entity.Evaluator, int64, error)
 	// BatchGetEvaluator 按 id 批量查询 evaluator_version
 	BatchGetEvaluator(ctx context.Context, spaceID int64, evaluatorIDs []int64, includeDeleted bool) ([]*entity.Evaluator, error)
 	// GetEvaluator 按 id 单个查询 evaluator_version
-	GetEvaluator(ctx context.Context, spaceID int64, evaluatorID int64, includeDeleted bool) (*entity.Evaluator, error)
+	GetEvaluator(ctx context.Context, spaceID, evaluatorID int64, includeDeleted bool) (*entity.Evaluator, error)
 	// CreateEvaluator 创建 evaluator_version
 	CreateEvaluator(ctx context.Context, evaluator *entity.Evaluator, cid string) (int64, error)
-	// UpdateEvaluatorMeta 修改 evaluator_version
-	UpdateEvaluatorMeta(ctx context.Context, id, spaceID int64, name, description, userID string) error
+	// UpdateEvaluatorMeta 修改评估器元信息（支持 builtin/benchmark/vendor 可选更新）
+	UpdateEvaluatorMeta(ctx context.Context, req *entity.UpdateEvaluatorMetaRequest) error
+	// UpdateBuiltinEvaluatorTags 更新内置评估器的标签（按 evaluator_id 全量对齐）
+	UpdateBuiltinEvaluatorTags(ctx context.Context, evaluatorID int64, tags map[entity.EvaluatorTagLangType]map[entity.EvaluatorTagKey][]string) error
 	// UpdateEvaluatorDraft 修改 evaluator_version draft
 	UpdateEvaluatorDraft(ctx context.Context, versionDO *entity.Evaluator) error
 	// DeleteEvaluator 删除 evaluator_version
 	DeleteEvaluator(ctx context.Context, evaluatorIDs []int64, userID string) error
 	// RunEvaluator evaluator_version 运行
 	RunEvaluator(ctx context.Context, request *entity.RunEvaluatorRequest) (*entity.EvaluatorRecord, error)
-	// DebugEvaluator 调试 evaluator_version
-	DebugEvaluator(ctx context.Context, evaluatorDO *entity.Evaluator, inputData *entity.EvaluatorInputData) (*entity.EvaluatorOutputData, error)
+	// AsyncRunEvaluator Agent evaluator_version 异步运行
+	AsyncRunEvaluator(ctx context.Context, request *entity.AsyncRunEvaluatorRequest) (*entity.EvaluatorRecord, error)
+	// DebugEvaluator 调试 evaluator_version；新增 exptSpaceID 作为实验空间ID
+	DebugEvaluator(ctx context.Context, evaluatorDO *entity.Evaluator, inputData *entity.EvaluatorInputData, evaluatorRunConf *entity.EvaluatorRunConfig, exptSpaceID int64) (*entity.EvaluatorOutputData, error)
+	// AsyncDebugEvaluator Agent evaluator_version 异步调试
+	AsyncDebugEvaluator(ctx context.Context, request *entity.AsyncDebugEvaluatorRequest) (*entity.AsyncDebugEvaluatorResponse, error)
+	// GetBuiltinEvaluator 根据 evaluatorID 查询元信息，若为预置评估器则按 builtin_visible_version 组装返回
+	// 非预置评估器则返回nil
+	GetBuiltinEvaluator(ctx context.Context, evaluatorID int64) (*entity.Evaluator, error)
+	ResolveBuiltinEvaluatorVisibleVersionID(ctx context.Context, evaluatorID int64, evaluatorName string) (int64, error)
+	// BatchGetBuiltinEvaluator 批量获取预置评估器（按 visible 版本）
+	BatchGetBuiltinEvaluator(ctx context.Context, evaluatorIDs []int64) ([]*entity.Evaluator, error)
+	// BatchGetEvaluatorByIDAndVersion 批量根据 (evaluator_id, version) 查询具体版本
+	BatchGetEvaluatorByIDAndVersion(ctx context.Context, pairs [][2]interface{}) ([]*entity.Evaluator, error)
 	// GetEvaluatorVersion 按 version id 单个查询 evaluator_version version
-	GetEvaluatorVersion(ctx context.Context, evaluatorVersionID int64, includeDeleted bool) (*entity.Evaluator, error)
+	// withTags=true 时查询并回填标签（用于内置评估器），需传入 spaceID；否则查询普通评估器
+	GetEvaluatorVersion(ctx context.Context, spaceID *int64, evaluatorVersionID int64, includeDeleted, withTags bool) (*entity.Evaluator, error)
 	// BatchGetEvaluatorVersion 按 version id 批量查询 evaluator_version version
 	BatchGetEvaluatorVersion(ctx context.Context, spaceID *int64, evaluatorVersionIDs []int64, includeDeleted bool) ([]*entity.Evaluator, error)
 	// ListEvaluatorVersion 按条件查询 evaluator_version version
@@ -39,6 +56,10 @@ type EvaluatorService interface {
 	SubmitEvaluatorVersion(ctx context.Context, evaluatorVersionDO *entity.Evaluator, version, description, cid string) (*entity.Evaluator, error)
 	// CheckNameExist
 	CheckNameExist(ctx context.Context, spaceID, evaluatorID int64, name string) (bool, error)
+	// ListEvaluatorTags 根据 tagType 聚合标签，并按字母序返回
+	ListEvaluatorTags(ctx context.Context, tagType entity.EvaluatorTagKeyType) (map[entity.EvaluatorTagKey][]string, error)
+	// ReportEvaluatorInvokeResult 上报评估器异步执行结果
+	ReportEvaluatorInvokeResult(ctx context.Context, param *entity.ReportEvaluatorRecordParam) error
 }
 
 //go:generate mockgen -destination mocks/evaluator_record_service_mock.go -package mocks . EvaluatorRecordService
@@ -47,8 +68,8 @@ type EvaluatorRecordService interface {
 	CorrectEvaluatorRecord(ctx context.Context, evaluatorRecordDO *entity.EvaluatorRecord, correctionDO *entity.Correction) error
 	// GetEvaluatorRecord 按 id 查询单个 evaluator_version 运行结果
 	GetEvaluatorRecord(ctx context.Context, evaluatorRecordID int64, includeDeleted bool) (*entity.EvaluatorRecord, error)
-	// BatchGetEvaluatorRecord 按 id 批量查询 evaluator_version 运行结果
-	BatchGetEvaluatorRecord(ctx context.Context, evaluatorRecordIDs []int64, includeDeleted bool) ([]*entity.EvaluatorRecord, error)
+	// BatchGetEvaluatorRecord 按 id 批量查询 evaluator_version 运行结果，withFullContent 为 true 时从 TOS 加载完整内容
+	BatchGetEvaluatorRecord(ctx context.Context, evaluatorRecordIDs []int64, includeDeleted, withFullContent bool) ([]*entity.EvaluatorRecord, error)
 }
 
 //type ListEvaluatorRequest struct {
@@ -84,6 +105,6 @@ type EvaluatorRecordService interface {
 //	ExperimentID       int64                      `json:"experiment_id,omitempty"`
 //	ExperimentRunID    int64                      `json:"experiment_run_id,omitempty"`
 //	ItemID             int64                      `json:"item_id,omitempty"`
-//	TurnID             int64                      `json:"turn_id,omitempty"`
+//	RecordID             int64                      `json:"turn_id,omitempty"`
 //	Ext                map[string]string          `json:"ext,omitempty"`
 //}

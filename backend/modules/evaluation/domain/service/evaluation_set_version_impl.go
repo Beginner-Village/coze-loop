@@ -39,7 +39,7 @@ func (d *EvaluationSetVersionServiceImpl) CreateEvaluationSetVersion(ctx context
 	return d.datasetRPCAdapter.CreateDatasetVersion(ctx, param.SpaceID, param.EvaluationSetID, param.Version, param.Description)
 }
 
-func (d *EvaluationSetVersionServiceImpl) GetEvaluationSetVersion(ctx context.Context, spaceID int64, versionID int64, deletedAt *bool) (version *entity.EvaluationSetVersion, set *entity.EvaluationSet, err error) {
+func (d *EvaluationSetVersionServiceImpl) GetEvaluationSetVersion(ctx context.Context, spaceID, versionID int64, deletedAt *bool) (version *entity.EvaluationSetVersion, set *entity.EvaluationSet, err error) {
 	// 依赖数据集服务
 	return d.datasetRPCAdapter.GetDatasetVersion(ctx, spaceID, versionID, deletedAt)
 }
@@ -49,7 +49,7 @@ func (d *EvaluationSetVersionServiceImpl) ListEvaluationSetVersions(ctx context.
 		return nil, nil, nil, errorx.NewByCode(errno.CommonInternalErrorCode)
 	}
 	// 依赖数据集服务
-	return d.datasetRPCAdapter.ListDatasetVersions(ctx, param.SpaceID, param.EvaluationSetID, param.PageToken, param.PageNumber, param.PageSize, param.VersionLike)
+	return d.datasetRPCAdapter.ListDatasetVersions(ctx, param.SpaceID, param.EvaluationSetID, param.PageToken, param.PageNumber, param.PageSize, param.VersionLike, param.Versions)
 }
 
 func (d *EvaluationSetVersionServiceImpl) BatchGetEvaluationSetVersions(ctx context.Context, spaceID *int64, versionIDs []int64, deletedAt *bool) (sets []*entity.BatchGetEvaluationSetVersionsResult, err error) {

@@ -27,6 +27,7 @@ type FieldSchema struct {
 	ContentType            ContentType                          `json:"content_type,omitempty"`
 	DefaultDisplayFormat   FieldDisplayFormat                   `json:"default_display_format,omitempty"`
 	Status                 FieldStatus                          `json:"status,omitempty"`
+	SchemaKey              *SchemaKey                           `json:"schema_key,omitempty"`
 	TextSchema             string                               `json:"text_schema,omitempty"`
 	MultiModelSpec         *MultiModalSpec                      `json:"multi_model_spec,omitempty"`
 	Hidden                 bool                                 `json:"hidden,omitempty"`
@@ -35,10 +36,46 @@ type FieldSchema struct {
 }
 
 type MultiModalSpec struct {
-	MaxFileCount     int64    `json:"max_file_count,omitempty"`
-	MaxFileSize      int64    `json:"max_file_size,omitempty"`
-	SupportedFormats []string `json:"supported_formats,omitempty"`
-	MaxPartCount     int32    `json:"max_part_count,omitempty"`
+	MaxFileCount           int64                    `json:"max_file_count,omitempty"`
+	MaxFileSize            int64                    `json:"max_file_size,omitempty"`
+	SupportedFormats       []string                 `json:"supported_formats,omitempty"`
+	MaxPartCount           int32                    `json:"max_part_count,omitempty"`
+	SupportedFormatsByType map[ContentType][]string `json:"supported_formats_by_type,omitempty"`
+	MaxFileSizeByType      map[ContentType]int64    `json:"max_file_size_by_type,omitempty"`
+}
+
+type SchemaKey int64
+
+const (
+	SchemaKey_String  SchemaKey = 1
+	SchemaKey_Integer SchemaKey = 2
+	SchemaKey_Float   SchemaKey = 3
+	SchemaKey_Bool    SchemaKey = 4
+	SchemaKey_Message SchemaKey = 5
+	// 单选
+	SchemaKey_SingleChoice SchemaKey = 6
+	// 轨迹
+	SchemaKey_Trajectory SchemaKey = 7
+)
+
+func (p SchemaKey) String() string {
+	switch p {
+	case SchemaKey_String:
+		return "String"
+	case SchemaKey_Integer:
+		return "Integer"
+	case SchemaKey_Float:
+		return "Float"
+	case SchemaKey_Bool:
+		return "Bool"
+	case SchemaKey_Message:
+		return "Message"
+	case SchemaKey_SingleChoice:
+		return "SingleChoice"
+	case SchemaKey_Trajectory:
+		return "Trajectory"
+	}
+	return "<UNSET>"
 }
 
 type FieldDisplayFormat int64
@@ -88,7 +125,7 @@ func (p *FieldDisplayFormat) Scan(value interface{}) (err error) {
 	var result sql.NullInt64
 	err = result.Scan(value)
 	*p = FieldDisplayFormat(result.Int64)
-	return
+	return err
 }
 
 func (p *FieldDisplayFormat) Value() (driver.Value, error) {
@@ -130,7 +167,7 @@ func (p *FieldStatus) Scan(value interface{}) (err error) {
 	var result sql.NullInt64
 	err = result.Scan(value)
 	*p = FieldStatus(result.Int64)
-	return
+	return err
 }
 
 func (p *FieldStatus) Value() (driver.Value, error) {

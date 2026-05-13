@@ -9,6 +9,7 @@ import (
 	"gorm.io/gen"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"gorm.io/hints"
 	"gorm.io/plugin/dbresolver"
 
 	"github.com/coze-dev/coze-loop/backend/infra/db"
@@ -24,9 +25,10 @@ import (
 //go:generate  mockgen -destination=mocks/expt_turn_result.go  -package mocks . ExptTurnResultDAO
 type ExptTurnResultDAO interface {
 	ListTurnResult(ctx context.Context, spaceID, exptID int64, filter *entity.ExptTurnResultFilter, page entity.Page, desc bool, opts ...db.Option) ([]*model.ExptTurnResult, int64, error)
+	ListTurnResultByCursor(ctx context.Context, spaceID, exptID int64, filter *entity.ExptTurnResultFilter, cursor *entity.ExptTurnResultListCursor, limit int, desc bool, opts ...db.Option) ([]*model.ExptTurnResult, int64, *entity.ExptTurnResultListCursor, error)
 	ListTurnResultByItemIDs(ctx context.Context, spaceID, exptID int64, itemIDs []int64, page entity.Page, desc bool, opts ...db.Option) ([]*model.ExptTurnResult, int64, error)
 	BatchGet(ctx context.Context, spaceID, exptID int64, itemIDs []int64, opts ...db.Option) ([]*model.ExptTurnResult, error)
-	Get(ctx context.Context, spaceID int64, exptID int64, itemID, turnID int64, opts ...db.Option) (*model.ExptTurnResult, error)
+	Get(ctx context.Context, spaceID, exptID, itemID, turnID int64, opts ...db.Option) (*model.ExptTurnResult, error)
 	CreateTurnEvaluatorRefs(ctx context.Context, turnResults []*model.ExptTurnEvaluatorResultRef, opts ...db.Option) error
 	BatchCreateNX(ctx context.Context, turnResults []*model.ExptTurnResult, opts ...db.Option) error
 	GetItemTurnResults(ctx context.Context, exptID, itemID, spaceID int64, opts ...db.Option) ([]*model.ExptTurnResult, error)
@@ -103,6 +105,7 @@ func (dao *ExptTurnResultDAOImpl) ScanTurnResults(ctx context.Context, exptID in
 	}
 
 	query := turnResult.WithContext(ctx).
+		Clauses(hints.ForceIndex("idx_expt_status")).
 		Where(conds...).
 		Order(turnResult.ID.Asc())
 	if limit > 0 {
@@ -168,7 +171,7 @@ func (dao *ExptTurnResultDAOImpl) CreateTurnEvaluatorRefs(ctx context.Context, r
 	return nil
 }
 
-func (dao *ExptTurnResultDAOImpl) BatchGet(ctx context.Context, spaceID int64, exptID int64, itemIDs []int64, opts ...db.Option) ([]*model.ExptTurnResult, error) {
+func (dao *ExptTurnResultDAOImpl) BatchGet(ctx context.Context, spaceID, exptID int64, itemIDs []int64, opts ...db.Option) ([]*model.ExptTurnResult, error) {
 	db := dao.provider.NewSession(ctx, opts...)
 	q := query.Use(db).ExptTurnResult
 	finds, err := q.WithContext(ctx).Where(q.SpaceID.Eq(spaceID), q.ExptID.Eq(exptID), q.ItemID.In(itemIDs...)).Find()
@@ -178,7 +181,7 @@ func (dao *ExptTurnResultDAOImpl) BatchGet(ctx context.Context, spaceID int64, e
 	return finds, nil
 }
 
-func (dao *ExptTurnResultDAOImpl) Get(ctx context.Context, spaceID int64, exptID int64, itemID, turnID int64, opts ...db.Option) (*model.ExptTurnResult, error) {
+func (dao *ExptTurnResultDAOImpl) Get(ctx context.Context, spaceID, exptID, itemID, turnID int64, opts ...db.Option) (*model.ExptTurnResult, error) {
 	db := dao.provider.NewSession(ctx, opts...)
 	q := query.Use(db).ExptTurnResult
 	find, err := q.WithContext(ctx).Where(q.SpaceID.Eq(spaceID), q.ExptID.Eq(exptID), q.ItemID.Eq(itemID), q.TurnID.Eq(turnID)).First()
@@ -342,6 +345,116 @@ func (dao *ExptTurnResultDAOImpl) ListTurnResult(ctx context.Context, spaceID, e
 	logs.CtxInfo(ctx, "ListTurnResult done, finds len: %v, got len: %v", len(finds), len(filtered))
 
 	return finds, total, nil
+}
+
+func applyExptTurnResultCursorWhere(db *gorm.DB, c *entity.ExptTurnResultListCursor, desc bool) *gorm.DB {
+	coalesceTurn := "COALESCE(CAST(expt_turn_result.turn_idx AS SIGNED), -1)"
+	if !desc {
+		return db.Where(`(
+			expt_item_result.item_idx > ? OR
+			(expt_item_result.item_idx = ? AND `+coalesceTurn+` > ?) OR
+			(expt_item_result.item_idx = ? AND `+coalesceTurn+` = ? AND expt_turn_result.item_id > ?) OR
+			(expt_item_result.item_idx = ? AND `+coalesceTurn+` = ? AND expt_turn_result.item_id = ? AND expt_turn_result.turn_id > ?)
+		)`,
+			c.ItemIdx, c.ItemIdx, c.TurnIdx, c.ItemIdx, c.TurnIdx, c.ItemID, c.ItemIdx, c.TurnIdx, c.ItemID, c.TurnID)
+	}
+	return db.Where(`(
+		expt_item_result.item_idx < ? OR
+		(expt_item_result.item_idx = ? AND `+coalesceTurn+` > ?) OR
+		(expt_item_result.item_idx = ? AND `+coalesceTurn+` = ? AND expt_turn_result.item_id > ?) OR
+		(expt_item_result.item_idx = ? AND `+coalesceTurn+` = ? AND expt_turn_result.item_id = ? AND expt_turn_result.turn_id > ?)
+	)`,
+		c.ItemIdx, c.ItemIdx, c.TurnIdx, c.ItemIdx, c.TurnIdx, c.ItemID, c.ItemIdx, c.TurnIdx, c.ItemID, c.TurnID)
+}
+
+func (dao *ExptTurnResultDAOImpl) ListTurnResultByCursor(ctx context.Context, spaceID, exptID int64, filter *entity.ExptTurnResultFilter, cursor *entity.ExptTurnResultListCursor, limit int, desc bool, opts ...db.Option) ([]*model.ExptTurnResult, int64, *entity.ExptTurnResultListCursor, error) {
+	var (
+		finds []*model.ExptTurnResult
+		total int64
+	)
+
+	if limit <= 0 {
+		limit = 20
+	}
+
+	db := dao.provider.NewSession(ctx, opts...)
+
+	subQueries := make([]*gorm.DB, 0)
+	if filter != nil && len(filter.ScoreFilters) > 0 {
+		for _, scoreFilter := range filter.ScoreFilters {
+			subQuery := db.Table("expt_turn_evaluator_result_ref").
+				Select("1").
+				Joins("INNER JOIN evaluator_record ON evaluator_record.id = expt_turn_evaluator_result_ref.evaluator_result_id").
+				Where("evaluator_record.evaluator_version_id = ?", scoreFilter.EvaluatorVersionID).
+				Where("evaluator_record.score "+scoreFilter.Operator+" ?", scoreFilter.Score).
+				Where("expt_turn_evaluator_result_ref.expt_turn_result_id = expt_turn_result.id")
+
+			subQueries = append(subQueries, subQuery)
+		}
+	}
+
+	q := db.Table("expt_turn_result")
+	q = q.Joins("INNER JOIN  expt_item_result ON expt_turn_result.space_id = expt_item_result.space_id AND expt_turn_result.expt_id = expt_item_result.expt_id AND expt_turn_result.item_id = expt_item_result.item_id")
+	q = q.Where("expt_turn_result.space_id = ?", spaceID).
+		Where("expt_turn_result.expt_id = ?", exptID)
+
+	if filter != nil && len(filter.TrunRunStateFilters) == 1 && filter.TrunRunStateFilters[0] != nil {
+		statusFilter := *filter.TrunRunStateFilters[0]
+		if len(statusFilter.Status) > 0 {
+			q = q.Where("expt_turn_result.status "+statusFilter.Operator+" (?)", statusFilter.Status)
+		}
+	}
+
+	for _, subQuery := range subQueries {
+		q = q.Where("EXISTS (?)", subQuery)
+	}
+
+	if cursor != nil {
+		q = applyExptTurnResultCursorWhere(q, cursor, desc)
+	}
+
+	coalesceOrder := "COALESCE(CAST(expt_turn_result.turn_idx AS SIGNED), -1) ASC"
+	if desc {
+		q = q.Order("expt_item_result.item_idx desc").Order(coalesceOrder).Order("expt_turn_result.item_id ASC").Order("expt_turn_result.turn_id ASC")
+	} else {
+		q = q.Order("expt_item_result.item_idx asc").Order(coalesceOrder).Order("expt_turn_result.item_id ASC").Order("expt_turn_result.turn_id ASC")
+	}
+
+	if cursor == nil {
+		if err := q.Session(&gorm.Session{}).Count(&total).Error; err != nil {
+			return nil, 0, nil, errorx.Wrapf(err, "ListTurnResultByCursor count fail, exptID=%d", exptID)
+		}
+	}
+
+	if err := q.Session(&gorm.Session{}).Limit(limit).Find(&finds).Error; err != nil {
+		return nil, 0, nil, errorx.Wrapf(err, "ListTurnResultByCursor find fail, exptID=%d", exptID)
+	}
+
+	var next *entity.ExptTurnResultListCursor
+	if len(finds) == limit && len(finds) > 0 {
+		last := finds[len(finds)-1]
+		var itemIdx int32
+		if err := dao.provider.NewSession(ctx, opts...).Table("expt_item_result").
+			Select("item_idx").
+			Where("space_id = ? AND expt_id = ? AND item_id = ?", spaceID, exptID, last.ItemID).
+			Scan(&itemIdx).Error; err != nil {
+			return nil, 0, nil, errorx.Wrapf(err, "ListTurnResultByCursor resolve item_idx fail, itemID=%d", last.ItemID)
+		}
+		turnCoalesced := int32(-1)
+		if last.TurnIdx != nil {
+			turnCoalesced = *last.TurnIdx
+		}
+		next = &entity.ExptTurnResultListCursor{
+			ItemIdx: itemIdx,
+			TurnIdx: turnCoalesced,
+			ItemID:  last.ItemID,
+			TurnID:  last.TurnID,
+		}
+	}
+
+	logs.CtxInfo(ctx, "ListTurnResultByCursor done, finds len: %v, total: %v, hasNext: %v", len(finds), total, next != nil)
+
+	return finds, total, next, nil
 }
 
 // nolint: byted_s_too_many_lines_in_func

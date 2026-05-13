@@ -3,6 +3,7 @@ namespace go coze.loop.evaluation.eval_target
 include "../../../base.thrift"
 include "domain/common.thrift"
 include "./domain/eval_target.thrift"
+include "coze.loop.evaluation.spi.thrift"
 
 struct CreateEvalTargetRequest {
     1: required i64 workspace_id (api.js_conv="true", go.tag = 'json:"workspace_id"')
@@ -17,6 +18,10 @@ struct CreateEvalTargetParam {
     3: optional eval_target.EvalTargetType eval_target_type
     4: optional eval_target.CozeBotInfoType bot_info_type
     5: optional string bot_publish_version // 如果是发布版本则需要填充这个字段
+    6: optional eval_target.CustomEvalTarget custom_eval_target // type=6,并且有搜索对象，搜索结果信息通过这个字段透传
+    7: optional eval_target.Region region   // 有区域限制需要填充这个字段
+    8: optional string env  // 有环境限制需要填充这个字段
+    9: optional string operation_instruction // type=8时需填写，评测对象操作说明
 }
 
 struct CreateEvalTargetResponse {
@@ -75,12 +80,23 @@ struct ExecuteEvalTargetRequest {
     4: required eval_target.EvalTargetInputData input_data
     5: optional i64 experiment_run_id (api.js_conv="true", go.tag = 'json:"experiment_run_id"')
 
+    10: optional eval_target.EvalTarget eval_target
+
     255: optional base.Base Base
 
 }
 
 struct ExecuteEvalTargetResponse {
     1: required eval_target.EvalTargetRecord eval_target_record
+
+    255: base.BaseResp BaseResp
+}
+
+typedef ExecuteEvalTargetRequest AsyncExecuteEvalTargetRequest
+
+struct AsyncExecuteEvalTargetResponse {
+    1: optional i64 invoke_id
+    2: optional string callee
 
     255: base.BaseResp BaseResp
 }
@@ -125,6 +141,21 @@ struct BatchGetEvalTargetRecordsResponse {
     255: base.BaseResp BaseResp
 }
 
+// 按需查询 output 中的大对象完整内容
+struct GetEvalTargetOutputFieldContentRequest {
+    1: required i64 workspace_id (api.js_conv="true", go.tag = 'json:"workspace_id"')
+    2: required i64 eval_target_record_id (api.js_conv="true", go.tag = 'json:"eval_target_record_id"')  // eval_target_record_id
+    3: required list<string> field_keys (api.js_conv="true", go.tag = 'json:"field_keys"')  // output_fields 中待查询的字段 key
+
+    255: optional base.Base Base
+}
+
+struct GetEvalTargetOutputFieldContentResponse {
+    1: optional map<string, common.Content> field_contents  // field_key -> 完整 Content
+
+    255: base.BaseResp BaseResp
+}
+
 struct ListSourceEvalTargetsRequest {
     1: required i64 workspace_id (api.js_conv="true", go.tag = 'json:"workspace_id"')
     2: optional eval_target.EvalTargetType target_type
@@ -159,6 +190,21 @@ struct BatchGetSourceEvalTargetsResponse {
     255: base.BaseResp BaseResp
 }
 
+struct GetSourceEvalTargetVersionRequest {
+    1: required i64 workspace_id (api.js_conv="true", go.tag = 'json:"workspace_id"')
+    2: optional string source_target_id
+    3: optional string source_target_version
+    4: optional eval_target.EvalTargetType target_type
+
+    255: optional base.Base Base
+}
+
+struct GetSourceEvalTargetVersionResponse {
+    1: optional eval_target.EvalTargetVersion eval_target_version
+
+    255: base.BaseResp BaseResp
+}
+
 struct ListSourceEvalTargetVersionsRequest {
     1: required i64 workspace_id (api.js_conv='true', go.tag='json:"workspace_id"')
     2: required string source_target_id
@@ -179,23 +225,136 @@ struct ListSourceEvalTargetVersionsResponse {
     255: base.BaseResp BaseResp
 }
 
+struct SearchCustomEvalTargetRequest {
+    1: optional i64 workspace_id (api.js_conv="true", go.tag = 'json:"workspace_id"') // 空间ID
+    2: optional string keyword // 透传spi接口
+    3: optional i64 application_id (api.js_conv="true", go.tag = 'json:"application_id"') // 应用ID，非必填，创建实验时传应用ID,会根据应用ID从应用模块获取自定义服务详情
+    4: optional eval_target.CustomRPCServer custom_rpc_server,    // 自定义服务详情，非必填，应用注册调试时传
+    5: optional eval_target.Region region    // 必填
+    6: optional string env    // 环境
+
+    100: optional i32 page_size
+    101: optional string page_token
+
+    255: optional base.Base Base
+}
+
+struct SearchCustomEvalTargetResponse {
+    1: list<eval_target.CustomEvalTarget> custom_eval_targets
+
+    100: optional string next_page_token
+    101: optional bool has_more
+
+    255: base.BaseResp BaseResp (api.none="true")
+}
+
+struct DebugEvalTargetRequest {
+    1: optional i64 workspace_id (api.js_conv="true", go.tag = 'json:"workspace_id"')
+    2: optional eval_target.EvalTargetType eval_target_type    // 类型
+
+    10: optional string param    // 执行参数：如果type=6,则传spi request json序列化结果
+    11: optional common.RuntimeParam target_runtime_param    // 动态参数
+    12: optional string env    // 环境
+
+    50: optional eval_target.CustomRPCServer custom_rpc_server    // 如果type=6,需要前端传入自定义服务相关信息
+
+    255: optional base.Base Base
+}
+
+struct DebugEvalTargetResponse {
+    1: optional eval_target.EvalTargetRecord eval_target_record
+
+    255: base.BaseResp BaseResp
+}
+
+struct AsyncDebugEvalTargetRequest {
+    1: optional i64 workspace_id (api.js_conv="true", go.tag = 'json:"workspace_id"')
+    2: optional eval_target.EvalTargetType eval_target_type    // 类型
+
+    10: optional string param    // 执行参数：如果type=6,则传spi request json序列化结果
+    11: optional common.RuntimeParam target_runtime_param    // 动态参数
+    12: optional string env    // 环境
+
+    50: optional eval_target.CustomRPCServer custom_rpc_server    // 如果type=6,需要前端传入自定义服务相关信息
+    255: optional base.Base Base
+}
+
+struct MockEvalTargetOutputRequest {
+    1: required i64 workspace_id (api.js_conv="true", go.tag = 'json:"workspace_id"')
+    2: required i64 source_target_id (api.js_conv="true", go.tag = 'json:"source_target_id"') // EvalTargetID参数实际上为SourceTargetID
+    3: required string eval_target_version
+    4: required eval_target.EvalTargetType target_type
+
+    255: optional base.Base Base
+}
+
+struct AsyncDebugEvalTargetResponse {
+    1: required i64 invoke_id (api.js_conv="true", go.tag = 'json:"invoke_id"')
+    2: optional string callee
+    255: base.BaseResp BaseResp
+}
+struct MockEvalTargetOutputResponse {
+    1: optional eval_target.EvalTarget eval_target
+    2: optional map<string,string> mock_output
+
+    255: base.BaseResp BaseResp
+}
+
 service EvalTargetService {
     // 创建评测对象
-    CreateEvalTargetResponse CreateEvalTarget(1: CreateEvalTargetRequest request) (api.category="eval_target", api.post = "/api/evaluation/v1/eval_targets")
+    CreateEvalTargetResponse CreateEvalTarget(1: CreateEvalTargetRequest request) (
+        api.category="eval_target", api.post = "/api/evaluation/v1/eval_targets", api.op_type = 'create', api.tag = 'volc-agentkit'
+    )
     // 根据source target获取评测对象信息
-    BatchGetEvalTargetsBySourceResponse BatchGetEvalTargetsBySource(1: BatchGetEvalTargetsBySourceRequest request) (api.category="eval_target", api.post = "/api/evaluation/v1/eval_targets/batch_get_by_source")
+    BatchGetEvalTargetsBySourceResponse BatchGetEvalTargetsBySource(1: BatchGetEvalTargetsBySourceRequest request) (
+        api.category="eval_target", api.post = "/api/evaluation/v1/eval_targets/batch_get_by_source", api.op_type = 'query', api.tag = 'volc-agentkit'
+    )
     // 获取评测对象+版本
-    GetEvalTargetVersionResponse GetEvalTargetVersion(1: GetEvalTargetVersionRequest request) (api.category="eval_target", api.get = "/api/evaluation/v1/eval_target_versions/:eval_target_version_id")
+    GetEvalTargetVersionResponse GetEvalTargetVersion(1: GetEvalTargetVersionRequest request) (
+        api.category="eval_target", api.get = "/api/evaluation/v1/eval_target_versions/:eval_target_version_id", api.op_type = 'query', api.tag = 'volc-agentkit'
+    )
     // 批量获取+版本
-    BatchGetEvalTargetVersionsResponse BatchGetEvalTargetVersions(1: BatchGetEvalTargetVersionsRequest request) (api.category="eval_target", api.post = "/api/evaluation/v1/eval_target_versions/batch_get")
+    BatchGetEvalTargetVersionsResponse BatchGetEvalTargetVersions(1: BatchGetEvalTargetVersionsRequest request) (
+        api.category="eval_target", api.post = "/api/evaluation/v1/eval_target_versions/batch_get", api.op_type = 'query', api.tag = 'volc-agentkit'
+    )
     // Source评测对象列表
-    ListSourceEvalTargetsResponse ListSourceEvalTargets(1: ListSourceEvalTargetsRequest request) (api.category="eval_target", api.post = "/api/evaluation/v1/eval_targets/list_source")
+    ListSourceEvalTargetsResponse ListSourceEvalTargets(1: ListSourceEvalTargetsRequest request) (
+        api.category="eval_target", api.post = "/api/evaluation/v1/eval_targets/list_source", api.op_type = 'list', api.tag = 'volc-agentkit'
+    )
     // Source评测对象版本列表
-    ListSourceEvalTargetVersionsResponse ListSourceEvalTargetVersions(1: ListSourceEvalTargetVersionsRequest request) (api.category="eval_target", api.post = "/api/evaluation/v1/eval_targets/list_source_version")
-    BatchGetSourceEvalTargetsResponse BatchGetSourceEvalTargets (1: BatchGetSourceEvalTargetsRequest request) (api.category="eval_target", api.post = "/api/evaluation/v1/eval_targets/batch_get_source")
+    ListSourceEvalTargetVersionsResponse ListSourceEvalTargetVersions(1: ListSourceEvalTargetVersionsRequest request) (
+        api.category="eval_target", api.post = "/api/evaluation/v1/eval_targets/list_source_version", api.op_type = 'list', api.tag = 'volc-agentkit'
+    )
+    BatchGetSourceEvalTargetsResponse BatchGetSourceEvalTargets (1: BatchGetSourceEvalTargetsRequest request) (
+        api.category="eval_target", api.post = "/api/evaluation/v1/eval_targets/batch_get_source", api.op_type = 'query', api.tag = 'volc-agentkit'
+    )
+    // 获取Source评测对象版本的详情
+    GetSourceEvalTargetVersionResponse GetSourceEvalTargetVersion (1: GetSourceEvalTargetVersionRequest request)(
+        api.category="eval_target", api.get = "/api/evaluation/v1/eval_targets/get_source_version", api.op_type = 'query', api.tag = 'volc-agentkit'
+    )
+    // 搜索自定义评测对象
+    SearchCustomEvalTargetResponse SearchCustomEvalTarget(1: SearchCustomEvalTargetRequest req) (api.category="eval_target", api.post = "/api/evaluation/v1/eval_targets/search_custom")
+
     // 执行
     ExecuteEvalTargetResponse ExecuteEvalTarget(1: ExecuteEvalTargetRequest request) (api.category="eval_target", api.post = "/api/evaluation/v1/eval_targets/:eval_target_id/versions/:eval_target_version_id/execute")
-    GetEvalTargetRecordResponse GetEvalTargetRecord(1: GetEvalTargetRecordRequest request) (api.category="eval_target", api.get = "/api/evaluation/v1/eval_target_records/:eval_target_record_id")
-    BatchGetEvalTargetRecordsResponse BatchGetEvalTargetRecords(1: BatchGetEvalTargetRecordsRequest request) (api.category="eval_target", api.post = "/api/evaluation/v1/eval_target_records/batch_get")
+    AsyncExecuteEvalTargetResponse AsyncExecuteEvalTarget(1: AsyncExecuteEvalTargetRequest request)
+    GetEvalTargetRecordResponse GetEvalTargetRecord(1: GetEvalTargetRecordRequest request) (
+        api.category="eval_target", api.get = "/api/evaluation/v1/eval_target_records/:eval_target_record_id", api.op_type = 'query', api.tag = 'volc-agentkit'
+    )
+    BatchGetEvalTargetRecordsResponse BatchGetEvalTargetRecords(1: BatchGetEvalTargetRecordsRequest request) (
+        api.category="eval_target", api.post = "/api/evaluation/v1/eval_target_records/batch_get", api.op_type = 'query', api.tag = 'volc-agentkit'
+    )
+    // 按需查询 output 中大对象的完整内容
+    GetEvalTargetOutputFieldContentResponse GetEvalTargetOutputFieldContent(1: GetEvalTargetOutputFieldContentRequest request) (
+        api.category="eval_target", api.post = "/api/evaluation/v1/eval_target_records/output_fields", api.op_type = 'query', api.tag = 'volc-agentkit'
+    )
 
-} (api.js_conv="true" )
+    // debug
+    DebugEvalTargetResponse DebugEvalTarget(1: DebugEvalTargetRequest request) (api.category="eval_target", api.post = "/api/evaluation/v1/eval_targets/debug")
+    AsyncDebugEvalTargetResponse AsyncDebugEvalTarget(1: AsyncDebugEvalTargetRequest request) (api.category="eval_target", api.post = "/api/evaluation/v1/eval_targets/async_debug")
+
+    // mock输出数据
+    MockEvalTargetOutputResponse MockEvalTargetOutput(1: MockEvalTargetOutputRequest request) (
+        api.category="eval_target", api.post = "/api/evaluation/v1/eval_targets/mock_output", api.op_type = 'query', api.tag = 'volc-agentkit'
+    )
+}

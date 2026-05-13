@@ -28,16 +28,17 @@ import (
 	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/foundation/file/fileservice"
 	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/foundation/user/userservice"
 	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/llm/runtime/llmruntimeservice"
+	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/observability/observabilitytraceservice"
+	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/observability/task/taskservice"
 	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/prompt/promptmanageservice"
-	metrics5 "github.com/coze-dev/coze-loop/backend/modules/evaluation/domain/component/metrics"
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/domain/component/rpc"
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/domain/component/userinfo"
-	"github.com/coze-dev/coze-loop/backend/modules/evaluation/domain/entity"
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/domain/service"
 	metrics3 "github.com/coze-dev/coze-loop/backend/modules/evaluation/infra/metrics/eval_target"
 	metrics4 "github.com/coze-dev/coze-loop/backend/modules/evaluation/infra/metrics/evaluation_set"
 	evaluator2 "github.com/coze-dev/coze-loop/backend/modules/evaluation/infra/metrics/evaluator"
 	metrics2 "github.com/coze-dev/coze-loop/backend/modules/evaluation/infra/metrics/experiment"
+	"github.com/coze-dev/coze-loop/backend/modules/evaluation/infra/metrics/openapi"
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/infra/mq/rocket/producer"
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/infra/repo/evaluator"
 	mysql2 "github.com/coze-dev/coze-loop/backend/modules/evaluation/infra/repo/evaluator/mysql"
@@ -54,8 +55,13 @@ import (
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/infra/rpc/foundation"
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/infra/rpc/llm"
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/infra/rpc/notify"
+	"github.com/coze-dev/coze-loop/backend/modules/evaluation/infra/rpc/pipeline"
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/infra/rpc/prompt"
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/infra/rpc/tag"
+	"github.com/coze-dev/coze-loop/backend/modules/evaluation/infra/rpc/task"
+	"github.com/coze-dev/coze-loop/backend/modules/evaluation/infra/rpc/trajectory"
+	"github.com/coze-dev/coze-loop/backend/modules/evaluation/infra/runtime"
+	"github.com/coze-dev/coze-loop/backend/modules/evaluation/infra/storage"
 	conf2 "github.com/coze-dev/coze-loop/backend/modules/evaluation/pkg/conf"
 	"github.com/coze-dev/coze-loop/backend/pkg/conf"
 	"github.com/google/wire"
@@ -63,7 +69,7 @@ import (
 
 // Injectors from wire.go:
 
-func InitExperimentApplication(ctx context.Context, idgen2 idgen.IIDGenerator, db2 db.Provider, configFactory conf.IConfigLoaderFactory, rmqFactory mq.IFactory, cmdable redis.Cmdable, auditClient audit.IAuditService, meter metrics.Meter, authClient authservice.Client, evalSetService evaluation.EvaluationSetService, evaluatorService evaluation.EvaluatorService, targetService evaluation.EvalTargetService, uc userservice.Client, pms promptmanageservice.Client, pes promptexecuteservice.Client, sds datasetservice.Client, limiterFactory limiter.IRateLimiterFactory, llmcli llmruntimeservice.Client, benefitSvc benefit.IBenefitService, ckDb ck.Provider, tagClient tagservice.Client, objectStorage fileserver.ObjectStorage) (IExperimentApplication, error) {
+func InitExperimentApplication(ctx context.Context, idgen2 idgen.IIDGenerator, db2 db.Provider, configFactory conf.IConfigLoaderFactory, rmqFactory mq.IFactory, cmdable redis.Cmdable, auditClient audit.IAuditService, meter metrics.Meter, authClient authservice.Client, evalSetService evaluation.EvaluationSetService, evaluatorService evaluation.EvaluatorService, targetService evaluation.EvalTargetService, uc userservice.Client, pms promptmanageservice.Client, pes promptexecuteservice.Client, sds datasetservice.Client, limiterFactory limiter.IRateLimiterFactory, llmcli llmruntimeservice.Client, benefitSvc benefit.IBenefitService, ckDb ck.Provider, tagClient tagservice.Client, taskClient taskservice.Client, objectStorage fileserver.ObjectStorage, batchObjectStorage fileserver.BatchObjectStorage, plainLimiterFactory limiter.IPlainRateLimiterFactory, trajectoryAdapter rpc.ITrajectoryAdapter, fileClient fileservice.Client) (IExperimentApplication, error) {
 	exptTurnResultDAO := mysql.NewExptTurnResultDAO(db2)
 	iExptTurnEvaluatorResultRefDAO := mysql.NewExptTurnEvaluatorResultRefDAO(db2)
 	iExptTurnResultRepo := experiment.NewExptTurnResultRepo(idgen2, exptTurnResultDAO, iExptTurnEvaluatorResultRefDAO)
@@ -77,16 +83,29 @@ func InitExperimentApplication(ctx context.Context, idgen2 idgen.IIDGenerator, d
 	rateLimiter := evaluator.NewRateLimiterImpl(ctx, limiterFactory, iConfiger)
 	evaluatorDAO := mysql2.NewEvaluatorDAO(db2)
 	evaluatorVersionDAO := mysql2.NewEvaluatorVersionDAO(db2)
+	evaluatorTagDAO := mysql2.NewEvaluatorTagDAO(db2)
 	iLatestWriteTracker := platestwrite.NewLatestWriteTracker(cmdable)
-	iEvaluatorRepo := evaluator.NewEvaluatorRepo(idgen2, db2, evaluatorDAO, evaluatorVersionDAO, iLatestWriteTracker)
+	evaluatorTemplateDAO := mysql2.NewEvaluatorTemplateDAO(db2)
+	iEvaluatorRepo := evaluator.NewEvaluatorRepo(idgen2, db2, evaluatorDAO, evaluatorVersionDAO, evaluatorTagDAO, iLatestWriteTracker, evaluatorTemplateDAO)
 	evaluatorRecordDAO := mysql2.NewEvaluatorRecordDAO(db2)
-	iEvaluatorRecordRepo := evaluator.NewEvaluatorRecordRepo(idgen2, db2, evaluatorRecordDAO)
+	componentIConfiger, err := conf2.NewConfiger(configFactory)
+	if err != nil {
+		return nil, err
+	}
+	recordDataStorage := storage.NewRecordDataStorage(batchObjectStorage, componentIConfiger)
+	iEvaluatorRecordRepo := evaluator.NewEvaluatorRecordRepo(idgen2, db2, evaluatorRecordDAO, recordDataStorage)
 	iIdemDAO := redis2.NewIdemDAO(cmdable)
 	idempotentService := idem.NewIdempotentService(iIdemDAO)
 	illmProvider := llm.NewLLMRPCProvider(llmcli)
 	evaluatorExecMetrics := evaluator2.NewEvaluatorMetrics(meter)
-	v := NewEvaluatorSourceServices(illmProvider, evaluatorExecMetrics, iConfiger)
-	serviceEvaluatorService := service.NewEvaluatorServiceImpl(idgen2, rateLimiter, rmqFactory, iEvaluatorRepo, iEvaluatorRecordRepo, idempotentService, iConfiger, v)
+	logger := runtime.NewLogger()
+	sandboxConfig := runtime.NewSandboxConfig()
+	iRuntimeFactory := runtime.NewRuntimeFactory(logger, sandboxConfig)
+	iRuntimeManager := runtime.NewRuntimeManagerFromFactory(iRuntimeFactory, logger)
+	codeBuilderFactory := service.NewCodeBuilderFactory()
+	v := service.NewEvaluatorSourceServices(illmProvider, evaluatorExecMetrics, iConfiger, iRuntimeManager, codeBuilderFactory)
+	iPlainRateLimiter := evaluator.NewPlainRateLimiterImpl(plainLimiterFactory)
+	serviceEvaluatorService := service.NewEvaluatorServiceImpl(idgen2, rateLimiter, rmqFactory, iEvaluatorRepo, iEvaluatorRecordRepo, idempotentService, iConfiger, v, iPlainRateLimiter, componentIConfiger)
 	exptEventPublisher, err := producer.NewExptEventPublisher(ctx, configFactory, rmqFactory)
 	if err != nil {
 		return nil, err
@@ -97,78 +116,99 @@ func InitExperimentApplication(ctx context.Context, idgen2 idgen.IIDGenerator, d
 	}
 	iUserProvider := foundation.NewUserRPCProvider(uc)
 	userInfoService := userinfo.NewUserInfoServiceImpl(iUserProvider)
-	evaluatorRecordService := service.NewEvaluatorRecordServiceImpl(idgen2, iEvaluatorRecordRepo, exptEventPublisher, evaluatorEventPublisher, userInfoService, iExperimentRepo)
+	evaluatorRecordService := service.NewEvaluatorRecordServiceImpl(idgen2, iEvaluatorRecordRepo, exptEventPublisher, evaluatorEventPublisher, userInfoService, iExperimentRepo, iExptTurnResultRepo)
 	iTagRPCAdapter := tag.NewTagRPCProvider(tagClient)
 	iExptTurnAnnotateRecordRefDAO := mysql.NewExptTurnAnnotateRecordRefDAO(db2)
 	iExptTurnResultTagRefDAO := mysql.NewExptTurnResultTagRefDAO(db2)
 	iAnnotateRecordDAO := mysql.NewAnnotateRecordDAO(db2)
 	iExptAnnotateRepo := experiment.NewExptAnnotateRepo(iExptTurnAnnotateRecordRefDAO, iExptTurnResultTagRefDAO, iAnnotateRecordDAO, idgen2)
-	exptAggrResultService := service.NewExptAggrResultService(iExptTurnResultRepo, iExptAggrResultRepo, iExperimentRepo, exptMetric, serviceEvaluatorService, evaluatorRecordService, iTagRPCAdapter, iExptAnnotateRepo)
+	evalTargetDAO := mysql3.NewEvalTargetDAO(db2)
+	evalTargetVersionDAO := mysql3.NewEvalTargetVersionDAO(db2)
+	evalTargetRecordDAO := mysql3.NewEvalTargetRecordDAO(db2)
+	iEvalTargetRepo := target.NewEvalTargetRepo(idgen2, db2, evalTargetDAO, evalTargetVersionDAO, evalTargetRecordDAO, recordDataStorage, iLatestWriteTracker)
+	evalTargetMetrics := metrics3.NewEvalTargetMetrics(meter)
+	iPromptRPCAdapter := prompt.NewPromptRPCAdapter(pms, pes)
+	v2 := service.NewSourceTargetOperators(iPromptRPCAdapter)
+	iEvalTargetService := service.NewEvalTargetServiceImpl(iEvalTargetRepo, idgen2, evalTargetMetrics, v2, trajectoryAdapter, componentIConfiger)
+	iLocker := NewLock(cmdable)
+	exptAggrResultService := service.NewExptAggrResultService(iExptTurnResultRepo, iExptAggrResultRepo, iExperimentRepo, exptMetric, serviceEvaluatorService, evaluatorRecordService, iTagRPCAdapter, iExptAnnotateRepo, iEvalTargetService, exptEventPublisher, iLocker)
 	iExptItemResultDAO := mysql.NewExptItemResultDAO(db2)
 	iExptItemResultRepo := experiment.NewExptItemResultRepo(iExptItemResultDAO)
 	iExptStatsDAO := mysql.NewExptStatsDAO(db2)
 	iExptStatsRepo := experiment.NewExptStatsRepo(iExptStatsDAO)
-	componentIConfiger, err := conf2.NewExptConfiger(configFactory)
-	if err != nil {
-		return nil, err
-	}
 	iExptTurnResultFilterDAO := ck2.NewExptTurnResultFilterDAO(ckDb, componentIConfiger)
 	iExptTurnResultFilterKeyMappingDAO := mysql.NewExptTurnResultFilterKeyMappingDAO(db2)
 	iExptTurnResultFilterRepo := experiment.NewExptTurnResultFilterRepo(iExptTurnResultFilterDAO, iExptTurnResultFilterKeyMappingDAO)
-	evalTargetDAO := mysql3.NewEvalTargetDAO(db2)
-	evalTargetVersionDAO := mysql3.NewEvalTargetVersionDAO(db2)
-	evalTargetRecordDAO := mysql3.NewEvalTargetRecordDAO(db2)
-	iEvalTargetRepo := target.NewEvalTargetRepo(idgen2, db2, evalTargetDAO, evalTargetVersionDAO, evalTargetRecordDAO, iLatestWriteTracker)
-	evalTargetMetrics := metrics3.NewEvalTargetMetrics(meter)
-	iPromptRPCAdapter := prompt.NewPromptRPCAdapter(pms, pes)
-	v2 := NewSourceTargetOperators(iPromptRPCAdapter)
-	iEvalTargetService := service.NewEvalTargetServiceImpl(iEvalTargetRepo, idgen2, evalTargetMetrics, v2)
 	iDatasetRPCAdapter := data.NewDatasetRPCAdapter(sds)
 	evaluationSetVersionService := service.NewEvaluationSetVersionServiceImpl(iDatasetRPCAdapter)
 	iEvaluationSetService := service.NewEvaluationSetServiceImpl(iDatasetRPCAdapter)
 	evaluationSetItemService := service.NewEvaluationSetItemServiceImpl(iDatasetRPCAdapter)
-	exptResultService := service.NewExptResultService(iExptItemResultRepo, iExptTurnResultRepo, iExptAnnotateRepo, iExptStatsRepo, iExperimentRepo, exptMetric, iLatestWriteTracker, idgen2, iExptTurnResultFilterRepo, serviceEvaluatorService, iEvalTargetService, evaluationSetVersionService, iEvaluationSetService, evaluatorRecordService, evaluationSetItemService, exptEventPublisher, iTagRPCAdapter)
+	iEvaluationAnalysisService := service.NewEvaluationAnalysisService()
+	iFileProvider := foundation.NewFileRPCProvider(fileClient)
+	exptResultService := service.NewExptResultService(iExptItemResultRepo, iExptTurnResultRepo, iExptAnnotateRepo, iExptStatsRepo, iExperimentRepo, exptMetric, iLatestWriteTracker, idgen2, iExptTurnResultFilterRepo, serviceEvaluatorService, iEvalTargetService, evaluationSetVersionService, iEvaluationSetService, evaluatorRecordService, evaluationSetItemService, exptEventPublisher, iTagRPCAdapter, iEvaluationAnalysisService, iFileProvider)
 	iExptRunLogDAO := mysql.NewExptRunLogDAO(db2)
 	iExptRunLogRepo := experiment.NewExptRunLogRepo(iExptRunLogDAO)
 	iQuotaDAO := dao.NewQuotaDAO(cmdable)
-	iLocker := NewLock(cmdable)
 	quotaRepo := experiment.NewQuotaService(iQuotaDAO, iLocker)
-	iExptManager := service.NewExptManager(exptResultService, iExperimentRepo, iExptRunLogRepo, iExptStatsRepo, iExptItemResultRepo, iExptTurnResultRepo, componentIConfiger, quotaRepo, iLocker, idempotentService, exptEventPublisher, auditClient, idgen2, exptMetric, iLatestWriteTracker, evaluationSetVersionService, iEvaluationSetService, iEvalTargetService, serviceEvaluatorService, benefitSvc, exptAggrResultService)
-	schedulerModeFactory := service.NewSchedulerModeFactory(iExptManager, iExptItemResultRepo, iExptStatsRepo, iExptTurnResultRepo, idgen2, evaluationSetItemService, iExperimentRepo, idempotentService, componentIConfiger, exptEventPublisher, evaluatorRecordService, exptResultService)
+	iExptTemplateDAO := mysql.NewExptTemplateDAO(db2)
+	iExptTemplateEvaluatorRefDAO := mysql.NewExptTemplateEvaluatorRefDAO(db2)
+	iExptTemplateRepo := experiment.NewExptTemplateRepo(iExptTemplateDAO, iExptTemplateEvaluatorRefDAO, idgen2)
+	iTaskRPCAdapter := task.NewTaskRPCAdapter(taskClient)
+	pipelineListAdapter := pipeline.NewPipelineListAdapter()
+	iExptTemplateManager := service.NewExptTemplateManager(iExptTemplateRepo, idgen2, serviceEvaluatorService, iEvalTargetService, iEvaluationSetService, evaluationSetVersionService, iLatestWriteTracker, iTaskRPCAdapter, pipelineListAdapter, iExperimentRepo)
+	iNotifyRPCAdapter := notify.NewNotifyRPCAdapter()
+	iExptManager := service.NewExptManager(exptResultService, iExperimentRepo, iExptRunLogRepo, iExptStatsRepo, iExptItemResultRepo, iExptTurnResultRepo, componentIConfiger, quotaRepo, iLocker, idempotentService, exptEventPublisher, auditClient, idgen2, exptMetric, iLatestWriteTracker, evaluationSetVersionService, iEvaluationSetService, iEvalTargetService, serviceEvaluatorService, benefitSvc, exptAggrResultService, iExptTemplateRepo, iExptTemplateManager, iNotifyRPCAdapter, iUserProvider, pipelineListAdapter)
+	schedulerModeFactory := service.NewSchedulerModeFactory(iExptManager, iExptItemResultRepo, iExptStatsRepo, iExptTurnResultRepo, idgen2, evaluationSetItemService, iExperimentRepo, idempotentService, componentIConfiger, exptEventPublisher, evaluatorRecordService, exptResultService, iExptTemplateManager, iExptRunLogRepo, iLocker)
 	exptSchedulerEvent := service.NewExptSchedulerSvc(iExptManager, iExperimentRepo, iExptItemResultRepo, iExptTurnResultRepo, iExptStatsRepo, iExptRunLogRepo, idempotentService, componentIConfiger, quotaRepo, iLocker, exptEventPublisher, auditClient, exptMetric, exptResultService, idgen2, evaluationSetItemService, schedulerModeFactory)
-	exptItemEvalEvent := service.NewExptRecordEvalService(iExptManager, componentIConfiger, exptEventPublisher, iExptItemResultRepo, iExptTurnResultRepo, iExptStatsRepo, iExperimentRepo, quotaRepo, iLocker, idempotentService, auditClient, exptMetric, exptResultService, iEvalTargetService, evaluationSetItemService, evaluatorRecordService, serviceEvaluatorService, idgen2, benefitSvc)
+	iEvalAsyncDAO := dao.NewEvalAsyncDAO(cmdable)
+	iEvalAsyncRepo := experiment.NewEvalAsyncRepo(iEvalAsyncDAO)
+	exptItemEvalEvent := service.NewExptRecordEvalService(iExptManager, componentIConfiger, exptEventPublisher, iExptItemResultRepo, iExptTurnResultRepo, iExptStatsRepo, iExperimentRepo, quotaRepo, iLocker, idempotentService, auditClient, exptMetric, exptResultService, iEvalTargetService, evaluationSetItemService, evaluatorRecordService, serviceEvaluatorService, idgen2, benefitSvc, iEvalAsyncRepo)
 	iAuthProvider := foundation.NewAuthRPCProvider(authClient)
 	iExptAnnotateService := service.NewExptAnnotateService(db2, iExptAnnotateRepo, iExptTurnResultRepo, exptEventPublisher, evaluationSetItemService, iExperimentRepo, exptResultService, iExptTurnResultFilterRepo, iExptAggrResultRepo)
 	exptResultExportRecordDAO := mysql.NewExptResultExportRecordDAO(db2)
 	iExptResultExportRecordRepo := experiment.NewExptResultExportRecordRepo(exptResultExportRecordDAO, idgen2)
-	iExptResultExportService := service.NewExptResultExportService(db2, iExptResultExportRecordRepo, iExperimentRepo, iExptTurnResultRepo, exptEventPublisher, exptResultService, objectStorage, componentIConfiger, benefitSvc)
+	iurlProcessor := service.NewDefaultURLProcessor()
+	iExptResultExportService := service.NewExptResultExportService(db2, iExptResultExportRecordRepo, iExperimentRepo, iExptTurnResultRepo, exptEventPublisher, exptResultService, objectStorage, componentIConfiger, benefitSvc, iurlProcessor, evaluationSetItemService)
 	iExptInsightAnalysisRecordDAO := mysql.NewExptInsightAnalysisRecordDAO(db2)
 	iExptInsightAnalysisFeedbackCommentDAO := mysql.NewExptInsightAnalysisFeedbackCommentDAO(db2)
 	iExptInsightAnalysisFeedbackVoteDAO := mysql.NewExptInsightAnalysisFeedbackVoteDAO(db2)
-	iExptInsightAnalysisRecordRepo := experiment.NewExptInsightAnalysisRecordRepo(iExptInsightAnalysisRecordDAO, iExptInsightAnalysisFeedbackCommentDAO, iExptInsightAnalysisFeedbackVoteDAO, idgen2)
+	iExptInsightAnalysisRecordRepo := experiment.NewExptInsightAnalysisRecordRepo(iExptInsightAnalysisRecordDAO, iExptInsightAnalysisFeedbackCommentDAO, iExptInsightAnalysisFeedbackVoteDAO, idgen2, iLatestWriteTracker)
 	iAgentAdapter := agent.NewAgentAdapter()
-	iNotifyRPCAdapter := notify.NewNotifyRPCAdapter()
-	iExptInsightAnalysisService := service.NewInsightAnalysisService(iExptInsightAnalysisRecordRepo, exptEventPublisher, objectStorage, iAgentAdapter, iExptResultExportService, iNotifyRPCAdapter, iUserProvider, iExperimentRepo)
-	iExperimentApplication := NewExperimentApplication(exptAggrResultService, exptResultService, iExptManager, exptSchedulerEvent, exptItemEvalEvent, idgen2, componentIConfiger, iAuthProvider, userInfoService, iEvalTargetService, evaluationSetItemService, iExptAnnotateService, iTagRPCAdapter, iExptResultExportService, iExptInsightAnalysisService)
+	iExptInsightAnalysisService := service.NewInsightAnalysisService(iExptInsightAnalysisRecordRepo, exptEventPublisher, objectStorage, iAgentAdapter, iExptResultExportService, iNotifyRPCAdapter, iUserProvider, iExperimentRepo, iEvalTargetRepo)
+	exptLifecycleEventHandler := service.NewExptLifecycleEventHandler(iExperimentRepo, iNotifyRPCAdapter, iUserProvider)
+	iExperimentApplication := NewExperimentApplication(exptAggrResultService, exptResultService, iExptManager, exptSchedulerEvent, exptItemEvalEvent, idgen2, componentIConfiger, iAuthProvider, userInfoService, iEvalTargetService, evaluationSetItemService, iExptAnnotateService, iTagRPCAdapter, iExptResultExportService, iExptInsightAnalysisService, serviceEvaluatorService, iExptTemplateManager, iFileProvider, exptLifecycleEventHandler)
 	return iExperimentApplication, nil
 }
 
-func InitEvaluatorApplication(ctx context.Context, idgen2 idgen.IIDGenerator, authClient authservice.Client, db2 db.Provider, configFactory conf.IConfigLoaderFactory, rmqFactory mq.IFactory, llmClient llmruntimeservice.Client, meter metrics.Meter, userClient userservice.Client, auditClient audit.IAuditService, cmdable redis.Cmdable, benefitSvc benefit.IBenefitService, limiterFactory limiter.IRateLimiterFactory, fileClient fileservice.Client) (evaluation.EvaluatorService, error) {
+func InitEvaluatorApplication(ctx context.Context, idgen2 idgen.IIDGenerator, authClient authservice.Client, db2 db.Provider, configFactory conf.IConfigLoaderFactory, rmqFactory mq.IFactory, llmClient llmruntimeservice.Client, meter metrics.Meter, userClient userservice.Client, auditClient audit.IAuditService, cmdable redis.Cmdable, benefitSvc benefit.IBenefitService, limiterFactory limiter.IRateLimiterFactory, fileClient fileservice.Client, plainLimiterFactory limiter.IPlainRateLimiterFactory, ckDb ck.Provider, tagClient tagservice.Client, promptClient promptmanageservice.Client, pec promptexecuteservice.Client, dataClient datasetservice.Client, tracerFactory func() observabilitytraceservice.Client, batchObjectStorage fileserver.BatchObjectStorage) (evaluation.EvaluatorService, error) {
 	iConfiger := conf2.NewEvaluatorConfiger(configFactory)
 	iAuthProvider := foundation.NewAuthRPCProvider(authClient)
 	rateLimiter := evaluator.NewRateLimiterImpl(ctx, limiterFactory, iConfiger)
 	evaluatorDAO := mysql2.NewEvaluatorDAO(db2)
 	evaluatorVersionDAO := mysql2.NewEvaluatorVersionDAO(db2)
+	evaluatorTagDAO := mysql2.NewEvaluatorTagDAO(db2)
 	iLatestWriteTracker := platestwrite.NewLatestWriteTracker(cmdable)
-	iEvaluatorRepo := evaluator.NewEvaluatorRepo(idgen2, db2, evaluatorDAO, evaluatorVersionDAO, iLatestWriteTracker)
+	evaluatorTemplateDAO := mysql2.NewEvaluatorTemplateDAO(db2)
+	iEvaluatorRepo := evaluator.NewEvaluatorRepo(idgen2, db2, evaluatorDAO, evaluatorVersionDAO, evaluatorTagDAO, iLatestWriteTracker, evaluatorTemplateDAO)
 	evaluatorRecordDAO := mysql2.NewEvaluatorRecordDAO(db2)
-	iEvaluatorRecordRepo := evaluator.NewEvaluatorRecordRepo(idgen2, db2, evaluatorRecordDAO)
+	componentIConfiger, err := conf2.NewConfiger(configFactory)
+	if err != nil {
+		return nil, err
+	}
+	recordDataStorage := storage.NewRecordDataStorage(batchObjectStorage, componentIConfiger)
+	iEvaluatorRecordRepo := evaluator.NewEvaluatorRecordRepo(idgen2, db2, evaluatorRecordDAO, recordDataStorage)
 	iIdemDAO := redis2.NewIdemDAO(cmdable)
 	idempotentService := idem.NewIdempotentService(iIdemDAO)
 	illmProvider := llm.NewLLMRPCProvider(llmClient)
 	evaluatorExecMetrics := evaluator2.NewEvaluatorMetrics(meter)
-	v := NewEvaluatorSourceServices(illmProvider, evaluatorExecMetrics, iConfiger)
-	evaluatorService := service.NewEvaluatorServiceImpl(idgen2, rateLimiter, rmqFactory, iEvaluatorRepo, iEvaluatorRecordRepo, idempotentService, iConfiger, v)
+	logger := runtime.NewLogger()
+	sandboxConfig := runtime.NewSandboxConfig()
+	iRuntimeFactory := runtime.NewRuntimeFactory(logger, sandboxConfig)
+	iRuntimeManager := runtime.NewRuntimeManagerFromFactory(iRuntimeFactory, logger)
+	codeBuilderFactory := service.NewCodeBuilderFactory()
+	v := service.NewEvaluatorSourceServices(illmProvider, evaluatorExecMetrics, iConfiger, iRuntimeManager, codeBuilderFactory)
+	iPlainRateLimiter := evaluator.NewPlainRateLimiterImpl(plainLimiterFactory)
+	evaluatorService := service.NewEvaluatorServiceImpl(idgen2, rateLimiter, rmqFactory, iEvaluatorRepo, iEvaluatorRecordRepo, idempotentService, iConfiger, v, iPlainRateLimiter, componentIConfiger)
 	exptEventPublisher, err := producer.NewExptEventPublisher(ctx, configFactory, rmqFactory)
 	if err != nil {
 		return nil, err
@@ -182,9 +222,44 @@ func InitEvaluatorApplication(ctx context.Context, idgen2 idgen.IIDGenerator, au
 	iExptDAO := mysql.NewExptDAO(db2)
 	iExptEvaluatorRefDAO := mysql.NewExptEvaluatorRefDAO(db2)
 	iExperimentRepo := experiment.NewExptRepo(iExptDAO, iExptEvaluatorRefDAO, idgen2)
-	evaluatorRecordService := service.NewEvaluatorRecordServiceImpl(idgen2, iEvaluatorRecordRepo, exptEventPublisher, evaluatorEventPublisher, userInfoService, iExperimentRepo)
+	exptTurnResultDAO := mysql.NewExptTurnResultDAO(db2)
+	iExptTurnEvaluatorResultRefDAO := mysql.NewExptTurnEvaluatorResultRefDAO(db2)
+	iExptTurnResultRepo := experiment.NewExptTurnResultRepo(idgen2, exptTurnResultDAO, iExptTurnEvaluatorResultRefDAO)
+	evaluatorRecordService := service.NewEvaluatorRecordServiceImpl(idgen2, iEvaluatorRecordRepo, exptEventPublisher, evaluatorEventPublisher, userInfoService, iExperimentRepo, iExptTurnResultRepo)
+	evaluatorTemplateRepo := evaluator.NewEvaluatorTemplateRepo(evaluatorTagDAO, evaluatorTemplateDAO, idgen2)
+	evaluatorTemplateService := service.NewEvaluatorTemplateService(evaluatorTemplateRepo)
 	iFileProvider := foundation.NewFileRPCProvider(fileClient)
-	evaluationEvaluatorService := NewEvaluatorHandlerImpl(idgen2, iConfiger, iAuthProvider, evaluatorService, evaluatorRecordService, evaluatorExecMetrics, userInfoService, auditClient, benefitSvc, iFileProvider)
+	iExptItemResultDAO := mysql.NewExptItemResultDAO(db2)
+	iExptItemResultRepo := experiment.NewExptItemResultRepo(iExptItemResultDAO)
+	iExptTurnAnnotateRecordRefDAO := mysql.NewExptTurnAnnotateRecordRefDAO(db2)
+	iExptTurnResultTagRefDAO := mysql.NewExptTurnResultTagRefDAO(db2)
+	iAnnotateRecordDAO := mysql.NewAnnotateRecordDAO(db2)
+	iExptAnnotateRepo := experiment.NewExptAnnotateRepo(iExptTurnAnnotateRecordRefDAO, iExptTurnResultTagRefDAO, iAnnotateRecordDAO, idgen2)
+	iExptStatsDAO := mysql.NewExptStatsDAO(db2)
+	iExptStatsRepo := experiment.NewExptStatsRepo(iExptStatsDAO)
+	exptMetric := metrics2.NewExperimentMetric(meter)
+	iExptTurnResultFilterDAO := ck2.NewExptTurnResultFilterDAO(ckDb, componentIConfiger)
+	iExptTurnResultFilterKeyMappingDAO := mysql.NewExptTurnResultFilterKeyMappingDAO(db2)
+	iExptTurnResultFilterRepo := experiment.NewExptTurnResultFilterRepo(iExptTurnResultFilterDAO, iExptTurnResultFilterKeyMappingDAO)
+	evalTargetDAO := mysql3.NewEvalTargetDAO(db2)
+	evalTargetVersionDAO := mysql3.NewEvalTargetVersionDAO(db2)
+	evalTargetRecordDAO := mysql3.NewEvalTargetRecordDAO(db2)
+	iEvalTargetRepo := target.NewEvalTargetRepo(idgen2, db2, evalTargetDAO, evalTargetVersionDAO, evalTargetRecordDAO, recordDataStorage, iLatestWriteTracker)
+	evalTargetMetrics := metrics3.NewEvalTargetMetrics(meter)
+	iPromptRPCAdapter := prompt.NewPromptRPCAdapter(promptClient, pec)
+	v2 := service.NewSourceTargetOperators(iPromptRPCAdapter)
+	iTrajectoryAdapter := trajectory.NewAdapter(tracerFactory)
+	iEvalTargetService := service.NewEvalTargetServiceImpl(iEvalTargetRepo, idgen2, evalTargetMetrics, v2, iTrajectoryAdapter, componentIConfiger)
+	iDatasetRPCAdapter := data.NewDatasetRPCAdapter(dataClient)
+	evaluationSetVersionService := service.NewEvaluationSetVersionServiceImpl(iDatasetRPCAdapter)
+	iEvaluationSetService := service.NewEvaluationSetServiceImpl(iDatasetRPCAdapter)
+	evaluationSetItemService := service.NewEvaluationSetItemServiceImpl(iDatasetRPCAdapter)
+	iTagRPCAdapter := tag.NewTagRPCProvider(tagClient)
+	iEvaluationAnalysisService := service.NewEvaluationAnalysisService()
+	exptResultService := service.NewExptResultService(iExptItemResultRepo, iExptTurnResultRepo, iExptAnnotateRepo, iExptStatsRepo, iExperimentRepo, exptMetric, iLatestWriteTracker, idgen2, iExptTurnResultFilterRepo, evaluatorService, iEvalTargetService, evaluationSetVersionService, iEvaluationSetService, evaluatorRecordService, evaluationSetItemService, exptEventPublisher, iTagRPCAdapter, iEvaluationAnalysisService, iFileProvider)
+	iEvalAsyncDAO := dao.NewEvalAsyncDAO(cmdable)
+	iEvalAsyncRepo := experiment.NewEvalAsyncRepo(iEvalAsyncDAO)
+	evaluationEvaluatorService := NewEvaluatorHandlerImpl(idgen2, iConfiger, iAuthProvider, evaluatorService, evaluatorRecordService, evaluatorTemplateService, evaluatorExecMetrics, userInfoService, auditClient, benefitSvc, iFileProvider, v, exptResultService, iEvalAsyncRepo)
 	return evaluationEvaluatorService, nil
 }
 
@@ -202,19 +277,140 @@ func InitEvaluationSetApplication(client datasetservice.Client, authClient auths
 	return evaluationSetService
 }
 
-func InitEvalTargetApplication(ctx context.Context, idgen2 idgen.IIDGenerator, db2 db.Provider, client promptmanageservice.Client, executeClient promptexecuteservice.Client, authClient authservice.Client, cmdable redis.Cmdable, meter metrics.Meter) evaluation.EvalTargetService {
+func InitEvalTargetApplication(ctx context.Context, idgen2 idgen.IIDGenerator, db2 db.Provider, client promptmanageservice.Client, executeClient promptexecuteservice.Client, authClient authservice.Client, cmdable redis.Cmdable, meter metrics.Meter, trajectoryAdapter rpc.ITrajectoryAdapter, configFactory conf.IConfigLoaderFactory, batchObjectStorage fileserver.BatchObjectStorage) (evaluation.EvalTargetService, error) {
 	iAuthProvider := foundation.NewAuthRPCProvider(authClient)
 	evalTargetDAO := mysql3.NewEvalTargetDAO(db2)
 	evalTargetVersionDAO := mysql3.NewEvalTargetVersionDAO(db2)
 	evalTargetRecordDAO := mysql3.NewEvalTargetRecordDAO(db2)
+	iConfiger, err := conf2.NewConfiger(configFactory)
+	if err != nil {
+		return nil, err
+	}
+	recordDataStorage := storage.NewRecordDataStorage(batchObjectStorage, iConfiger)
 	iLatestWriteTracker := platestwrite.NewLatestWriteTracker(cmdable)
-	iEvalTargetRepo := target.NewEvalTargetRepo(idgen2, db2, evalTargetDAO, evalTargetVersionDAO, evalTargetRecordDAO, iLatestWriteTracker)
+	iEvalTargetRepo := target.NewEvalTargetRepo(idgen2, db2, evalTargetDAO, evalTargetVersionDAO, evalTargetRecordDAO, recordDataStorage, iLatestWriteTracker)
 	evalTargetMetrics := metrics3.NewEvalTargetMetrics(meter)
 	iPromptRPCAdapter := prompt.NewPromptRPCAdapter(client, executeClient)
-	v := NewSourceTargetOperators(iPromptRPCAdapter)
-	iEvalTargetService := service.NewEvalTargetServiceImpl(iEvalTargetRepo, idgen2, evalTargetMetrics, v)
-	evalTargetService := NewEvalTargetHandlerImpl(iAuthProvider, iEvalTargetService, v)
-	return evalTargetService
+	v := service.NewSourceTargetOperators(iPromptRPCAdapter)
+	iEvalTargetService := service.NewEvalTargetServiceImpl(iEvalTargetRepo, idgen2, evalTargetMetrics, v, trajectoryAdapter, iConfiger)
+	iEvalAsyncDAO := dao.NewEvalAsyncDAO(cmdable)
+	iEvalAsyncRepo := experiment.NewEvalAsyncRepo(iEvalAsyncDAO)
+	evalTargetService := NewEvalTargetHandlerImpl(iAuthProvider, iEvalTargetService, v, iEvalAsyncRepo)
+	return evalTargetService, nil
+}
+
+func InitEvalOpenAPIApplication(ctx context.Context, configFactory conf.IConfigLoaderFactory, rmqFactory mq.IFactory, cmdable redis.Cmdable, idgen2 idgen.IIDGenerator, db2 db.Provider, client promptmanageservice.Client, executeClient promptexecuteservice.Client, authClient authservice.Client, meter metrics.Meter, dataClient datasetservice.Client, userClient userservice.Client, llmClient llmruntimeservice.Client, tagClient tagservice.Client, limiterFactory limiter.IRateLimiterFactory, objectStorage fileserver.ObjectStorage, batchObjectStorage fileserver.BatchObjectStorage, auditClient audit.IAuditService, benefitService benefit.IBenefitService, ckProvider ck.Provider, plainLimiterFactory limiter.IPlainRateLimiterFactory, trajectoryAdapter rpc.ITrajectoryAdapter, fileClient fileservice.Client, taskClient taskservice.Client) (IEvalOpenAPIApplication, error) {
+	iEvalAsyncDAO := dao.NewEvalAsyncDAO(cmdable)
+	iEvalAsyncRepo := experiment.NewEvalAsyncRepo(iEvalAsyncDAO)
+	exptEventPublisher, err := producer.NewExptEventPublisher(ctx, configFactory, rmqFactory)
+	if err != nil {
+		return nil, err
+	}
+	evalTargetDAO := mysql3.NewEvalTargetDAO(db2)
+	evalTargetVersionDAO := mysql3.NewEvalTargetVersionDAO(db2)
+	evalTargetRecordDAO := mysql3.NewEvalTargetRecordDAO(db2)
+	iConfiger, err := conf2.NewConfiger(configFactory)
+	if err != nil {
+		return nil, err
+	}
+	recordDataStorage := storage.NewRecordDataStorage(batchObjectStorage, iConfiger)
+	iLatestWriteTracker := platestwrite.NewLatestWriteTracker(cmdable)
+	iEvalTargetRepo := target.NewEvalTargetRepo(idgen2, db2, evalTargetDAO, evalTargetVersionDAO, evalTargetRecordDAO, recordDataStorage, iLatestWriteTracker)
+	evalTargetMetrics := metrics3.NewEvalTargetMetrics(meter)
+	iPromptRPCAdapter := prompt.NewPromptRPCAdapter(client, executeClient)
+	v := service.NewSourceTargetOperators(iPromptRPCAdapter)
+	iEvalTargetService := service.NewEvalTargetServiceImpl(iEvalTargetRepo, idgen2, evalTargetMetrics, v, trajectoryAdapter, iConfiger)
+	iAuthProvider := foundation.NewAuthRPCProvider(authClient)
+	iDatasetRPCAdapter := data.NewDatasetRPCAdapter(dataClient)
+	iEvaluationSetService := service.NewEvaluationSetServiceImpl(iDatasetRPCAdapter)
+	evaluationSetVersionService := service.NewEvaluationSetVersionServiceImpl(iDatasetRPCAdapter)
+	evaluationSetItemService := service.NewEvaluationSetItemServiceImpl(iDatasetRPCAdapter)
+	evaluationSetSchemaService := service.NewEvaluationSetSchemaServiceImpl(iDatasetRPCAdapter)
+	openAPIEvaluationMetrics := openapi.NewEvaluationOApiMetrics(meter)
+	iUserProvider := foundation.NewUserRPCProvider(userClient)
+	userInfoService := userinfo.NewUserInfoServiceImpl(iUserProvider)
+	exptTurnResultDAO := mysql.NewExptTurnResultDAO(db2)
+	iExptTurnEvaluatorResultRefDAO := mysql.NewExptTurnEvaluatorResultRefDAO(db2)
+	iExptTurnResultRepo := experiment.NewExptTurnResultRepo(idgen2, exptTurnResultDAO, iExptTurnEvaluatorResultRefDAO)
+	exptAggrResultDAO := mysql.NewExptAggrResultDAO(db2)
+	iExptAggrResultRepo := experiment.NewExptAggrResultRepo(exptAggrResultDAO, idgen2)
+	iExptDAO := mysql.NewExptDAO(db2)
+	iExptEvaluatorRefDAO := mysql.NewExptEvaluatorRefDAO(db2)
+	iExperimentRepo := experiment.NewExptRepo(iExptDAO, iExptEvaluatorRefDAO, idgen2)
+	exptMetric := metrics2.NewExperimentMetric(meter)
+	confIConfiger := conf2.NewEvaluatorConfiger(configFactory)
+	rateLimiter := evaluator.NewRateLimiterImpl(ctx, limiterFactory, confIConfiger)
+	evaluatorDAO := mysql2.NewEvaluatorDAO(db2)
+	evaluatorVersionDAO := mysql2.NewEvaluatorVersionDAO(db2)
+	evaluatorTagDAO := mysql2.NewEvaluatorTagDAO(db2)
+	evaluatorTemplateDAO := mysql2.NewEvaluatorTemplateDAO(db2)
+	iEvaluatorRepo := evaluator.NewEvaluatorRepo(idgen2, db2, evaluatorDAO, evaluatorVersionDAO, evaluatorTagDAO, iLatestWriteTracker, evaluatorTemplateDAO)
+	evaluatorRecordDAO := mysql2.NewEvaluatorRecordDAO(db2)
+	iEvaluatorRecordRepo := evaluator.NewEvaluatorRecordRepo(idgen2, db2, evaluatorRecordDAO, recordDataStorage)
+	iIdemDAO := redis2.NewIdemDAO(cmdable)
+	idempotentService := idem.NewIdempotentService(iIdemDAO)
+	illmProvider := llm.NewLLMRPCProvider(llmClient)
+	evaluatorExecMetrics := evaluator2.NewEvaluatorMetrics(meter)
+	logger := runtime.NewLogger()
+	sandboxConfig := runtime.NewSandboxConfig()
+	iRuntimeFactory := runtime.NewRuntimeFactory(logger, sandboxConfig)
+	iRuntimeManager := runtime.NewRuntimeManagerFromFactory(iRuntimeFactory, logger)
+	codeBuilderFactory := service.NewCodeBuilderFactory()
+	v2 := service.NewEvaluatorSourceServices(illmProvider, evaluatorExecMetrics, confIConfiger, iRuntimeManager, codeBuilderFactory)
+	iPlainRateLimiter := evaluator.NewPlainRateLimiterImpl(plainLimiterFactory)
+	evaluatorService := service.NewEvaluatorServiceImpl(idgen2, rateLimiter, rmqFactory, iEvaluatorRepo, iEvaluatorRecordRepo, idempotentService, confIConfiger, v2, iPlainRateLimiter, iConfiger)
+	evaluatorEventPublisher, err := producer.NewEvaluatorEventPublisher(ctx, configFactory, rmqFactory)
+	if err != nil {
+		return nil, err
+	}
+	evaluatorRecordService := service.NewEvaluatorRecordServiceImpl(idgen2, iEvaluatorRecordRepo, exptEventPublisher, evaluatorEventPublisher, userInfoService, iExperimentRepo, iExptTurnResultRepo)
+	iTagRPCAdapter := tag.NewTagRPCProvider(tagClient)
+	iExptTurnAnnotateRecordRefDAO := mysql.NewExptTurnAnnotateRecordRefDAO(db2)
+	iExptTurnResultTagRefDAO := mysql.NewExptTurnResultTagRefDAO(db2)
+	iAnnotateRecordDAO := mysql.NewAnnotateRecordDAO(db2)
+	iExptAnnotateRepo := experiment.NewExptAnnotateRepo(iExptTurnAnnotateRecordRefDAO, iExptTurnResultTagRefDAO, iAnnotateRecordDAO, idgen2)
+	iLocker := NewLock(cmdable)
+	exptAggrResultService := service.NewExptAggrResultService(iExptTurnResultRepo, iExptAggrResultRepo, iExperimentRepo, exptMetric, evaluatorService, evaluatorRecordService, iTagRPCAdapter, iExptAnnotateRepo, iEvalTargetService, exptEventPublisher, iLocker)
+	iExptItemResultDAO := mysql.NewExptItemResultDAO(db2)
+	iExptItemResultRepo := experiment.NewExptItemResultRepo(iExptItemResultDAO)
+	iExptStatsDAO := mysql.NewExptStatsDAO(db2)
+	iExptStatsRepo := experiment.NewExptStatsRepo(iExptStatsDAO)
+	iExptTurnResultFilterDAO := ck2.NewExptTurnResultFilterDAO(ckProvider, iConfiger)
+	iExptTurnResultFilterKeyMappingDAO := mysql.NewExptTurnResultFilterKeyMappingDAO(db2)
+	iExptTurnResultFilterRepo := experiment.NewExptTurnResultFilterRepo(iExptTurnResultFilterDAO, iExptTurnResultFilterKeyMappingDAO)
+	iEvaluationAnalysisService := service.NewEvaluationAnalysisService()
+	iFileProvider := foundation.NewFileRPCProvider(fileClient)
+	exptResultService := service.NewExptResultService(iExptItemResultRepo, iExptTurnResultRepo, iExptAnnotateRepo, iExptStatsRepo, iExperimentRepo, exptMetric, iLatestWriteTracker, idgen2, iExptTurnResultFilterRepo, evaluatorService, iEvalTargetService, evaluationSetVersionService, iEvaluationSetService, evaluatorRecordService, evaluationSetItemService, exptEventPublisher, iTagRPCAdapter, iEvaluationAnalysisService, iFileProvider)
+	iExptRunLogDAO := mysql.NewExptRunLogDAO(db2)
+	iExptRunLogRepo := experiment.NewExptRunLogRepo(iExptRunLogDAO)
+	iQuotaDAO := dao.NewQuotaDAO(cmdable)
+	quotaRepo := experiment.NewQuotaService(iQuotaDAO, iLocker)
+	iExptTemplateDAO := mysql.NewExptTemplateDAO(db2)
+	iExptTemplateEvaluatorRefDAO := mysql.NewExptTemplateEvaluatorRefDAO(db2)
+	iExptTemplateRepo := experiment.NewExptTemplateRepo(iExptTemplateDAO, iExptTemplateEvaluatorRefDAO, idgen2)
+	iTaskRPCAdapter := task.NewTaskRPCAdapter(taskClient)
+	pipelineListAdapter := pipeline.NewPipelineListAdapter()
+	iExptTemplateManager := service.NewExptTemplateManager(iExptTemplateRepo, idgen2, evaluatorService, iEvalTargetService, iEvaluationSetService, evaluationSetVersionService, iLatestWriteTracker, iTaskRPCAdapter, pipelineListAdapter, iExperimentRepo)
+	iNotifyRPCAdapter := notify.NewNotifyRPCAdapter()
+	iExptManager := service.NewExptManager(exptResultService, iExperimentRepo, iExptRunLogRepo, iExptStatsRepo, iExptItemResultRepo, iExptTurnResultRepo, iConfiger, quotaRepo, iLocker, idempotentService, exptEventPublisher, auditClient, idgen2, exptMetric, iLatestWriteTracker, evaluationSetVersionService, iEvaluationSetService, iEvalTargetService, evaluatorService, benefitService, exptAggrResultService, iExptTemplateRepo, iExptTemplateManager, iNotifyRPCAdapter, iUserProvider, pipelineListAdapter)
+	schedulerModeFactory := service.NewSchedulerModeFactory(iExptManager, iExptItemResultRepo, iExptStatsRepo, iExptTurnResultRepo, idgen2, evaluationSetItemService, iExperimentRepo, idempotentService, iConfiger, exptEventPublisher, evaluatorRecordService, exptResultService, iExptTemplateManager, iExptRunLogRepo, iLocker)
+	exptSchedulerEvent := service.NewExptSchedulerSvc(iExptManager, iExperimentRepo, iExptItemResultRepo, iExptTurnResultRepo, iExptStatsRepo, iExptRunLogRepo, idempotentService, iConfiger, quotaRepo, iLocker, exptEventPublisher, auditClient, exptMetric, exptResultService, idgen2, evaluationSetItemService, schedulerModeFactory)
+	exptItemEvalEvent := service.NewExptRecordEvalService(iExptManager, iConfiger, exptEventPublisher, iExptItemResultRepo, iExptTurnResultRepo, iExptStatsRepo, iExperimentRepo, quotaRepo, iLocker, idempotentService, auditClient, exptMetric, exptResultService, iEvalTargetService, evaluationSetItemService, evaluatorRecordService, evaluatorService, idgen2, benefitService, iEvalAsyncRepo)
+	iExptAnnotateService := service.NewExptAnnotateService(db2, iExptAnnotateRepo, iExptTurnResultRepo, exptEventPublisher, evaluationSetItemService, iExperimentRepo, exptResultService, iExptTurnResultFilterRepo, iExptAggrResultRepo)
+	exptResultExportRecordDAO := mysql.NewExptResultExportRecordDAO(db2)
+	iExptResultExportRecordRepo := experiment.NewExptResultExportRecordRepo(exptResultExportRecordDAO, idgen2)
+	iurlProcessor := service.NewDefaultURLProcessor()
+	iExptResultExportService := service.NewExptResultExportService(db2, iExptResultExportRecordRepo, iExperimentRepo, iExptTurnResultRepo, exptEventPublisher, exptResultService, objectStorage, iConfiger, benefitService, iurlProcessor, evaluationSetItemService)
+	iExptInsightAnalysisRecordDAO := mysql.NewExptInsightAnalysisRecordDAO(db2)
+	iExptInsightAnalysisFeedbackCommentDAO := mysql.NewExptInsightAnalysisFeedbackCommentDAO(db2)
+	iExptInsightAnalysisFeedbackVoteDAO := mysql.NewExptInsightAnalysisFeedbackVoteDAO(db2)
+	iExptInsightAnalysisRecordRepo := experiment.NewExptInsightAnalysisRecordRepo(iExptInsightAnalysisRecordDAO, iExptInsightAnalysisFeedbackCommentDAO, iExptInsightAnalysisFeedbackVoteDAO, idgen2, iLatestWriteTracker)
+	iAgentAdapter := agent.NewAgentAdapter()
+	iExptInsightAnalysisService := service.NewInsightAnalysisService(iExptInsightAnalysisRecordRepo, exptEventPublisher, objectStorage, iAgentAdapter, iExptResultExportService, iNotifyRPCAdapter, iUserProvider, iExperimentRepo, iEvalTargetRepo)
+	exptLifecycleEventHandler := service.NewExptLifecycleEventHandler(iExperimentRepo, iNotifyRPCAdapter, iUserProvider)
+	iExperimentApplication := NewExperimentApplication(exptAggrResultService, exptResultService, iExptManager, exptSchedulerEvent, exptItemEvalEvent, idgen2, iConfiger, iAuthProvider, userInfoService, iEvalTargetService, evaluationSetItemService, iExptAnnotateService, iTagRPCAdapter, iExptResultExportService, iExptInsightAnalysisService, evaluatorService, iExptTemplateManager, iFileProvider, exptLifecycleEventHandler)
+	v3 := NewEvalOpenAPIApplication(iEvalAsyncRepo, exptEventPublisher, iEvalTargetService, iAuthProvider, iEvaluationSetService, evaluationSetVersionService, evaluationSetItemService, evaluationSetSchemaService, openAPIEvaluationMetrics, userInfoService, iExperimentApplication, iExptManager, exptResultService, exptAggrResultService, evaluatorService, evaluatorRecordService, iExptTemplateManager, iConfiger)
+	return v3, nil
 }
 
 // wire.go:
@@ -223,43 +419,28 @@ var (
 	flagSet = wire.NewSet(platestwrite.NewLatestWriteTracker)
 
 	experimentSet = wire.NewSet(
-		NewExperimentApplication, service.NewExptManager, service.NewExptResultService, service.NewExptAggrResultService, service.NewExptSchedulerSvc, service.NewExptRecordEvalService, service.NewExptAnnotateService, service.NewExptResultExportService, service.NewInsightAnalysisService, service.NewSchedulerModeFactory, experiment.NewExptRepo, experiment.NewExptStatsRepo, experiment.NewExptAggrResultRepo, experiment.NewExptItemResultRepo, experiment.NewExptTurnResultRepo, experiment.NewExptRunLogRepo, experiment.NewExptTurnResultFilterRepo, experiment.NewExptAnnotateRepo, experiment.NewExptResultExportRecordRepo, experiment.NewExptInsightAnalysisRecordRepo, experiment.NewQuotaService, idem.NewIdempotentService, mysql.NewExptDAO, mysql.NewExptEvaluatorRefDAO, mysql.NewExptRunLogDAO, mysql.NewExptStatsDAO, mysql.NewExptTurnResultDAO, mysql.NewExptItemResultDAO, mysql.NewExptTurnEvaluatorResultRefDAO, mysql.NewExptTurnResultFilterKeyMappingDAO, mysql.NewExptAggrResultDAO, mysql.NewExptTurnAnnotateRecordRefDAO, mysql.NewAnnotateRecordDAO, mysql.NewExptTurnResultTagRefDAO, mysql.NewExptResultExportRecordDAO, mysql.NewExptInsightAnalysisRecordDAO, mysql.NewExptInsightAnalysisFeedbackVoteDAO, mysql.NewExptInsightAnalysisFeedbackCommentDAO, dao.NewQuotaDAO, redis2.NewIdemDAO, ck2.NewExptTurnResultFilterDAO, conf2.NewExptConfiger, producer.NewExptEventPublisher, metrics2.NewExperimentMetric, metrics3.NewEvalTargetMetrics, foundation.NewAuthRPCProvider, foundation.NewUserRPCProvider, tag.NewTagRPCProvider, agent.NewAgentAdapter, notify.NewNotifyRPCAdapter, userinfo.NewUserInfoServiceImpl, NewLock,
-		evalSetDomainService,
-		targetDomainService,
-		evaluatorDomainService,
-		flagSet,
+		NewExperimentApplication, service.ExperimentDomainServiceSet, service.EvaluationSetDomainServiceSet, service.TargetDomainServiceSet, service.EvaluatorDomainServiceSet, metrics2.ExperimentMetricsSet, metrics3.EvalTargetMetricsSet, foundation.FoundationRPCSet, tag.TagRPCSet, agent.AgentRPCSet, notify.NotifyRPCSet, userinfo.NewUserInfoServiceImpl, NewLock,
+		flagSet, service.NewDefaultURLProcessor, storage.StorageSet,
 	)
-
-	evaluatorDomainService = wire.NewSet(service.NewEvaluatorServiceImpl, service.NewEvaluatorRecordServiceImpl, NewEvaluatorSourceServices, llm.NewLLMRPCProvider, evaluator.NewEvaluatorRepo, evaluator.NewEvaluatorRecordRepo, mysql2.NewEvaluatorDAO, mysql2.NewEvaluatorVersionDAO, mysql2.NewEvaluatorRecordDAO, evaluator.NewRateLimiterImpl, conf2.NewEvaluatorConfiger, evaluator2.NewEvaluatorMetrics, producer.NewEvaluatorEventPublisher)
 
 	evaluatorSet = wire.NewSet(
-		NewEvaluatorHandlerImpl, foundation.NewAuthRPCProvider, foundation.NewFileRPCProvider, foundation.NewUserRPCProvider, userinfo.NewUserInfoServiceImpl, idem.NewIdempotentService, redis2.NewIdemDAO, producer.NewExptEventPublisher, evaluatorDomainService,
-		flagSet, experiment.NewExptRepo, mysql.NewExptDAO, mysql.NewExptEvaluatorRefDAO,
+		NewEvaluatorHandlerImpl, service.EvaluatorDomainServiceSet, service.EvaluationSetDomainServiceSet, service.TargetDomainServiceSet, service.NewExptResultService, service.NewEvaluationAnalysisService, foundation.FoundationRPCSet, tag.TagRPCSet, trajectory.TrajectoryRPCSet, userinfo.NewUserInfoServiceImpl, experiment.ExperimentRepoSet, metrics2.ExperimentMetricsSet, metrics3.EvalTargetMetricsSet, conf2.NewConfiger, flagSet, storage.StorageSet,
 	)
-
-	evalSetDomainService = wire.NewSet(service.NewEvaluationSetVersionServiceImpl, service.NewEvaluationSetItemServiceImpl, data.NewDatasetRPCAdapter, service.NewEvaluationSetServiceImpl)
 
 	evaluationSetSet = wire.NewSet(
-		NewEvaluationSetApplicationImpl,
-		evalSetDomainService, metrics4.NewEvaluationSetMetrics, service.NewEvaluationSetSchemaServiceImpl, foundation.NewAuthRPCProvider, foundation.NewUserRPCProvider, userinfo.NewUserInfoServiceImpl,
+		NewEvaluationSetApplicationImpl, service.EvaluationSetDomainServiceSet, metrics4.EvaluationSetMetricsSet, foundation.FoundationRPCSet, userinfo.NewUserInfoServiceImpl,
 	)
 
-	targetDomainService = wire.NewSet(service.NewEvalTargetServiceImpl, NewSourceTargetOperators, prompt.NewPromptRPCAdapter, target.NewEvalTargetRepo, mysql3.NewEvalTargetDAO, mysql3.NewEvalTargetRecordDAO, mysql3.NewEvalTargetVersionDAO)
-
 	evalTargetSet = wire.NewSet(
-		NewEvalTargetHandlerImpl, metrics3.NewEvalTargetMetrics, foundation.NewAuthRPCProvider, targetDomainService,
-		flagSet,
+		NewEvalTargetHandlerImpl, service.TargetDomainServiceSet, metrics3.EvalTargetMetricsSet, foundation.FoundationRPCSet, experiment.ExperimentRepoSet, flagSet, storage.StorageSet,
+	)
+
+	evalOpenAPISet = wire.NewSet(
+		NewEvalOpenAPIApplication,
+		experimentSet, conf2.NewConfiger, openapi.OpenAPIMetricsSet,
 	)
 )
 
-func NewSourceTargetOperators(adapter rpc.IPromptRPCAdapter) map[entity.EvalTargetType]service.ISourceEvalTargetOperateService {
-	return map[entity.EvalTargetType]service.ISourceEvalTargetOperateService{entity.EvalTargetTypeLoopPrompt: service.NewPromptSourceEvalTargetServiceImpl(adapter)}
-}
-
 func NewLock(cmdable redis.Cmdable) lock.ILocker {
 	return lock.NewRedisLockerWithHolder(cmdable, "evaluation")
-}
-
-func NewEvaluatorSourceServices(llmProvider rpc.ILLMProvider, metric metrics5.EvaluatorExecMetrics, config conf2.IConfiger) []service.EvaluatorSourceService {
-	return []service.EvaluatorSourceService{service.NewEvaluatorSourcePromptServiceImpl(llmProvider, metric, config)}
 }
