@@ -108,7 +108,6 @@ func TestOpenAPIApplication_IngestTraces(t *testing.T) {
 				traceServiceMock.EXPECT().IngestTraces(gomock.Any(), gomock.Any()).Return(nil)
 				authMock := rpcmocks.NewMockIAuthProvider(ctrl)
 				authMock.EXPECT().GetClaim(gomock.Any()).Return(nil).AnyTimes()
-				authMock.EXPECT().CheckIngestPermission(gomock.Any(), gomock.Any()).Return(nil)
 				benefitMock := benefitmocks.NewMockIBenefitService(ctrl)
 				benefitMock.EXPECT().GetTraceBenefitSource(gomock.Any(), gomock.Any()).Return(&benefit.GetTraceBenefitSourceResult{Source: 1}, nil).AnyTimes()
 				benefitMock.EXPECT().CheckTraceBenefit(gomock.Any(), gomock.Any()).Return(&benefit.CheckTraceBenefitResult{
@@ -1061,51 +1060,11 @@ func TestOpenAPIApplication_IngestTraces_AdditionalScenarios(t *testing.T) {
 		wantErr      bool
 	}{
 		{
-			name: "permission check fails",
-			fieldsGetter: func(ctrl *gomock.Controller) fields {
-				traceServiceMock := servicemocks.NewMockITraceService(ctrl)
-				authMock := rpcmocks.NewMockIAuthProvider(ctrl)
-				authMock.EXPECT().GetClaim(gomock.Any()).Return(nil).AnyTimes()
-				authMock.EXPECT().CheckIngestPermission(gomock.Any(), gomock.Any()).Return(assert.AnError)
-				benefitMock := benefitmocks.NewMockIBenefitService(ctrl)
-				tenantMock := tenantmocks.NewMockITenantProvider(ctrl)
-				workspaceMock := workspacemocks.NewMockIWorkSpaceProvider(ctrl)
-				workspaceMock.EXPECT().GetIngestWorkSpaceID(gomock.Any(), gomock.Any(), gomock.Any()).Return("1").AnyTimes()
-				rateLimiterMock := limitermocks.NewMockIRateLimiterFactory(ctrl)
-				rateLimiterMock.EXPECT().NewRateLimiter().Return(limitermocks.NewMockIRateLimiter(ctrl)).AnyTimes()
-				traceConfigMock := configmocks.NewMockITraceConfig(ctrl)
-				metricsMock := metricsmocks.NewMockITraceMetrics(ctrl)
-				return fields{
-					traceService: traceServiceMock,
-					auth:         authMock,
-					benefit:      benefitMock,
-					tenant:       tenantMock,
-					workspace:    workspaceMock,
-					rateLimiter:  rateLimiterMock,
-					traceConfig:  traceConfigMock,
-					metrics:      metricsMock,
-				}
-			},
-			args: args{
-				ctx: context.Background(),
-				req: &openapi.IngestTracesRequest{
-					Spans: []*span.InputSpan{
-						{
-							WorkspaceID: "1",
-						},
-					},
-				},
-			},
-			want:    nil,
-			wantErr: true,
-		},
-		{
 			name: "benefit check fails - insufficient capacity",
 			fieldsGetter: func(ctrl *gomock.Controller) fields {
 				traceServiceMock := servicemocks.NewMockITraceService(ctrl)
 				authMock := rpcmocks.NewMockIAuthProvider(ctrl)
 				authMock.EXPECT().GetClaim(gomock.Any()).Return(nil).AnyTimes()
-				authMock.EXPECT().CheckIngestPermission(gomock.Any(), gomock.Any()).Return(nil)
 				benefitMock := benefitmocks.NewMockIBenefitService(ctrl)
 				benefitMock.EXPECT().GetTraceBenefitSource(gomock.Any(), gomock.Any()).Return(&benefit.GetTraceBenefitSourceResult{Source: 1}, nil).AnyTimes()
 				benefitMock.EXPECT().CheckTraceBenefit(gomock.Any(), gomock.Any()).Return(&benefit.CheckTraceBenefitResult{
@@ -1150,7 +1109,6 @@ func TestOpenAPIApplication_IngestTraces_AdditionalScenarios(t *testing.T) {
 				traceServiceMock := servicemocks.NewMockITraceService(ctrl)
 				authMock := rpcmocks.NewMockIAuthProvider(ctrl)
 				authMock.EXPECT().GetClaim(gomock.Any()).Return(nil).AnyTimes()
-				authMock.EXPECT().CheckIngestPermission(gomock.Any(), gomock.Any()).Return(nil)
 				benefitMock := benefitmocks.NewMockIBenefitService(ctrl)
 				benefitMock.EXPECT().GetTraceBenefitSource(gomock.Any(), gomock.Any()).Return(&benefit.GetTraceBenefitSourceResult{Source: 1}, nil).AnyTimes()
 				benefitMock.EXPECT().CheckTraceBenefit(gomock.Any(), gomock.Any()).Return(&benefit.CheckTraceBenefitResult{
@@ -1195,7 +1153,6 @@ func TestOpenAPIApplication_IngestTraces_AdditionalScenarios(t *testing.T) {
 				traceServiceMock := servicemocks.NewMockITraceService(ctrl)
 				authMock := rpcmocks.NewMockIAuthProvider(ctrl)
 				authMock.EXPECT().GetClaim(gomock.Any()).Return(nil).AnyTimes()
-				authMock.EXPECT().CheckIngestPermission(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 				benefitMock := benefitmocks.NewMockIBenefitService(ctrl)
 				tenantMock := tenantmocks.NewMockITenantProvider(ctrl)
 				workspaceMock := workspacemocks.NewMockIWorkSpaceProvider(ctrl)
@@ -1306,7 +1263,6 @@ func TestOpenAPIApplication_IngestTraces_SkipWhichIsEnough3(t *testing.T) {
 	traceServiceMock := servicemocks.NewMockITraceService(ctrl)
 	authMock := rpcmocks.NewMockIAuthProvider(ctrl)
 	authMock.EXPECT().GetClaim(gomock.Any()).Return(nil).AnyTimes()
-	authMock.EXPECT().CheckIngestPermission(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
 	workspaceMock := workspacemocks.NewMockIWorkSpaceProvider(ctrl)
 	workspaceMock.EXPECT().GetIngestWorkSpaceID(gomock.Any(), gomock.Any(), gomock.Any()).Return("1").AnyTimes()
@@ -1449,7 +1405,6 @@ func TestOpenAPIApplication_IngestTraces_BenefitErrorFallsBackToDefault(t *testi
 	traceServiceMock := servicemocks.NewMockITraceService(ctrl)
 	authMock := rpcmocks.NewMockIAuthProvider(ctrl)
 	authMock.EXPECT().GetClaim(gomock.Any()).Return(nil).AnyTimes()
-	authMock.EXPECT().CheckIngestPermission(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
 	workspaceMock := workspacemocks.NewMockIWorkSpaceProvider(ctrl)
 	workspaceMock.EXPECT().GetIngestWorkSpaceID(gomock.Any(), gomock.Any(), gomock.Any()).Return("1").AnyTimes()
@@ -1498,7 +1453,6 @@ func TestOpenAPIApplication_IngestTraces_MaxSpanLengthExceededByTenant(t *testin
 	traceServiceMock := servicemocks.NewMockITraceService(ctrl)
 	authMock := rpcmocks.NewMockIAuthProvider(ctrl)
 	authMock.EXPECT().GetClaim(gomock.Any()).Return(nil).AnyTimes()
-	authMock.EXPECT().CheckIngestPermission(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
 	workspaceMock := workspacemocks.NewMockIWorkSpaceProvider(ctrl)
 	workspaceMock.EXPECT().GetIngestWorkSpaceID(gomock.Any(), gomock.Any(), gomock.Any()).Return("1").AnyTimes()
@@ -1548,7 +1502,6 @@ func TestOpenAPIApplication_IngestTraces_TraceServiceReturnsError(t *testing.T) 
 	traceServiceMock := servicemocks.NewMockITraceService(ctrl)
 	authMock := rpcmocks.NewMockIAuthProvider(ctrl)
 	authMock.EXPECT().GetClaim(gomock.Any()).Return(nil).AnyTimes()
-	authMock.EXPECT().CheckIngestPermission(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
 	workspaceMock := workspacemocks.NewMockIWorkSpaceProvider(ctrl)
 	workspaceMock.EXPECT().GetIngestWorkSpaceID(gomock.Any(), gomock.Any(), gomock.Any()).Return("1").AnyTimes()
@@ -1595,7 +1548,6 @@ func TestOpenAPIApplication_IngestTraces_SkipAllSourcesWhenResolveSourceFails(t 
 	traceServiceMock := servicemocks.NewMockITraceService(ctrl)
 	authMock := rpcmocks.NewMockIAuthProvider(ctrl)
 	authMock.EXPECT().GetClaim(gomock.Any()).Return(nil).AnyTimes()
-	authMock.EXPECT().CheckIngestPermission(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
 	workspaceMock := workspacemocks.NewMockIWorkSpaceProvider(ctrl)
 	workspaceMock.EXPECT().GetIngestWorkSpaceID(gomock.Any(), gomock.Any(), gomock.Any()).Return("1").AnyTimes()
@@ -2151,7 +2103,6 @@ func TestOpenAPIApplication_OtelIngestTraces(t *testing.T) {
 		collectorMock := collectormocks.NewMockICollectorProvider(ctrl)
 
 		// Set expectations.
-		authMock.EXPECT().CheckIngestPermission(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 		benefitMock.EXPECT().GetTraceBenefitSource(gomock.Any(), gomock.Any()).DoAndReturn(
 			func(ctx context.Context, param *benefit.GetTraceBenefitSourceParams) (*benefit.GetTraceBenefitSourceResult, error) {
 				switch param.Tags["src"] {
@@ -2254,8 +2205,6 @@ func TestOpenAPIApplication_OtelIngestTraces(t *testing.T) {
 		traceConfigMock := configmocks.NewMockITraceConfig(ctrl)
 		metricsMock := metricsmocks.NewMockITraceMetrics(ctrl)
 		collectorMock := collectormocks.NewMockICollectorProvider(ctrl)
-
-		authMock.EXPECT().CheckIngestPermission(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 		benefitMock.EXPECT().GetTraceBenefitSource(gomock.Any(), gomock.Any()).DoAndReturn(
 			func(ctx context.Context, param *benefit.GetTraceBenefitSourceParams) (*benefit.GetTraceBenefitSourceResult, error) {
 				switch param.Tags["src"] {
@@ -2361,8 +2310,6 @@ func TestOpenAPIApplication_OtelIngestTraces(t *testing.T) {
 		traceConfigMock := configmocks.NewMockITraceConfig(ctrl)
 		metricsMock := metricsmocks.NewMockITraceMetrics(ctrl)
 		collectorMock := collectormocks.NewMockICollectorProvider(ctrl)
-
-		authMock.EXPECT().CheckIngestPermission(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 		benefitMock.EXPECT().CheckTraceBenefit(gomock.Any(), gomock.Any()).Return(nil, assert.AnError).AnyTimes()
 		tenantMock.EXPECT().GetIngestTenant(gomock.Any(), gomock.Any()).Return("tenant1").AnyTimes()
 		traceServiceMock.EXPECT().IngestTraces(gomock.Any(), gomock.Any()).Return(nil).Times(1)

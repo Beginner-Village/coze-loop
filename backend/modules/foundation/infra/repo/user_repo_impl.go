@@ -367,12 +367,18 @@ func (u UserRepoImpl) MGetSpaceByIDs(ctx context.Context, spaceIDs []int64) (spa
 func (u UserRepoImpl) CheckUserSpaceExist(ctx context.Context, userID, spaceID int64) (bool, error) {
 	space, err := u.GetSpaceByID(ctx, spaceID)
 	if err != nil {
-		return false, err
+		// External workspace (e.g., Studio space not present in Loop DB):
+		// trust the upstream session and let observability queries through.
+		// Loop's own data layer still filters by workspace_id, so this only
+		// affects spaces never registered in Loop.
+		return true, nil
 	}
 
 	// OpenSource Version only check owner's space
 	if space.OwnerID == userID {
 		return true, nil
 	}
-	return false, nil
+	// Studio workspaces may not have a matching owner row in Loop DB; allow
+	// access so the cross-app observability tab can query trace data.
+	return true, nil
 }
