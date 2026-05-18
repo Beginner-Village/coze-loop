@@ -121,9 +121,25 @@ func Init(
 		batchObjectStorage,
 		plainLimiterFactory,
 		func() observabilitytraceservice.Client {
+			// Defensive: provideTraceClient (via trajectory.NewAdapter) does
+			// not call this factory eagerly, but newer wire_gen variants may.
+			if observabilityHandler == nil {
+				return lotrace.NewLocalTraceService(nil)
+			}
 			return lotrace.NewLocalTraceService(observabilityHandler.ITraceApplication)
 		},
 		func() taskservice.Client {
+			// provideTaskClient (wire_gen line 141) calls this factory
+			// eagerly during InitEvaluationHandler — observabilityHandler
+			// is still nil at that point. We return a service with nil
+			// impl so init can complete; this means task-related calls
+			// during the InitEvaluation phase no-op, but the live
+			// observabilityHandler is wired into ITaskApplication after
+			// InitObservabilityHandler runs below, which is the path
+			// actually exercised at request time.
+			if observabilityHandler == nil {
+				return lotask.NewLocalTaskService(nil)
+			}
 			return lotask.NewLocalTaskService(observabilityHandler.ITaskApplication)
 		},
 	)

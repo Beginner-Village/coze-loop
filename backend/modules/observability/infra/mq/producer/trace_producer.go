@@ -6,6 +6,7 @@ package producer
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -100,8 +101,13 @@ func newTraceProducerImpl(traceConfig config.ITraceConfig, mqFactory mq.IFactory
 		}
 		mqCfg := ingestCfg.MqProducer
 		if mqCfg.Topic == "" {
-			return nil, fmt.Errorf("trace topic required")
+			// YNET-PATCH-20260518: skip tenants without topic instead
+			// of panicking. Upstream's strict check breaks deploy
+			// when only a subset of tenants is configured.
+			fmt.Fprintf(os.Stderr, "[ynet] trace_producer: skipping tenant %q (empty topic, addr=%v)\n", tenant, mqCfg.Addr)
+			continue
 		}
+		fmt.Fprintf(os.Stderr, "[ynet] trace_producer: tenant=%q topic=%q addr=%v\n", tenant, mqCfg.Topic, mqCfg.Addr)
 		mqProducer, e := mqFactory.NewProducer(mq.ProducerConfig{
 			Addr:           mqCfg.Addr,
 			ProduceTimeout: time.Duration(mqCfg.Timeout) * time.Millisecond,
