@@ -19,6 +19,16 @@ import (
 
 func PatTokenVerifyMW(handler *apis.APIHandler) app.HandlerFunc {
 	return func(ctx context.Context, c *app.RequestContext) {
+		// Internal server-to-server trace ingest endpoints don't carry a
+		// real PAT (they're hit by Studio backend via service DNS, not by
+		// end-user SDKs). Skip PAT verification for those paths.
+		path := string(c.Path())
+		if strings.HasPrefix(path, "/v1/loop/opentelemetry/") ||
+			path == "/v1/loop/traces/ingest" {
+			c.Next(ctx)
+			return
+		}
+
 		authHeader := c.GetHeader("Authorization")
 
 		if len(authHeader) == 0 {

@@ -8,6 +8,8 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
+	stdjson "encoding/json"
+	"strconv"
 	"time"
 
 	"github.com/coze-dev/coze-loop/backend/pkg/errorx"
@@ -22,6 +24,18 @@ const (
 
 // 用于签名的密钥（在实际应用中应从配置中读取或使用环境变量）
 var hmacSecret = []byte("openloop-session-hmac-key")
+
+// studioHMACSecret is the HMAC secret hardcoded in ynet-studio (backend/domain/user/service/user_impl.go).
+// Loop accepts Studio-signed cookies so the Studio UI can embed Loop API
+// (observability tab) without a separate Loop login.
+var studioHMACBytes = []byte("openynet-session-hmac-key")
+
+// studioSession mirrors ynet-studio's Session struct with snake_case JSON tags.
+type studioSession struct {
+	ID        int64     `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
 
 type Session struct {
 	UserID string
@@ -84,25 +98,39 @@ func (s sessionServiceImpl) ValidateSession(ctx context.Context, sessionID strin
 	sessionData := data[:len(data)-32] // 假设签名是32字节
 	signature := data[len(data)-32:]
 
-	// 验证签名
+	// 验证签名 — 先用 Loop 自己的 HMAC,失败再 fallback 到 Studio HMAC
 	h := hmac.New(sha256.New, hmacSecret)
 	h.Write(sessionData)
-	expectedSignature := h.Sum(nil)
-
-	if !hmac.Equal(signature, expectedSignature) {
-		return nil, errorx.New("invalid session signature")
+	if hmac.Equal(signature, h.Sum(nil)) {
+		var session Session
+		if err := json.Unmarshal(sessionData, &session); err != nil {
+			return nil, errorx.New("invalid session data: %w", err)
+		}
+		if time.Now().After(session.ExpiresAt) {
+			return nil, errorx.New("session expired")
+		}
+		return &session, nil
 	}
 
-	// 解析会话数据
-	var session Session
-	if err := json.Unmarshal(sessionData, &session); err != nil {
-		return nil, errorx.New("invalid session data: %w", err)
+	// Fallback: 验 Studio 签名的 session
+	hs := hmac.New(sha256.New, studioHMACBytes)
+	hs.Write(sessionData)
+	if hmac.Equal(signature, hs.Sum(nil)) {
+		var ss studioSession
+		if err := stdjson.Unmarshal(sessionData, &ss); err != nil {
+			return nil, errorx.New("invalid studio session data: %w", err)
+		}
+		if time.Now().After(ss.ExpiresAt) {
+			return nil, errorx.New("studio session expired")
+		}
+		logs.CtxDebug(ctx, "[session] accepted external Studio session, user=%d", ss.ID)
+		return &Session{
+			UserID:    strconv.FormatInt(ss.ID, 10),
+			SessionID: ss.ID,
+			CreatedAt: ss.CreatedAt,
+			ExpiresAt: ss.ExpiresAt,
+		}, nil
 	}
 
-	// 检查会话是否过期
-	if time.Now().After(session.ExpiresAt) {
-		return nil, errorx.New("session expired")
-	}
-
-	return &session, nil
+	return nil, errorx.New("invalid session signature")
 }

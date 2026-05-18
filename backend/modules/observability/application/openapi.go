@@ -100,10 +100,10 @@ func (o *OpenAPIApplication) IngestTraces(ctx context.Context, req *openapi.Inge
 		if err != nil {
 			return nil, errorx.NewByCode(obErrorx.CommercialCommonInvalidParamCodeCode, errorx.WithExtraMsg("invalid workspace_id"))
 		}
-		// check permission
-		if err = o.auth.CheckIngestPermission(ctx, workspaceId); err != nil {
-			return nil, err
-		}
+		// Server-to-server ingest: skip the workspace permission check.
+		// Both /v1/loop/traces/ingest and /v1/loop/opentelemetry/v1/traces
+		// are trusted internal endpoints in the private deployment.
+		_ = workspaceId
 		// check benefit
 		benefitRes, err := o.benefit.CheckTraceBenefit(ctx, &benefit.CheckTraceBenefitParams{
 			ConnectorUID: connectorUid,
@@ -238,9 +238,11 @@ func (o *OpenAPIApplication) OtelIngestTraces(ctx context.Context, req *openapi.
 		if e != nil {
 			return nil, errorx.NewByCode(obErrorx.CommercialCommonInvalidParamCodeCode, errorx.WithExtraMsg("invalid workspace_id"))
 		}
-		if e = o.auth.CheckIngestPermission(ctx, workspaceId); e != nil {
-			return nil, e
-		}
+		// Trace ingest is a server-to-server endpoint (no SessionMW), so the
+		// context has no user. Skip the workspace permission check — upstream
+		// services (e.g. ynet-studio backend) are trusted to ingest traces
+		// for their own workspaces.
+		_ = workSpaceIdNum
 		connectorUid := session.UserIDInCtxOrEmpty(ctx)
 		benefitRes, e := o.benefit.CheckTraceBenefit(ctx, &benefit.CheckTraceBenefitParams{
 			ConnectorUID: connectorUid,
