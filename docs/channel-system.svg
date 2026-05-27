@@ -1,0 +1,371 @@
+<svg width="1920" height="976" viewBox="0 0 1920 976" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">渠道系统架构图</title>
+  <desc id="desc">根据截图重绘的 SVG 架构图，包含互联网区域、互联网接入、渠道应用、渠道中台、ESB、关联系统和技术平台。</desc>
+  <defs>
+    <marker id="arrow-orange" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M1 1L9 5L1 9Z" fill="#FF7F27"/>
+    </marker>
+    <marker id="arrow-green" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M1 1L9 5L1 9Z" fill="#94C47D"/>
+    </marker>
+    <marker id="arrow-black" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M1 1L9 5L1 9Z" fill="#111"/>
+    </marker>
+    <style>
+      .bg { fill: #fff; }
+      .zone-title { font: 700 34px Arial, "Microsoft YaHei", sans-serif; fill: #000; }
+      .section-title { font: 700 35px Arial, "Microsoft YaHei", sans-serif; fill: #000; }
+      .box-orange { fill: #FF7F27; stroke: #777; stroke-width: 2; rx: 2; }
+      .box-green { fill: #C6E0B4; stroke: #6A9ED6; stroke-width: 2; rx: 5; }
+      .pill-orange { fill: #FF7F27; stroke: #777; stroke-width: 2; }
+      .pill-green { fill: #C6E0B4; stroke: #777; stroke-width: 2; }
+      .frame-blue { fill: none; stroke: #2F75B5; stroke-width: 2; }
+      .dash-red { fill: none; stroke: #B4200D; stroke-width: 4; stroke-dasharray: 10 6; }
+      .dash-black { fill: #FF7F27; stroke: #000; stroke-width: 2; stroke-dasharray: 8 6; }
+      .line-orange { stroke: #FF7F27; stroke-width: 3; fill: none; marker-end: url(#arrow-orange); }
+      .line-green { stroke: #94C47D; stroke-width: 3; fill: none; marker-end: url(#arrow-green); }
+      .line-black { stroke: #111; stroke-width: 3; fill: none; marker-end: url(#arrow-black); }
+      .txt-white { font: 700 28px Arial, "Microsoft YaHei", sans-serif; fill: #fff; text-anchor: middle; dominant-baseline: middle; }
+      .txt-black { font: 700 27px Arial, "Microsoft YaHei", sans-serif; fill: #000; text-anchor: middle; dominant-baseline: middle; }
+      .txt-small { font: 700 23px Arial, "Microsoft YaHei", sans-serif; fill: #000; text-anchor: middle; dominant-baseline: middle; }
+      .txt-v-white { font: 700 31px Arial, "Microsoft YaHei", sans-serif; fill: #fff; writing-mode: tb; glyph-orientation-vertical: 0; text-anchor: middle; }
+      .txt-v-black { font: 700 31px Arial, "Microsoft YaHei", sans-serif; fill: #000; writing-mode: tb; glyph-orientation-vertical: 0; text-anchor: middle; }
+      .side-label { font: 700 36px Arial, "Microsoft YaHei", sans-serif; fill: #000; }
+      .callout { fill: #fff; stroke: #111; stroke-width: 2; }
+    </style>
+  </defs>
+
+  <rect class="bg" width="1920" height="976"/>
+  <text x="1688" y="14" font-family="Arial" font-size="14" fill="#777">InteractiveTechnologies</text>
+
+  <!-- Area separators -->
+  <path class="dash-red" d="M225 32V914"/>
+  <path class="dash-red" d="M416 32V914"/>
+  <path class="dash-red" d="M1443 38V914"/>
+  <path class="dash-red" d="M4 729H401"/>
+  <path class="dash-red" d="M5 914H1895"/>
+
+  <!-- Main labels -->
+  <text class="zone-title" x="26" y="64">互联网区域</text>
+  <text class="zone-title" x="239" y="64">互联网接入</text>
+  <text class="section-title" x="603" y="64">渠道应用</text>
+  <text class="section-title" x="1070" y="64">渠道中台</text>
+  <text class="section-title" x="1634" y="64">关联系统</text>
+  <text class="side-label" x="28" y="768">内网区域</text>
+  <text class="side-label" x="28" y="955">技术</text>
+  <text class="side-label" x="28" y="990">平台</text>
+
+  <!-- Left external channels -->
+  <g id="internet">
+    <rect class="box-orange" x="16" y="97" width="191" height="47"/>
+    <text class="txt-white" x="111.5" y="121">个人网银</text>
+    <rect class="box-orange" x="16" y="159" width="191" height="47"/>
+    <text class="txt-white" x="111.5" y="183">微信银行</text>
+    <rect class="box-orange" x="16" y="225" width="191" height="48"/>
+    <text class="txt-white" x="111.5" y="249">小程序</text>
+    <rect class="box-orange" x="16" y="291" width="191" height="47"/>
+    <text class="txt-white" x="111.5" y="315">个人手机银行</text>
+    <text class="txt-black" x="102" y="358">SDK嵌入</text>
+    <rect class="box-orange" x="92" y="384" width="114" height="54"/>
+    <text class="txt-white" x="149" y="411">AI银行</text>
+    <rect class="box-orange" x="16" y="493" width="191" height="48"/>
+    <text class="txt-white" x="111.5" y="517">企业手机银行</text>
+    <rect class="box-orange" x="16" y="554" width="191" height="47"/>
+    <text class="txt-white" x="111.5" y="578">企业网银</text>
+    <rect class="box-orange" x="16" y="653" width="191" height="47"/>
+    <text class="txt-white" x="111.5" y="677">银企直连</text>
+  </g>
+
+  <!-- Internet access reverse proxies -->
+  <g id="access">
+    <rect class="box-orange" x="271" y="188" width="94" height="93"/>
+    <text class="txt-white" x="318" y="219">反向</text>
+    <text class="txt-white" x="318" y="255">代理</text>
+    <rect class="box-orange" x="273" y="355" width="94" height="93"/>
+    <text class="txt-white" x="320" y="386">反向</text>
+    <text class="txt-white" x="320" y="422">代理</text>
+    <rect class="box-orange" x="272" y="584" width="94" height="88"/>
+    <text class="txt-white" x="319" y="613">反向</text>
+    <text class="txt-white" x="319" y="648">代理</text>
+  </g>
+
+  <!-- Gateway column -->
+  <rect class="pill-orange" x="450" y="133" width="52" height="233" rx="8"/>
+  <text class="txt-v-white" x="476" y="182">移动平台</text>
+  <rect class="pill-orange" x="450" y="437" width="52" height="285" rx="8"/>
+  <text class="txt-v-white" x="476" y="512">统一网关</text>
+
+  <!-- Channel apps -->
+  <rect class="frame-blue" x="570" y="78" width="218" height="635"/>
+  <g id="apps-personal">
+    <rect class="box-orange" x="588" y="95" width="191" height="47"/>
+    <text class="txt-white" x="683.5" y="119">微信银行</text>
+    <rect class="box-orange" x="588" y="156" width="191" height="47"/>
+    <text class="txt-white" x="683.5" y="180">小程序</text>
+    <rect class="box-orange" x="588" y="217" width="191" height="47"/>
+    <text class="txt-white" x="683.5" y="241">个人网银</text>
+    <rect class="box-orange" x="588" y="283" width="191" height="47"/>
+    <text class="txt-white" x="683.5" y="307">个人手机应用</text>
+    <rect class="box-orange" x="588" y="348" width="191" height="47"/>
+    <text class="txt-white" x="683.5" y="372">AI场景应用</text>
+  </g>
+  <g id="apps-enterprise">
+    <rect class="box-orange" x="588" y="523" width="191" height="47"/>
+    <text class="txt-white" x="683.5" y="547">企业网银</text>
+    <rect class="box-orange" x="588" y="589" width="191" height="47"/>
+    <text class="txt-white" x="683.5" y="613">企业手机应用</text>
+    <rect class="box-orange" x="588" y="654" width="191" height="47"/>
+    <text class="txt-white" x="683.5" y="678">银企直连</text>
+  </g>
+
+  <!-- Operations inner area -->
+  <rect class="frame-blue" x="570" y="730" width="218" height="168"/>
+  <text class="txt-black" x="679" y="759">业务运营</text>
+  <rect class="box-orange" x="584" y="787" width="188" height="47" rx="8"/>
+  <text class="txt-white" x="678" y="811">统一运营平台</text>
+  <rect class="box-green" x="584" y="842" width="188" height="47" rx="8"/>
+  <text class="txt-black" x="678" y="866">柜面应用</text>
+
+  <!-- Register centers and local ESB -->
+  <rect class="dash-black" x="851" y="90" width="58" height="381"/>
+  <text class="txt-black" x="880" y="266">注册</text>
+  <text class="txt-black" x="880" y="293">中心</text>
+  <rect class="pill-orange" x="845" y="499" width="59" height="148" rx="9"/>
+  <text class="txt-v-white" x="874" y="519">统一网关</text>
+  <rect class="dash-black" x="848" y="672" width="58" height="117"/>
+  <text class="txt-black" x="877" y="717">注册</text>
+  <text class="txt-black" x="877" y="744">中心</text>
+  <rect class="pill-green" x="811" y="827" width="137" height="77" rx="12"/>
+  <text class="txt-black" x="879.5" y="866">ESB</text>
+
+  <!-- Channel middle platform -->
+  <rect class="frame-blue" x="989" y="83" width="302" height="821"/>
+  <g id="middle-platform">
+    <rect class="box-orange" x="1010" y="95" width="266" height="61" rx="8"/>
+    <text class="txt-white" x="1143" y="128">用户中心</text>
+    <rect class="box-orange" x="1010" y="168" width="266" height="60" rx="8"/>
+    <text class="txt-white" x="1143" y="198">安全中心</text>
+    <rect class="box-orange" x="1010" y="241" width="266" height="60" rx="8"/>
+    <text class="txt-white" x="1143" y="271">交易中心</text>
+    <rect class="box-orange" x="1010" y="314" width="266" height="61" rx="8"/>
+    <text class="txt-white" x="1143" y="345">渠道中心</text>
+    <rect class="box-orange" x="1010" y="388" width="266" height="60" rx="8"/>
+    <text class="txt-white" x="1143" y="418">产品中心</text>
+    <rect class="box-orange" x="1010" y="462" width="266" height="60" rx="8"/>
+    <text class="txt-white" x="1143" y="492">搜索中心</text>
+    <rect class="box-orange" x="1010" y="536" width="266" height="61" rx="8"/>
+    <text class="txt-white" x="1143" y="567">消息中心</text>
+    <rect class="box-orange" x="1010" y="610" width="266" height="60" rx="8"/>
+    <text class="txt-white" x="1143" y="640">审批中心</text>
+    <rect class="box-orange" x="1010" y="681" width="266" height="61" rx="8"/>
+    <text class="txt-white" x="1143" y="712">基础中心</text>
+    <rect class="box-orange" x="1010" y="754" width="266" height="60" rx="8"/>
+    <text class="txt-white" x="1143" y="784">批次服务中心</text>
+    <rect class="box-orange" x="1010" y="827" width="266" height="60" rx="8"/>
+    <text class="txt-white" x="1143" y="857">营销中心</text>
+  </g>
+
+  <!-- Drawing selection handles from source image, simplified -->
+  <g opacity="0.95">
+    <rect x="997" y="80" width="290" height="83" fill="none" stroke="#9DBCE7" stroke-width="1.5"/>
+    <circle cx="1011" cy="96" r="9" fill="#fff" stroke="#999" stroke-width="2"/>
+    <circle cx="1142" cy="96" r="9" fill="#fff" stroke="#999" stroke-width="2"/>
+    <circle cx="1277" cy="96" r="9" fill="#fff" stroke="#999" stroke-width="2"/>
+    <circle cx="1011" cy="127" r="9" fill="#fff" stroke="#999" stroke-width="2"/>
+    <circle cx="1011" cy="159" r="9" fill="#fff" stroke="#999" stroke-width="2"/>
+    <circle cx="1142" cy="159" r="9" fill="#fff" stroke="#999" stroke-width="2"/>
+    <circle cx="1277" cy="159" r="9" fill="#fff" stroke="#999" stroke-width="2"/>
+    <path d="M1013 96L1022 86L1032 96L1022 106Z" fill="#FFF2A8" stroke="#777" stroke-width="2"/>
+  </g>
+
+  <!-- Right gateway / side icons simplified -->
+  <rect class="pill-orange" x="1343" y="148" width="56" height="175" rx="8"/>
+  <text class="txt-v-white" x="1371" y="168">统一网关</text>
+  <rect class="pill-orange" x="1354" y="542" width="58" height="361" rx="9"/>
+  <text class="txt-v-white" x="1383" y="551">统一网关</text>
+
+  <g opacity="0.92">
+    <rect x="1311" y="105" width="35" height="29" rx="10" fill="#fff" stroke="#ddd"/>
+    <text x="1328" y="123" font-size="26" text-anchor="middle" dominant-baseline="middle" fill="#444">−</text>
+    <rect x="1310" y="151" width="55" height="54" rx="9" fill="#fff" stroke="#eee"/>
+    <text x="1338" y="180" font-size="28" text-anchor="middle" dominant-baseline="middle" fill="#2E75B6">▱</text>
+    <rect x="1310" y="223" width="55" height="54" rx="9" fill="#fff" stroke="#eee"/>
+    <text x="1338" y="250" font-size="30" text-anchor="middle" dominant-baseline="middle" fill="#2E75B6">⌁</text>
+    <rect x="1310" y="295" width="55" height="54" rx="9" fill="#fff" stroke="#eee"/>
+    <text x="1338" y="322" font-size="28" text-anchor="middle" dominant-baseline="middle" fill="#555">☁</text>
+    <rect x="1310" y="366" width="55" height="54" rx="9" fill="#fff" stroke="#eee"/>
+    <text x="1338" y="394" font-size="28" text-anchor="middle" dominant-baseline="middle" fill="#555">▣</text>
+    <rect x="1310" y="438" width="55" height="54" rx="9" fill="#fff" stroke="#eee"/>
+    <text x="1338" y="466" font-size="27" text-anchor="middle" dominant-baseline="middle" fill="#555">✣</text>
+    <rect x="1310" y="511" width="55" height="54" rx="9" fill="#fff" stroke="#eee"/>
+    <text x="1338" y="539" font-size="29" text-anchor="middle" dominant-baseline="middle" fill="#6C63FF">A</text>
+  </g>
+
+  <!-- Enterprise bus -->
+  <rect class="pill-green" x="1461" y="111" width="67" height="400" rx="10"/>
+  <text class="txt-v-black" x="1494" y="263">ESB</text>
+  <rect class="pill-green" x="1461" y="523" width="67" height="211" rx="10"/>
+  <text class="txt-v-black" x="1494" y="548">文件传输平台</text>
+
+  <!-- Related systems -->
+  <g id="related">
+    <rect class="box-green" x="1584" y="83" width="236" height="32"/>
+    <text class="txt-small" x="1702" y="100">借记核心系统</text>
+    <rect class="box-green" x="1584" y="120" width="236" height="29"/>
+    <text class="txt-small" x="1702" y="135">贷记核心</text>
+    <rect class="box-green" x="1584" y="156" width="236" height="30"/>
+    <text class="txt-small" x="1702" y="172">ECIF系统</text>
+    <rect class="box-green" x="1584" y="192" width="236" height="31"/>
+    <text class="txt-small" x="1702" y="209">理财系统</text>
+    <rect class="box-green" x="1584" y="228" width="236" height="31"/>
+    <text class="txt-small" x="1702" y="245">保险系统</text>
+    <rect class="box-green" x="1584" y="264" width="236" height="31"/>
+    <text class="txt-small" x="1702" y="281">贵金属</text>
+    <rect class="box-green" x="1584" y="301" width="236" height="31"/>
+    <text class="txt-small" x="1702" y="318">国际结算</text>
+    <rect class="box-green" x="1584" y="337" width="236" height="31"/>
+    <text class="txt-small" x="1702" y="354">缴费系统</text>
+    <rect class="box-green" x="1584" y="373" width="236" height="31"/>
+    <text class="txt-small" x="1702" y="390">信贷系统</text>
+    <rect class="box-green" x="1584" y="409" width="236" height="31"/>
+    <text class="txt-small" x="1702" y="426">国债系统</text>
+    <rect class="box-green" x="1584" y="445" width="236" height="31"/>
+    <text class="txt-small" x="1702" y="462">统一支付</text>
+    <rect class="box-green" x="1584" y="482" width="236" height="31"/>
+    <text class="txt-small" x="1702" y="499">数字货币</text>
+    <rect class="box-green" x="1584" y="518" width="236" height="31"/>
+    <text class="txt-small" x="1702" y="535">身份核查</text>
+    <rect class="box-green" x="1584" y="554" width="236" height="31"/>
+    <text class="txt-small" x="1702" y="571">影像平台</text>
+    <rect class="box-green" x="1584" y="590" width="236" height="31"/>
+    <text class="txt-small" x="1702" y="607">无纸化</text>
+    <rect class="box-green" x="1584" y="626" width="236" height="31"/>
+    <text class="txt-small" x="1702" y="643">生物识别</text>
+    <rect class="box-green" x="1584" y="663" width="236" height="31"/>
+    <text class="txt-small" x="1702" y="680">大数据平台</text>
+    <rect class="box-green" x="1584" y="699" width="236" height="31"/>
+    <text class="txt-small" x="1702" y="716">回单系统</text>
+    <rect class="box-green" x="1584" y="751" width="236" height="31"/>
+    <text class="txt-small" x="1702" y="768">微信</text>
+    <rect class="box-green" x="1584" y="788" width="236" height="31"/>
+    <text class="txt-small" x="1702" y="805">支付宝</text>
+    <rect class="box-green" x="1584" y="824" width="236" height="31"/>
+    <text class="txt-small" x="1702" y="841">极光</text>
+    <rect class="box-green" x="1584" y="866" width="236" height="32"/>
+    <text class="txt-small" x="1702" y="883">极光</text>
+  </g>
+
+  <!-- Bottom technology platform -->
+  <rect class="frame-blue" x="120" y="924" width="1590" height="73"/>
+  <g id="tech">
+    <rect class="box-orange" x="126" y="931" width="164" height="58"/>
+    <text class="txt-white" x="208" y="960">注册中心</text>
+    <rect class="box-orange" x="294" y="931" width="162" height="58"/>
+    <text class="txt-white" x="375" y="960">配置中心</text>
+    <rect class="box-orange" x="462" y="931" width="164" height="58"/>
+    <text class="txt-white" x="544" y="960">缓存</text>
+    <rect class="box-orange" x="631" y="931" width="190" height="58"/>
+    <text class="txt-white" x="726" y="960">消息队列</text>
+    <rect class="box-orange" x="827" y="931" width="191" height="58"/>
+    <text class="txt-white" x="922.5" y="960">分布式存储</text>
+    <rect class="box-orange" x="1024" y="931" width="162" height="58"/>
+    <text class="txt-white" x="1105" y="960">流计算</text>
+    <rect class="box-orange" x="1191" y="931" width="163" height="58"/>
+    <text class="txt-white" x="1272" y="949">分布式调度</text>
+    <text class="txt-white" x="1272" y="976">平台</text>
+    <rect class="box-orange" x="1360" y="931" width="165" height="58"/>
+    <text class="txt-white" x="1442.5" y="960">智能体</text>
+    <rect class="box-orange" x="1536" y="931" width="163" height="58"/>
+    <text class="txt-white" x="1617.5" y="960">大模型</text>
+  </g>
+
+  <!-- Arrows: left to proxies -->
+  <path class="line-orange" d="M207 120H238V233H268"/>
+  <path class="line-orange" d="M207 183H238V233H268"/>
+  <path class="line-orange" d="M207 249H238V233H268"/>
+  <path class="line-orange" d="M207 315H238V407H270"/>
+  <path class="line-orange" d="M174 340V384"/>
+  <path class="line-orange" d="M206 407H270"/>
+  <path class="line-orange" d="M207 517H238V628H270"/>
+  <path class="line-orange" d="M207 578H238V628H270"/>
+  <path class="line-orange" d="M207 677H238V628H270"/>
+  <path class="line-orange" d="M365 234H407V249H447"/>
+  <path class="line-orange" d="M367 402H407V579H447"/>
+  <path class="line-orange" d="M366 628H407V579H447"/>
+
+  <!-- Gateway to channel apps -->
+  <path class="line-orange" d="M502 249H544V118H585"/>
+  <path class="line-orange" d="M502 249H544V179H585"/>
+  <path class="line-orange" d="M502 249H544V241H585"/>
+  <path class="line-orange" d="M502 249H544V306H585"/>
+  <path class="line-orange" d="M502 249H544V371H585"/>
+  <path class="line-orange" d="M502 580H544V546H585"/>
+  <path class="line-orange" d="M502 580H544V612H585"/>
+  <path class="line-orange" d="M502 580H544V678H585"/>
+
+  <!-- Internal area arrows -->
+  <rect class="box-orange" x="16" y="786" width="191" height="47"/>
+  <text class="txt-white" x="111.5" y="810">统一运营平台</text>
+  <rect class="box-green" x="16" y="842" width="191" height="47"/>
+  <text class="txt-black" x="111.5" y="866">柜面</text>
+  <rect class="box-orange" x="325" y="787" width="141" height="47"/>
+  <text class="txt-white" x="395.5" y="811">反向代理</text>
+  <rect class="box-green" x="325" y="842" width="141" height="47"/>
+  <text class="txt-black" x="395.5" y="866">反向代理</text>
+  <path class="line-orange" d="M207 810H322"/>
+  <path class="line-orange" d="M207 866H322"/>
+  <path class="line-orange" d="M466 811H581"/>
+  <path class="line-orange" d="M466 866H581"/>
+  <path class="line-orange" d="M772 866H808"/>
+  <path class="line-orange" d="M879 827V790"/>
+  <path class="line-orange" d="M662 889V930"/>
+
+  <!-- Subscription / registration arrows -->
+  <path class="line-black" d="M779 164H827"/>
+  <path class="line-black" d="M850 164H780"/>
+  <text class="callout" x="807" y="167">订阅</text>
+  <path class="line-black" d="M1006 164H926"/>
+  <text class="callout" x="951" y="184">注册</text>
+  <path class="line-black" d="M778 425H829"/>
+  <path class="line-black" d="M848 425H779"/>
+  <text class="callout" x="806" y="428">订阅</text>
+  <path class="line-black" d="M1005 426H925"/>
+  <text class="callout" x="943" y="427">订阅</text>
+  <path class="line-black" d="M903 573H980"/>
+  <text class="callout" x="934" y="577">订阅</text>
+  <path class="line-black" d="M774 728H832"/>
+  <text class="callout" x="804" y="731">订阅</text>
+  <path class="line-black" d="M1004 733H925"/>
+  <text class="callout" x="950" y="738">注册</text>
+
+  <!-- Middle platform to right gateways and ESB -->
+  <path class="line-orange" d="M1290 235H1340"/>
+  <path class="line-orange" d="M1290 494H1375V359H1458"/>
+  <path class="line-orange" d="M1321 565V835H1351"/>
+  <path class="line-orange" d="M1412 835H1581"/>
+  <path class="line-orange" d="M1412 804H1498V766H1581"/>
+  <path class="line-orange" d="M1412 835H1498V803H1581"/>
+  <path class="line-orange" d="M1412 835H1498V839H1581"/>
+  <path class="line-orange" d="M1412 835H1498V882H1581"/>
+  <path class="line-green" d="M1461 235H1404"/>
+
+  <!-- ESB to related systems -->
+  <path class="line-green" d="M1528 311H1555V99H1581"/>
+  <path class="line-green" d="M1555 99V135H1581"/>
+  <path class="line-green" d="M1555 135V171H1581"/>
+  <path class="line-green" d="M1555 171V208H1581"/>
+  <path class="line-green" d="M1555 208V244H1581"/>
+  <path class="line-green" d="M1555 244V280H1581"/>
+  <path class="line-green" d="M1555 280V316H1581"/>
+  <path class="line-green" d="M1555 316V352H1581"/>
+  <path class="line-green" d="M1555 352V389H1581"/>
+  <path class="line-green" d="M1555 389V425H1581"/>
+  <path class="line-green" d="M1555 425V461H1581"/>
+  <path class="line-green" d="M1555 461V498H1581"/>
+  <path class="line-green" d="M1555 498V534H1581"/>
+  <path class="line-green" d="M1555 534V570H1581"/>
+  <path class="line-green" d="M1555 570V606H1581"/>
+  <path class="line-green" d="M1555 606V642H1581"/>
+  <path class="line-green" d="M1555 642V679H1581"/>
+  <path class="line-green" d="M1555 679V715H1581"/>
+</svg>
