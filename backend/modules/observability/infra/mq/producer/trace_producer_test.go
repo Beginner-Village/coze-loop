@@ -310,7 +310,7 @@ func TestNewTraceProducerImpl(t *testing.T) {
 			expectedError: true,
 		},
 		{
-			name: "异常场景: topic为空",
+			name: "YNET定制: topic为空时跳过该租户(不报错)",
 			args: args{
 				traceConfig: nil,
 				mqFactory:   nil,
@@ -330,7 +330,8 @@ func TestNewTraceProducerImpl(t *testing.T) {
 				}
 				traceConfig.EXPECT().GetTraceIngestTenantProducerCfg(gomock.Any()).Return(ingestTenantCfg, nil)
 			},
-			expectedError: true,
+			// YNET-PATCH-20260518: 空 topic 跳过该租户而非报错,故无 error、producer 非 nil
+			expectedError: false,
 		},
 		{
 			name: "异常场景: 创建MQ producer失败",
