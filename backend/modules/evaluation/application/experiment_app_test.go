@@ -1,4 +1,4 @@
-// Copyright (c) 2025 ynet Authors
+// Copyright (c) 2025 coze-dev Authors
 // SPDX-License-Identifier: Apache-2.0
 
 package application
@@ -908,6 +908,113 @@ func TestExperimentApplication_SubmitExperiment(t *testing.T) {
 	}
 }
 
+func TestExperimentApplication_SubmitExperiment_ItemIds(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockManager := servicemocks.NewMockIExptManager(ctrl)
+	mockResultSvc := servicemocks.NewMockExptResultService(ctrl)
+	mockAuth := rpcmocks.NewMockIAuthProvider(ctrl)
+	mockScheduler := servicemocks.NewMockExptSchedulerEvent(ctrl)
+	mockIDGen := idgenmock.NewMockIIDGenerator(ctrl)
+
+	workspaceID := int64(123)
+	exptID := int64(456)
+	runID := int64(789)
+	validExpt := &entity.Experiment{
+		ID:      exptID,
+		SpaceID: workspaceID,
+		Name:    "test_experiment",
+		Status:  entity.ExptStatus_Pending,
+	}
+
+	t.Run("item_ids exceeds maximum of 100", func(t *testing.T) {
+		itemIds := make([]int64, 101)
+		for i := range itemIds {
+			itemIds[i] = int64(i + 1)
+		}
+		req := &exptpb.SubmitExperimentRequest{
+			WorkspaceID: workspaceID,
+			Name:        gptr.Of("test"),
+			ItemIds:     itemIds,
+			Session: &common.Session{
+				UserID: gptr.Of(int64(789)),
+			},
+		}
+
+		app := &experimentApplication{
+			manager:            mockManager,
+			resultSvc:          mockResultSvc,
+			auth:               mockAuth,
+			ExptSchedulerEvent: mockScheduler,
+			idgen:              mockIDGen,
+		}
+
+		_, err := app.SubmitExperiment(context.Background(), req)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "item_ids exceeds maximum of 100")
+	})
+
+	t.Run("item_ids encoded into ext correctly", func(t *testing.T) {
+		itemIds := []int64{100, 200}
+		req := &exptpb.SubmitExperimentRequest{
+			WorkspaceID: workspaceID,
+			Name:        gptr.Of("test_experiment"),
+			Desc:        gptr.Of("test description"),
+			CreateEvalTargetParam: &eval_target.CreateEvalTargetParam{
+				EvalTargetType: gptr.Of(domain_eval_target.EvalTargetType_CozeBot),
+			},
+			Session: &common.Session{
+				UserID: gptr.Of(int64(789)),
+			},
+			ItemConcurNum:       gptr.Of(int32(1)),
+			EvaluatorsConcurNum: gptr.Of(int32(1)),
+			TargetFieldMapping:  &expt.TargetFieldMapping{},
+			EvaluatorFieldMapping: []*expt.EvaluatorFieldMapping{
+				{},
+			},
+			ItemIds: itemIds,
+		}
+
+		mockAuth.EXPECT().
+			Authorization(gomock.Any(), gomock.Any()).
+			Return(nil).AnyTimes()
+
+		mockManager.EXPECT().
+			CreateExpt(gomock.Any(), gomock.Any(), gomock.Any()).
+			Return(validExpt, nil)
+
+		mockIDGen.EXPECT().
+			GenID(gomock.Any()).
+			Return(runID, nil)
+
+		mockManager.EXPECT().
+			LogRun(gomock.Any(), exptID, runID, gomock.Any(), workspaceID, gomock.Any(), gomock.Any()).
+			Return(nil)
+
+		mockManager.EXPECT().
+			Run(gomock.Any(), exptID, runID, workspaceID, gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+			DoAndReturn(func(ctx context.Context, exptID, runID, spaceID int64, itemRetryNum int, session *entity.Session, runMode entity.ExptRunMode, ext map[string]string) error {
+				assert.Contains(t, ext, "__item_ids")
+				assert.Equal(t, "[100,200]", ext["__item_ids"])
+				return nil
+			})
+
+		app := &experimentApplication{
+			manager:            mockManager,
+			resultSvc:          mockResultSvc,
+			auth:               mockAuth,
+			ExptSchedulerEvent: mockScheduler,
+			idgen:              mockIDGen,
+		}
+
+		resp, err := app.SubmitExperiment(context.Background(), req)
+		assert.NoError(t, err)
+		assert.NotNil(t, resp)
+		assert.Equal(t, gptr.Of(runID), resp.RunID)
+	})
+}
+
 func TestExperimentApplication_SubmitExperiment_UpdateExptInfo(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
@@ -1161,7 +1268,7 @@ func TestExperimentApplication_CheckExperimentTemplateName(t *testing.T) {
 			},
 			mockSetup: func() {
 				mockTemplateManager.EXPECT().
-					CheckName(gomock.Any(), templateName, workspaceID, &entity.Session{}).
+					CheckName(gomock.Any(), templateName, workspaceID, gomock.Any(), &entity.Session{}).
 					Return(true, nil)
 				mockAuth.EXPECT().
 					Authorization(
@@ -1189,7 +1296,7 @@ func TestExperimentApplication_CheckExperimentTemplateName(t *testing.T) {
 			},
 			mockSetup: func() {
 				mockTemplateManager.EXPECT().
-					CheckName(gomock.Any(), templateName, workspaceID, &entity.Session{}).
+					CheckName(gomock.Any(), templateName, workspaceID, gomock.Any(), &entity.Session{}).
 					Return(false, nil)
 				mockAuth.EXPECT().
 					Authorization(
@@ -1262,7 +1369,7 @@ func TestExperimentApplication_CheckExperimentTemplateName(t *testing.T) {
 						},
 					}, nil)
 				mockTemplateManager.EXPECT().
-					CheckName(gomock.Any(), "other_name", workspaceID, &entity.Session{}).
+					CheckName(gomock.Any(), "other_name", workspaceID, gomock.Any(), &entity.Session{}).
 					Return(true, nil)
 				mockAuth.EXPECT().
 					Authorization(
@@ -1951,6 +2058,26 @@ func TestExperimentApplication_DeleteExperiment(t *testing.T) {
 					assert.Equal(t, rpc.AuthEntityType_EvaluationExperiment, *param.ActionObjects[0].EntityType)
 					return errorx.NewByCode(errno.CommonNoPermissionCode)
 				})
+			},
+			wantErr: true,
+		},
+		{
+			name: "workspace mismatch with experiment space",
+			req: &exptpb.DeleteExperimentRequest{
+				ExptID:      validExptID,
+				WorkspaceID: validWorkspaceID,
+			},
+			mockSetup: func() {
+				mismatchedExpt := &entity.Experiment{
+					ID:        validExptID,
+					SpaceID:   validWorkspaceID + 1,
+					Name:      "test_experiment_other_space",
+					Status:    entity.ExptStatus_Pending,
+					CreatedBy: validUserID,
+				}
+				mockManager.EXPECT().
+					Get(gomock.Any(), validExptID, validWorkspaceID, &entity.Session{}).
+					Return(mismatchedExpt, nil)
 			},
 			wantErr: true,
 		},
@@ -4339,6 +4466,45 @@ func TestExperimentApplication_InvokeExperiment(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "success - empty idMap skips UpsertFilter",
+			req: &exptpb.InvokeExperimentRequest{
+				WorkspaceID:      validSpaceID,
+				ExperimentID:     gptr.Of(validExptID),
+				ExperimentRunID:  gptr.Of(validExptRunID),
+				EvaluationSetID:  validEvalSetID,
+				Items:            validItems,
+				Session:          &common.Session{UserID: gptr.Of(validUserID)},
+				SkipInvalidItems: gptr.Of(true),
+				AllowPartialAdd:  gptr.Of(true),
+			},
+			mockSetup: func() {
+				mockManager.EXPECT().
+					Get(gomock.Any(), validExptID, validSpaceID, &entity.Session{UserID: strconv.FormatInt(validUserID, 10)}).
+					Return(validExpt, nil)
+
+				mockAuth.EXPECT().
+					AuthorizationWithoutSPI(gomock.Any(), gomock.Any()).
+					Return(nil)
+
+				// BatchCreateEvaluationSetItems returns empty idMap (dataset full)
+				mockEvalSetItemService.EXPECT().
+					BatchCreateEvaluationSetItems(gomock.Any(), gomock.Any()).
+					Return(map[int64]int64{}, nil, nil, nil)
+
+				// Invoke is still called with empty Items
+				mockManager.EXPECT().
+					Invoke(gomock.Any(), gomock.Any()).
+					Return(nil)
+
+				// UpsertExptTurnResultFilter should NOT be called
+			},
+			wantResp: &exptpb.InvokeExperimentResponse{
+				AddedItems: map[int64]int64{},
+				BaseResp:   base.NewBaseResp(),
+			},
+			wantErr: false,
+		},
+		{
 			name: "error - experiment status not allowed",
 			req: &exptpb.InvokeExperimentRequest{
 				WorkspaceID:     validSpaceID,
@@ -4485,6 +4651,25 @@ func TestExperimentApplication_FinishExperiment(t *testing.T) {
 				mockManager.EXPECT().
 					Get(gomock.Any(), validExptID, validSpaceID, &entity.Session{UserID: strconv.FormatInt(validUserID, 10)}).
 					Return(finishedExpt, nil)
+			},
+			wantResp: &exptpb.FinishExperimentResponse{
+				BaseResp: base.NewBaseResp(),
+			},
+			wantErr: false,
+		},
+		{
+			name: "success - experiment deleted",
+			req: &exptpb.FinishExperimentRequest{
+				WorkspaceID:     gptr.Of(validSpaceID),
+				ExperimentID:    gptr.Of(validExptID),
+				ExperimentRunID: gptr.Of(validExptRunID),
+				Session:         &common.Session{UserID: gptr.Of(validUserID)},
+			},
+			mockSetup: func() {
+				// Mock Get experiment returns ResourceNotFound (soft-deleted)
+				mockManager.EXPECT().
+					Get(gomock.Any(), validExptID, validSpaceID, &entity.Session{UserID: strconv.FormatInt(validUserID, 10)}).
+					Return(nil, errorx.NewByCode(errno.ResourceNotFoundCode, errorx.WithExtraMsg("experiment not found")))
 			},
 			wantResp: &exptpb.FinishExperimentResponse{
 				BaseResp: base.NewBaseResp(),
@@ -7203,4 +7388,162 @@ func Test_experimentApplication_validateEvaluatorVersionsBelongToWorkspace(t *te
 		err := app.validateEvaluatorVersionsBelongToWorkspace(ctx, []int64{1010, 2020}, 100)
 		assert.NoError(t, err)
 	})
+}
+
+func TestExperimentApplication_SubmitExptFromTemplate(t *testing.T) {
+	t.Parallel()
+
+	workspaceID := int64(5001)
+	templateID := int64(5002)
+
+	buildValidTemplate := func() *entity.ExptTemplate {
+		return &entity.ExptTemplate{
+			Meta: &entity.ExptTemplateMeta{
+				ID:          templateID,
+				WorkspaceID: workspaceID,
+			},
+			TripleConfig: &entity.ExptTemplateTuple{
+				EvalSetID:        100,
+				EvalSetVersionID: 200,
+			},
+		}
+	}
+
+	tests := []struct {
+		name    string
+		req     *exptpb.SubmitExptFromTemplateRequest
+		setup   func(auth *rpcmocks.MockIAuthProvider, templateMgr *servicemocks.MockIExptTemplateManager, manager *servicemocks.MockIExptManager)
+		wantErr int32
+	}{
+		{
+			name: "nil request",
+			req:  nil,
+			setup: func(_ *rpcmocks.MockIAuthProvider, _ *servicemocks.MockIExptTemplateManager, _ *servicemocks.MockIExptManager) {
+			},
+			wantErr: errno.CommonInvalidParamCode,
+		},
+		{
+			name: "invalid workspace_id",
+			req: &exptpb.SubmitExptFromTemplateRequest{
+				WorkspaceID: 0,
+				TemplateID:  templateID,
+				Name:        gptr.Of("exp"),
+			},
+			setup: func(_ *rpcmocks.MockIAuthProvider, _ *servicemocks.MockIExptTemplateManager, _ *servicemocks.MockIExptManager) {
+			},
+			wantErr: errno.CommonInvalidParamCode,
+		},
+		{
+			name: "invalid template_id",
+			req: &exptpb.SubmitExptFromTemplateRequest{
+				WorkspaceID: workspaceID,
+				TemplateID:  0,
+				Name:        gptr.Of("exp"),
+			},
+			setup: func(_ *rpcmocks.MockIAuthProvider, _ *servicemocks.MockIExptTemplateManager, _ *servicemocks.MockIExptManager) {
+			},
+			wantErr: errno.CommonInvalidParamCode,
+		},
+		{
+			name: "auth failed",
+			req: &exptpb.SubmitExptFromTemplateRequest{
+				WorkspaceID: workspaceID,
+				TemplateID:  templateID,
+				Name:        gptr.Of("exp"),
+			},
+			setup: func(auth *rpcmocks.MockIAuthProvider, _ *servicemocks.MockIExptTemplateManager, _ *servicemocks.MockIExptManager) {
+				auth.EXPECT().Authorization(gomock.Any(), gomock.AssignableToTypeOf(&rpc.AuthorizationParam{})).Return(errorx.NewByCode(errno.CommonNoPermissionCode))
+			},
+			wantErr: errno.CommonNoPermissionCode,
+		},
+		{
+			name: "template not found",
+			req: &exptpb.SubmitExptFromTemplateRequest{
+				WorkspaceID: workspaceID,
+				TemplateID:  templateID,
+				Name:        gptr.Of("exp"),
+			},
+			setup: func(auth *rpcmocks.MockIAuthProvider, templateMgr *servicemocks.MockIExptTemplateManager, _ *servicemocks.MockIExptManager) {
+				auth.EXPECT().Authorization(gomock.Any(), gomock.Any()).Return(nil)
+				templateMgr.EXPECT().Get(gomock.Any(), templateID, workspaceID, gomock.Any()).Return(nil, nil)
+			},
+			wantErr: errno.ResourceNotFoundCode,
+		},
+		{
+			name: "template get error",
+			req: &exptpb.SubmitExptFromTemplateRequest{
+				WorkspaceID: workspaceID,
+				TemplateID:  templateID,
+				Name:        gptr.Of("exp"),
+			},
+			setup: func(auth *rpcmocks.MockIAuthProvider, templateMgr *servicemocks.MockIExptTemplateManager, _ *servicemocks.MockIExptManager) {
+				auth.EXPECT().Authorization(gomock.Any(), gomock.Any()).Return(nil)
+				templateMgr.EXPECT().Get(gomock.Any(), templateID, workspaceID, gomock.Any()).Return(nil, errors.New("get error"))
+			},
+			wantErr: -1,
+		},
+		{
+			name: "name duplicate",
+			req: &exptpb.SubmitExptFromTemplateRequest{
+				WorkspaceID: workspaceID,
+				TemplateID:  templateID,
+				Name:        gptr.Of("exp"),
+			},
+			setup: func(auth *rpcmocks.MockIAuthProvider, templateMgr *servicemocks.MockIExptTemplateManager, manager *servicemocks.MockIExptManager) {
+				auth.EXPECT().Authorization(gomock.Any(), gomock.Any()).Return(nil)
+				templateMgr.EXPECT().Get(gomock.Any(), templateID, workspaceID, gomock.Any()).Return(buildValidTemplate(), nil)
+				manager.EXPECT().CheckName(gomock.Any(), "exp", workspaceID, gomock.Any()).Return(false, nil)
+			},
+			wantErr: errno.CommonInvalidParamCode,
+		},
+		{
+			name: "check name error",
+			req: &exptpb.SubmitExptFromTemplateRequest{
+				WorkspaceID: workspaceID,
+				TemplateID:  templateID,
+				Name:        gptr.Of("exp"),
+			},
+			setup: func(auth *rpcmocks.MockIAuthProvider, templateMgr *servicemocks.MockIExptTemplateManager, manager *servicemocks.MockIExptManager) {
+				auth.EXPECT().Authorization(gomock.Any(), gomock.Any()).Return(nil)
+				templateMgr.EXPECT().Get(gomock.Any(), templateID, workspaceID, gomock.Any()).Return(buildValidTemplate(), nil)
+				manager.EXPECT().CheckName(gomock.Any(), "exp", workspaceID, gomock.Any()).Return(false, errors.New("check error"))
+			},
+			wantErr: -1,
+		},
+	}
+
+	for _, tt := range tests {
+		tc := tt
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			auth := rpcmocks.NewMockIAuthProvider(ctrl)
+			templateMgr := servicemocks.NewMockIExptTemplateManager(ctrl)
+			manager := servicemocks.NewMockIExptManager(ctrl)
+
+			tc.setup(auth, templateMgr, manager)
+
+			app := &experimentApplication{
+				auth:            auth,
+				templateManager: templateMgr,
+				manager:         manager,
+			}
+
+			_, err := app.SubmitExptFromTemplate(context.Background(), tc.req)
+
+			if tc.wantErr != 0 {
+				assert.Error(t, err)
+				if tc.wantErr > 0 {
+					statusErr, ok := errorx.FromStatusError(err)
+					assert.True(t, ok)
+					if ok {
+						assert.Equal(t, tc.wantErr, statusErr.Code())
+					}
+				}
+			}
+		})
+	}
 }

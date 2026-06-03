@@ -37,6 +37,7 @@ import (
 	"github.com/coze-dev/coze-loop/backend/modules/observability/domain/trace/service/trace/span_filter"
 	"github.com/coze-dev/coze-loop/backend/modules/observability/domain/trace/service/trace/span_processor"
 	obErrorx "github.com/coze-dev/coze-loop/backend/modules/observability/pkg/errno"
+	"github.com/coze-dev/coze-loop/backend/modules/observability/pkg/size_util"
 	"github.com/coze-dev/coze-loop/backend/pkg/errorx"
 	"github.com/coze-dev/coze-loop/backend/pkg/json"
 	"github.com/coze-dev/coze-loop/backend/pkg/lang/goroutine"
@@ -68,6 +69,7 @@ type ListSpansReq struct {
 	OmitColumns           []string
 	Scene                 entity.ProcessorScene
 	NotQueryAnnotation    bool
+	WithoutClip           bool
 }
 
 type ListSpansResp struct {
@@ -128,11 +130,15 @@ type GetTraceReq struct {
 	SpanIDs      []string
 	WithDetail   bool
 	Filters      *loop_span.FilterFields
+	Limit        int32
+	PageToken    string
 }
 
 type GetTraceResp struct {
-	TraceId string
-	Spans   loop_span.SpanList
+	TraceId       string
+	Spans         loop_span.SpanList
+	NextPageToken string
+	HasMore       bool
 }
 
 type ListMetadataReq struct {
@@ -471,6 +477,19 @@ type GetThreadStatResponse struct {
 	UsedModels  []string
 }
 
+type GetAgentMetadataRequest struct {
+	WorkspaceID  int64
+	PlatformType loop_span.PlatformType
+}
+
+type AgentMetadataItem struct {
+	AgentName string
+}
+
+type GetAgentMetadataResponse struct {
+	Agents []AgentMetadataItem
+}
+
 type IAnnotationEvent interface {
 	Send(ctx context.Context, msg *entity.AnnotationEvent) error
 }
@@ -508,6 +527,7 @@ type ITraceService interface {
 	ListTraceChat(ctx context.Context, req *ListTraceChatRequest) (*ListTraceChatResponse, error)
 	ListThreadChat(ctx context.Context, req *ListThreadChatRequest) (*ListThreadChatResponse, error)
 	GetThreadStat(ctx context.Context, req *GetThreadStatRequest) (*GetThreadStatResponse, error)
+	GetAgentMetadata(ctx context.Context, req *GetAgentMetadataRequest) (*GetAgentMetadataResponse, error)
 }
 
 func NewTraceServiceImpl(
@@ -1068,6 +1088,114 @@ func (r *TraceServiceImpl) UpsertTrajectoryConfig(ctx context.Context, req *Upse
 	return nil
 }
 
+func (r *TraceServiceImpl) GetAgentMetadata(ctx context.Context, req *GetAgentMetadataRequest) (*GetAgentMetadataResponse, error) {
+	tenants, err := r.getTenants(ctx, req.PlatformType)
+	if err != nil {
+		return nil, err
+	}
+
+	const defaultAgentScanLimit = 100
+	now := time.Now()
+	startTime := now.Add(-7 * 24 * time.Hour).UnixMilli()
+	endTime := now.UnixMilli()
+
+	// build builtin filters (space_id, call_type, etc.) same as ListSpans
+	platformFilter, err := r.buildHelper.BuildPlatformRelatedFilter(ctx, req.PlatformType)
+	if err != nil {
+		return nil, err
+	}
+	env := &span_filter.SpanEnv{
+		WorkspaceID: req.WorkspaceID,
+	}
+	builtinFilter, err := BuildBuiltinFilters(ctx, platformFilter, env, loop_span.SpanListTypeAllSpan)
+	if err != nil {
+		return nil, err
+	}
+	if builtinFilter == nil {
+		return &GetAgentMetadataResponse{}, nil
+	}
+
+	// agent name exist filter
+	agentNameFilter := &loop_span.FilterFields{
+		FilterFields: []*loop_span.FilterField{
+			{
+				FieldName: tagKeyAgentName,
+				FieldType: loop_span.FieldTypeString,
+				QueryType: ptr.Of(loop_span.QueryTypeEnumExist),
+				IsCustom:  true,
+			},
+		},
+	}
+
+	filters := CombineFilters(builtinFilter, agentNameFilter)
+
+	tRes, err := r.traceRepo.ListSpans(ctx, &repo.ListSpansParam{
+		WorkSpaceID:     strconv.FormatInt(req.WorkspaceID, 10),
+		Tenants:         tenants,
+		Filters:         filters,
+		StartAt:         startTime,
+		EndAt:           endTime,
+		Limit:           defaultAgentScanLimit,
+		DescByStartTime: true,
+		SelectColumns:   []string{"span_id", "start_time", "tags_string"},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	agentSet := make(map[string]struct{})
+	for _, s := range tRes.Spans {
+		if s == nil {
+			continue
+		}
+		name := extractAgentName(s)
+		if name == "" {
+			continue
+		}
+		agentSet[name] = struct{}{}
+	}
+
+	agents := make([]AgentMetadataItem, 0, len(agentSet))
+	for name := range agentSet {
+		agents = append(agents, AgentMetadataItem{
+			AgentName: name,
+		})
+	}
+
+	return &GetAgentMetadataResponse{
+		Agents: agents,
+	}, nil
+}
+
+const (
+	tagKeyAgentName = "agent_name"
+)
+
+func extractAgentName(s *loop_span.Span) string {
+	if s.TagsString != nil {
+		if name, ok := s.TagsString[tagKeyAgentName]; ok && name != "" {
+			return name
+		}
+	}
+	return ""
+}
+
+func extractAgentNameFromFilters(filters *loop_span.FilterFields) string {
+	if filters == nil {
+		return ""
+	}
+	var agentName string
+	_ = filters.Traverse(func(f *loop_span.FilterField) error {
+		if f.FieldName == tagKeyAgentName {
+			if len(f.Values) > 0 && f.Values[0] != "" {
+				agentName = f.Values[0]
+			}
+		}
+		return nil
+	})
+	return agentName
+}
+
 func (r *TraceServiceImpl) GetTrace(ctx context.Context, req *GetTraceReq) (*GetTraceResp, error) {
 	if req != nil && req.Filters != nil {
 		if err := req.Filters.Traverse(processSpecificFilter); err != nil {
@@ -1088,17 +1216,22 @@ func (r *TraceServiceImpl) GetTrace(ctx context.Context, req *GetTraceReq) (*Get
 	if !req.WithDetail {
 		limit = 10000
 	}
+	if req.Limit > 0 && req.Limit < limit {
+		limit = req.Limit
+	}
 	traceResult, err := r.traceRepo.GetTrace(ctx, &repo.GetTraceParam{
-		WorkSpaceID: strconv.FormatInt(req.WorkspaceID, 10),
-		Tenants:     tenants,
-		LogID:       req.LogID,
-		TraceID:     req.TraceID,
-		StartAt:     req.StartTime,
-		EndAt:       req.EndTime,
-		Limit:       limit,
-		SpanIDs:     req.SpanIDs,
-		Filters:     req.Filters,
-		OmitColumns: omitColumns,
+		WorkSpaceID:     strconv.FormatInt(req.WorkspaceID, 10),
+		Tenants:         tenants,
+		LogID:           req.LogID,
+		TraceID:         req.TraceID,
+		StartAt:         req.StartTime,
+		EndAt:           req.EndTime,
+		Limit:           limit,
+		SpanIDs:         req.SpanIDs,
+		Filters:         req.Filters,
+		OmitColumns:     omitColumns,
+		PageToken:       req.PageToken,
+		DescByStartTime: req.PageToken != "" || req.Limit > 0,
 	})
 	r.metrics.EmitGetTrace(req.WorkspaceID, st, err != nil)
 	if err != nil {
@@ -1147,8 +1280,10 @@ func (r *TraceServiceImpl) GetTrace(ctx context.Context, req *GetTraceReq) (*Get
 	}
 	spans.SortByStartTime(false)
 	return &GetTraceResp{
-		TraceId: req.TraceID,
-		Spans:   spans,
+		TraceId:       req.TraceID,
+		Spans:         spans,
+		NextPageToken: traceResult.PageToken,
+		HasMore:       traceResult.HasMore,
 	}, nil
 }
 
@@ -1198,11 +1333,14 @@ func (r *TraceServiceImpl) ListSpans(ctx context.Context, req *ListSpansReq) (*L
 	processors, err := r.buildHelper.BuildListSpansProcessors(ctx, span_processor.Settings{
 		WorkspaceId:    req.WorkspaceID,
 		PlatformType:   req.PlatformType,
+		SpanListType:   req.SpanListType,
+		AgentName:      extractAgentNameFromFilters(req.Filters),
 		QueryStartTime: req.StartTime,
 		QueryEndTime:   req.EndTime,
 		QueryTenants:   tenants,
 		QueryFilter:    filters,
 		Scene:          req.Scene,
+		WithoutClip:    req.WithoutClip,
 	})
 	if err != nil {
 		return nil, errorx.WrapByCode(err, obErrorx.CommercialCommonInternalErrorCodeCode)
@@ -1490,12 +1628,17 @@ func (r *TraceServiceImpl) GetTracesAdvanceInfo(ctx context.Context, req *GetTra
 				logs.CtxWarn(ctx, "Fail to get spans stat, %v", err)
 				return nil
 			}
+			var size int64
+			for _, span := range spans {
+				size += int64(size_util.SizeOfSpanNew(span))
+			}
 			lock.Lock()
 			defer lock.Unlock()
 			resp.Infos = append(resp.Infos, &loop_span.TraceAdvanceInfo{
 				TraceId:    qReq.TraceID,
 				InputCost:  inputTokens,
 				OutputCost: outputTokens,
+				Size:       size,
 			})
 			return nil
 		})

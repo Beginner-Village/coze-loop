@@ -1,4 +1,4 @@
-// Copyright (c) 2025 ynet Authors
+// Copyright (c) 2025 coze-dev Authors
 // SPDX-License-Identifier: Apache-2.0
 
 package component
@@ -33,4 +33,5 @@ type IConfiger interface {
 	GetMaintainerUserIDs(ctx context.Context) map[string]bool
 	GetSchedulerAbortCtrl(ctx context.Context) *entity.SchedulerAbortCtrl
 	GetTargetTrajectoryConf(ctx context.Context) *entity.TargetTrajectoryConf
+	GetExptTemplateUpdateEvalSetWhiteList(ctx context.Context) *entity.ExptTemplateUpdateEvalSetWhiteList
 }

@@ -1,0 +1,251 @@
+// Copyright (c) 2025 coze-dev Authors
+// SPDX-License-Identifier: Apache-2.0
+
+package convertor
+
+import (
+	"time"
+
+	"github.com/bytedance/gg/gptr"
+
+	"github.com/coze-dev/coze-loop/backend/modules/evaluation/domain/entity"
+	"github.com/coze-dev/coze-loop/backend/modules/evaluation/infra/repo/target/mysql/gorm_gen/model"
+	"github.com/coze-dev/coze-loop/backend/pkg/json"
+)
+
+func EvalTargetDO2PO(do *entity.EvalTarget) (po *model.Target) {
+	po = &model.Target{
+		ID:             do.ID,
+		SpaceID:        do.SpaceID,
+		SourceTargetID: do.SourceTargetID,
+		TargetType:     int32(do.EvalTargetType),
+	}
+	if do.BaseInfo != nil {
+		if do.BaseInfo.CreatedBy != nil {
+			po.CreatedBy = gptr.Indirect(do.BaseInfo.CreatedBy.UserID) // ignore_security_alert SQL_INJECTION
+		}
+		if do.BaseInfo.UpdatedBy != nil {
+			po.UpdatedBy = gptr.Indirect(do.BaseInfo.UpdatedBy.UserID)
+		}
+		if do.BaseInfo.CreatedAt != nil {
+			po.CreatedAt = time.UnixMilli(gptr.Indirect(do.BaseInfo.CreatedAt))
+		}
+		if do.BaseInfo.UpdatedAt != nil {
+			po.UpdatedAt = time.UnixMilli(gptr.Indirect(do.BaseInfo.UpdatedAt))
+		}
+	}
+	return po
+}
+
+func EvalTargetVersionDO2PO(do *entity.EvalTargetVersion) (po *model.TargetVersion, err error) {
+	// 序列化Metainfo（整个DO）；仅记录型（*Online）与基础类型共用同一套 meta 结构
+	packType := do.EvalTargetType.ToOperatorBaseType()
+	var meta []byte
+	var inputSchema []byte
+	var outputSchema []byte
+	switch packType {
+	case entity.EvalTargetTypeCozeBot:
+		meta, err = json.Marshal(do.CozeBot)
+		if err != nil {
+			return nil, err
+		}
+	case entity.EvalTargetTypeLoopPrompt:
+		meta, err = json.Marshal(do.Prompt)
+		if err != nil {
+			return nil, err
+		}
+	case entity.EvalTargetTypeCozeWorkflow:
+		meta, err = json.Marshal(do.CozeWorkflow)
+		if err != nil {
+			return nil, err
+		}
+	case entity.EvalTargetTypeVolcengineAgent, entity.EvalTargetTypeVolcengineAgentAgentkit:
+		meta, err = json.Marshal(do.VolcengineAgent)
+		if err != nil {
+			return nil, err
+		}
+	case entity.EvalTargetTypeCustomRPCServer:
+		meta, err = json.Marshal(do.CustomRPCServer)
+		if err != nil {
+			return nil, err
+		}
+	case entity.EvalTargetTypeWebAgent:
+		meta, err = json.Marshal(do.WebAgent)
+		if err != nil {
+			return nil, err
+		}
+	case entity.EvalTargetTypeA2AAgent:
+		meta, err = json.Marshal(do.A2AAgent)
+		if err != nil {
+			return nil, err
+		}
+	case entity.EvalTargetTypeCustomAgent:
+		meta, err = json.Marshal(do.CustomAgent)
+		if err != nil {
+			return nil, err
+		}
+	default:
+	}
+	if do.InputSchema != nil {
+		inputSchema, err = json.Marshal(do.InputSchema)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if do.OutputSchema != nil {
+		outputSchema, err = json.Marshal(do.OutputSchema)
+		if err != nil {
+			return nil, err
+		}
+	}
+	po = &model.TargetVersion{
+		ID:                  do.ID,
+		SpaceID:             do.SpaceID,
+		TargetID:            do.TargetID,
+		SourceTargetVersion: do.SourceTargetVersion,
+		TargetMeta:          &meta,
+		InputSchema:         &inputSchema,
+		OutputSchema:        &outputSchema,
+	}
+	if do.BaseInfo != nil {
+		if do.BaseInfo.CreatedBy != nil {
+			po.CreatedBy = gptr.Indirect(do.BaseInfo.CreatedBy.UserID) // ignore_security_alert SQL_INJECTION
+		}
+		if do.BaseInfo.UpdatedBy != nil {
+			po.UpdatedBy = gptr.Indirect(do.BaseInfo.UpdatedBy.UserID)
+		}
+		if do.BaseInfo.CreatedAt != nil {
+			po.CreatedAt = time.UnixMilli(gptr.Indirect(do.BaseInfo.CreatedAt))
+		}
+		if do.BaseInfo.UpdatedAt != nil {
+			po.UpdatedAt = time.UnixMilli(gptr.Indirect(do.BaseInfo.UpdatedAt))
+		}
+	}
+	return po, nil
+}
+
+func EvalTargetPO2DOs(targetPOs []*model.Target) (targetDOs []*entity.EvalTarget) {
+	if targetPOs == nil {
+		return nil
+	}
+	targetDOs = make([]*entity.EvalTarget, 0)
+	for _, po := range targetPOs {
+		targetDOs = append(targetDOs, EvalTargetPO2DO(po))
+	}
+	return targetDOs
+}
+
+func EvalTargetPO2DO(targetPO *model.Target) (targetDO *entity.EvalTarget) {
+	if targetPO == nil {
+		return targetDO
+	}
+	targetDO = &entity.EvalTarget{}
+	targetDO.ID = targetPO.ID
+	targetDO.SpaceID = targetPO.SpaceID
+	targetDO.SourceTargetID = targetPO.SourceTargetID
+	targetDO.EvalTargetType = entity.EvalTargetType(targetPO.TargetType)
+
+	targetDO.BaseInfo = &entity.BaseInfo{
+		CreatedBy: &entity.UserInfo{
+			UserID: gptr.Of(targetPO.CreatedBy),
+		},
+		UpdatedBy: &entity.UserInfo{
+			UserID: gptr.Of(targetPO.UpdatedBy),
+		},
+		CreatedAt: gptr.Of(targetPO.CreatedAt.UnixMilli()),
+		UpdatedAt: gptr.Of(targetPO.UpdatedAt.UnixMilli()),
+	}
+	if targetPO.DeletedAt.Valid {
+		targetDO.BaseInfo.DeletedAt = gptr.Of(targetPO.DeletedAt.Time.UnixMilli())
+	}
+
+	return targetDO
+}
+
+func EvalTargetVersionPO2DO(targetVersionPO *model.TargetVersion, targetType entity.EvalTargetType) (targetVersionDO *entity.EvalTargetVersion) {
+	if targetVersionPO == nil {
+		return targetVersionDO
+	}
+	targetVersionDO = &entity.EvalTargetVersion{}
+	targetVersionDO.ID = targetVersionPO.ID
+	targetVersionDO.SpaceID = targetVersionPO.SpaceID
+	targetVersionDO.TargetID = targetVersionPO.TargetID
+	targetVersionDO.SourceTargetVersion = targetVersionPO.SourceTargetVersion
+	targetVersionDO.RuntimeParamDemo = gptr.Of(entity.NewPromptRuntimeParam(nil).GetJSONDemo())
+
+	targetVersionDO.BaseInfo = &entity.BaseInfo{
+		CreatedBy: &entity.UserInfo{
+			UserID: gptr.Of(targetVersionPO.CreatedBy),
+		},
+		UpdatedBy: &entity.UserInfo{
+			UserID: gptr.Of(targetVersionPO.UpdatedBy),
+		},
+		CreatedAt: gptr.Of(targetVersionPO.CreatedAt.UnixMilli()),
+		UpdatedAt: gptr.Of(targetVersionPO.UpdatedAt.UnixMilli()),
+	}
+	if targetVersionPO.DeletedAt.Valid {
+		targetVersionDO.BaseInfo.DeletedAt = gptr.Of(targetVersionPO.DeletedAt.Time.UnixMilli())
+	}
+
+	if targetVersionPO.InputSchema != nil {
+		schema := make([]*entity.ArgsSchema, 0)
+		if err := json.Unmarshal(*targetVersionPO.InputSchema, &schema); err != nil {
+			return targetVersionDO
+		}
+		targetVersionDO.InputSchema = schema
+	}
+	if targetVersionPO.OutputSchema != nil {
+		schema := make([]*entity.ArgsSchema, 0)
+		if err := json.Unmarshal(*targetVersionPO.OutputSchema, &schema); err == nil {
+			targetVersionDO.OutputSchema = schema
+		}
+	}
+	if targetVersionPO.TargetMeta != nil {
+		packType := targetType.ToOperatorBaseType()
+		switch packType {
+		case entity.EvalTargetTypeCozeBot:
+			meta := &entity.CozeBot{}
+			if err := json.Unmarshal(*targetVersionPO.TargetMeta, meta); err == nil {
+				targetVersionDO.CozeBot = meta
+			}
+		case entity.EvalTargetTypeLoopPrompt:
+			meta := &entity.LoopPrompt{}
+			if err := json.Unmarshal(*targetVersionPO.TargetMeta, meta); err == nil {
+				targetVersionDO.Prompt = meta
+			}
+		case entity.EvalTargetTypeCozeWorkflow:
+			meta := &entity.CozeWorkflow{}
+			if err := json.Unmarshal(*targetVersionPO.TargetMeta, meta); err == nil {
+				targetVersionDO.CozeWorkflow = meta
+			}
+		case entity.EvalTargetTypeVolcengineAgent, entity.EvalTargetTypeVolcengineAgentAgentkit:
+			meta := &entity.VolcengineAgent{}
+			if err := json.Unmarshal(*targetVersionPO.TargetMeta, meta); err == nil {
+				targetVersionDO.VolcengineAgent = meta
+			}
+		case entity.EvalTargetTypeCustomRPCServer:
+			meta := &entity.CustomRPCServer{}
+			if err := json.Unmarshal(*targetVersionPO.TargetMeta, meta); err == nil {
+				targetVersionDO.CustomRPCServer = meta
+			}
+		case entity.EvalTargetTypeWebAgent:
+			meta := &entity.WebAgent{}
+			if err := json.Unmarshal(*targetVersionPO.TargetMeta, meta); err == nil {
+				targetVersionDO.WebAgent = meta
+			}
+		case entity.EvalTargetTypeA2AAgent:
+			meta := &entity.A2AAgent{}
+			if err := json.Unmarshal(*targetVersionPO.TargetMeta, meta); err == nil {
+				targetVersionDO.A2AAgent = meta
+			}
+		case entity.EvalTargetTypeCustomAgent:
+			meta := &entity.CustomAgent{}
+			if err := json.Unmarshal(*targetVersionPO.TargetMeta, meta); err == nil {
+				targetVersionDO.CustomAgent = meta
+			}
+		default:
+			// todo
+		}
+	}
+	return targetVersionDO
+}

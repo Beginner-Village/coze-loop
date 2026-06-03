@@ -31,6 +31,7 @@ import (
 	observability_dataset "github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/observability/domain/dataset"
 	taskfilter "github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/observability/domain/filter"
 	taskdomain "github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/observability/domain/task"
+	componentmocks "github.com/coze-dev/coze-loop/backend/modules/evaluation/domain/component/mocks"
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/domain/component/rpc"
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/domain/component/rpc/mocks"
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/domain/entity"
@@ -62,22 +63,22 @@ func TestExptTemplateManagerImpl_CheckName(t *testing.T) {
 	spaceID := int64(100)
 
 	t.Run("repo error", func(t *testing.T) {
-		mockRepo.EXPECT().GetByName(ctx, "tpl", spaceID).Return(nil, false, errors.New("dao err"))
-		pass, err := mgr.CheckName(ctx, "tpl", spaceID, &entity.Session{})
+		mockRepo.EXPECT().GetByName(ctx, "tpl", spaceID, gomock.Any()).Return(nil, false, errors.New("dao err"))
+		pass, err := mgr.CheckName(ctx, "tpl", spaceID, 0, &entity.Session{})
 		assert.Error(t, err)
 		assert.False(t, pass)
 	})
 
 	t.Run("exists", func(t *testing.T) {
-		mockRepo.EXPECT().GetByName(ctx, "tpl", spaceID).Return(&entity.ExptTemplate{}, true, nil)
-		pass, err := mgr.CheckName(ctx, "tpl", spaceID, &entity.Session{})
+		mockRepo.EXPECT().GetByName(ctx, "tpl", spaceID, gomock.Any()).Return(&entity.ExptTemplate{}, true, nil)
+		pass, err := mgr.CheckName(ctx, "tpl", spaceID, 0, &entity.Session{})
 		assert.NoError(t, err)
 		assert.False(t, pass)
 	})
 
 	t.Run("not exists", func(t *testing.T) {
-		mockRepo.EXPECT().GetByName(ctx, "tpl2", spaceID).Return(nil, false, nil)
-		pass, err := mgr.CheckName(ctx, "tpl2", spaceID, &entity.Session{})
+		mockRepo.EXPECT().GetByName(ctx, "tpl2", spaceID, gomock.Any()).Return(nil, false, nil)
+		pass, err := mgr.CheckName(ctx, "tpl2", spaceID, 0, &entity.Session{})
 		assert.NoError(t, err)
 		assert.True(t, pass)
 	})
@@ -97,6 +98,8 @@ func TestExptTemplateManagerImpl_Create_NameExists(t *testing.T) {
 	mockTaskRPCAdapter := mocks.NewMockITaskRPCAdapter(ctrl)
 	mockPipelineRPCAdapter := mocks.NewMockIPipelineListAdapter(ctrl)
 	mockExptRepo := repo_mocks.NewMockIExperimentRepo(ctrl)
+	mockScheduleAdapter := mocks.NewMockIExptScheduleAdapter(ctrl)
+	mockConfiger := componentmocks.NewMockIConfiger(ctrl)
 
 	mgr := NewExptTemplateManager(
 		mockRepo,
@@ -109,6 +112,8 @@ func TestExptTemplateManagerImpl_Create_NameExists(t *testing.T) {
 		mockTaskRPCAdapter,
 		mockPipelineRPCAdapter,
 		mockExptRepo,
+		mockScheduleAdapter,
+		mockConfiger,
 	)
 
 	ctx := context.Background()
@@ -116,7 +121,7 @@ func TestExptTemplateManagerImpl_Create_NameExists(t *testing.T) {
 	session := &entity.Session{UserID: "u1"}
 
 	// CheckName 返回已存在
-	mockRepo.EXPECT().GetByName(ctx, param.Name, param.SpaceID).Return(&entity.ExptTemplate{}, true, nil)
+	mockRepo.EXPECT().GetByName(ctx, param.Name, param.SpaceID, gomock.Any()).Return(&entity.ExptTemplate{}, true, nil)
 
 	got, err := mgr.Create(ctx, param, session)
 	assert.Error(t, err)
@@ -158,7 +163,7 @@ func TestExptTemplateManagerImpl_Create_Success(t *testing.T) {
 	session := &entity.Session{UserID: "u1"}
 
 	// CheckName
-	mockRepo.EXPECT().GetByName(ctx, param.Name, param.SpaceID).Return(nil, false, nil)
+	mockRepo.EXPECT().GetByName(ctx, param.Name, param.SpaceID, gomock.Any()).Return(nil, false, nil)
 	// idgen
 	mockIdgen.EXPECT().GenID(ctx).Return(int64(10001), nil)
 	// mgetExptTupleByID 内部会调用 evaluationSetVersionService / evaluationSetService / evalTargetService / evaluatorService
@@ -533,7 +538,7 @@ func TestExptTemplateManagerImpl_Update_WithCreateEvalTarget(t *testing.T) {
 
 	// CheckName 通过
 	mockRepo.EXPECT().GetByID(ctx, templateID, gomock.AssignableToTypeOf(&spaceID)).Return(existing, nil)
-	mockRepo.EXPECT().GetByName(ctx, param.Name, param.SpaceID).Return(nil, false, nil)
+	mockRepo.EXPECT().GetByName(ctx, param.Name, param.SpaceID, gomock.Any()).Return(nil, false, nil)
 
 	// 解析 evaluator_version_id：TemplateConf 中的 EvaluatorConf 需要解析版本ID
 	// 测试数据中 EvaluatorConf 有 EvaluatorID: 1, Version: "v1"，需要返回对应的 evaluator
@@ -1373,7 +1378,7 @@ func TestExptTemplateManagerImpl_Update_NameCheck(t *testing.T) {
 		}
 
 		mockRepo.EXPECT().GetByID(ctx, templateID, gomock.AssignableToTypeOf(&spaceID)).Return(existing, nil)
-		mockRepo.EXPECT().GetByName(ctx, "tpl-new", spaceID).Return(nil, true, nil)
+		mockRepo.EXPECT().GetByName(ctx, "tpl-new", spaceID, gomock.Any()).Return(nil, true, nil)
 
 		_, err := mgr.Update(ctx, param, session)
 		assert.Error(t, err)
@@ -1401,7 +1406,7 @@ func TestExptTemplateManagerImpl_Update_NameCheck(t *testing.T) {
 		// 当 GetByName 返回错误时，CheckName 返回 (false, err)
 		// Update 方法先检查 !pass，所以会返回名称已存在的错误，而不是原始错误
 		// 这是当前实现的行为：先检查 !pass，再检查 err
-		mockRepo.EXPECT().GetByName(ctx, "tpl-new", spaceID).Return(nil, false, errors.New("db error"))
+		mockRepo.EXPECT().GetByName(ctx, "tpl-new", spaceID, gomock.Any()).Return(nil, false, errors.New("db error"))
 
 		_, err := mgr.Update(ctx, param, session)
 		assert.Error(t, err)
@@ -1905,7 +1910,7 @@ func TestExptTemplateManagerImpl_UpdateMeta_NilTemplate(t *testing.T) {
 		}
 
 		mockRepo.EXPECT().GetByID(ctx, templateID, gomock.AssignableToTypeOf(&spaceID)).Return(existing, nil)
-		mockRepo.EXPECT().GetByName(ctx, "new-name", spaceID).Return(nil, true, nil) // 名称已存在
+		mockRepo.EXPECT().GetByName(ctx, "new-name", spaceID, gomock.Any()).Return(nil, true, nil) // 名称已存在
 
 		_, err := mgr.UpdateMeta(ctx, param, session)
 		assert.Error(t, err)
@@ -5000,7 +5005,7 @@ func TestExptTemplateManagerImpl_Create_GenIDError(t *testing.T) {
 	param := newBasicCreateParam()
 	session := &entity.Session{UserID: "u1"}
 
-	mockRepo.EXPECT().GetByName(ctx, param.Name, param.SpaceID).Return(nil, false, nil)
+	mockRepo.EXPECT().GetByName(ctx, param.Name, param.SpaceID, gomock.Any()).Return(nil, false, nil)
 	mockIdgen.EXPECT().GenID(ctx).Return(int64(0), errors.New("gen id fail"))
 
 	got, err := mgr.Create(ctx, param, session)
@@ -5033,7 +5038,7 @@ func TestExptTemplateManagerImpl_Create_TemplateConfValidError(t *testing.T) {
 	}
 	session := &entity.Session{UserID: "u1"}
 
-	mockRepo.EXPECT().GetByName(ctx, param.Name, param.SpaceID).Return(nil, false, nil)
+	mockRepo.EXPECT().GetByName(ctx, param.Name, param.SpaceID, gomock.Any()).Return(nil, false, nil)
 
 	got, err := mgr.Create(ctx, param, session)
 	assert.Error(t, err)
@@ -5085,7 +5090,7 @@ func TestExptTemplateManagerImpl_Create_WithCreateEvalTargetParam(t *testing.T) 
 	}
 	session := &entity.Session{UserID: "u1"}
 
-	mockRepo.EXPECT().GetByName(ctx, param.Name, param.SpaceID).Return(nil, false, nil)
+	mockRepo.EXPECT().GetByName(ctx, param.Name, param.SpaceID, gomock.Any()).Return(nil, false, nil)
 	mockIdgen.EXPECT().GenID(ctx).Return(int64(10001), nil)
 	mockTargetSvc.EXPECT().CreateEvalTarget(gomock.Any(), param.SpaceID, "src-1", "v1", entity.EvalTargetTypeLoopPrompt, gomock.Any()).Return(int64(20), int64(21), nil)
 	mockRepo.EXPECT().Create(ctx, gomock.Any(), gomock.Any()).Return(nil)
@@ -5119,7 +5124,7 @@ func TestExptTemplateManagerImpl_Create_RepoCreateError(t *testing.T) {
 	param := newBasicCreateParam()
 	session := &entity.Session{UserID: "u1"}
 
-	mockRepo.EXPECT().GetByName(ctx, param.Name, param.SpaceID).Return(nil, false, nil)
+	mockRepo.EXPECT().GetByName(ctx, param.Name, param.SpaceID, gomock.Any()).Return(nil, false, nil)
 	mockIdgen.EXPECT().GenID(ctx).Return(int64(10001), nil)
 	mockRepo.EXPECT().Create(ctx, gomock.Any(), gomock.Any()).Return(errors.New("db error"))
 
@@ -5245,7 +5250,7 @@ func TestExptTemplateManagerImpl_UpdateMeta_WithCronActivate(t *testing.T) {
 		}
 
 		mockRepo.EXPECT().GetByID(ctx, templateID, gomock.AssignableToTypeOf(&spaceID)).Return(existing, nil)
-		mockRepo.EXPECT().GetByName(ctx, "new-name", spaceID).Return(nil, false, errors.New("db err"))
+		mockRepo.EXPECT().GetByName(ctx, "new-name", spaceID, gomock.Any()).Return(nil, false, errors.New("db err"))
 
 		_, err := mgr.UpdateMeta(ctx, param, session)
 		assert.Error(t, err)
@@ -6910,7 +6915,7 @@ func TestExptTemplateManagerImpl_Create_WithVisibility(t *testing.T) {
 	param.Visibility = &vis
 	session := &entity.Session{UserID: "u1"}
 
-	mockRepo.EXPECT().GetByName(ctx, param.Name, param.SpaceID).Return(nil, false, nil)
+	mockRepo.EXPECT().GetByName(ctx, param.Name, param.SpaceID, gomock.Any()).Return(nil, false, nil)
 	mockIdgen.EXPECT().GenID(ctx).Return(int64(10002), nil)
 	mockRepo.EXPECT().Create(ctx, gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, tpl *entity.ExptTemplate, _ []*entity.ExptTemplateEvaluatorRef) error {
 		// Verify Visibility is set on the created template
@@ -7081,7 +7086,7 @@ func TestExptTemplateManagerImpl_Create_CheckNameError(t *testing.T) {
 	session := &entity.Session{UserID: "u1"}
 
 	// CheckName returns error
-	mockRepo.EXPECT().GetByName(ctx, param.Name, param.SpaceID).Return(nil, false, errors.New("db err"))
+	mockRepo.EXPECT().GetByName(ctx, param.Name, param.SpaceID, gomock.Any()).Return(nil, false, errors.New("db err"))
 
 	got, err := mgr.Create(ctx, param, session)
 	assert.Error(t, err)
@@ -7129,7 +7134,7 @@ func TestExptTemplateManagerImpl_Create_WithOperationInstruction(t *testing.T) {
 	}
 	session := &entity.Session{UserID: "u1"}
 
-	mockRepo.EXPECT().GetByName(ctx, param.Name, param.SpaceID).Return(nil, false, nil)
+	mockRepo.EXPECT().GetByName(ctx, param.Name, param.SpaceID, gomock.Any()).Return(nil, false, nil)
 	mockIdgen.EXPECT().GenID(ctx).Return(int64(10003), nil)
 	mockTargetSvc.EXPECT().CreateEvalTarget(gomock.Any(), param.SpaceID, "src-1", "v1", entity.EvalTargetTypeWebAgent, gomock.Any()).Return(int64(30), int64(31), nil)
 	mockRepo.EXPECT().Create(ctx, gomock.Any(), gomock.Any()).Return(nil)
@@ -7292,7 +7297,7 @@ func TestExptTemplateManagerImpl_UpdateMeta_NameChange_Exists(t *testing.T) {
 	}
 
 	mockRepo.EXPECT().GetByID(ctx, templateID, gomock.AssignableToTypeOf(&spaceID)).Return(existing, nil)
-	mockRepo.EXPECT().GetByName(ctx, "new-name", spaceID).Return(&entity.ExptTemplate{}, true, nil)
+	mockRepo.EXPECT().GetByName(ctx, "new-name", spaceID, gomock.Any()).Return(&entity.ExptTemplate{}, true, nil)
 
 	got, err := mgr.UpdateMeta(ctx, param, session)
 	assert.Error(t, err)
@@ -7332,9 +7337,280 @@ func TestExptTemplateManagerImpl_UpdateMeta_NameCheckError(t *testing.T) {
 	}
 
 	mockRepo.EXPECT().GetByID(ctx, templateID, gomock.AssignableToTypeOf(&spaceID)).Return(existing, nil)
-	mockRepo.EXPECT().GetByName(ctx, "new-name", spaceID).Return(nil, false, errors.New("db err"))
+	mockRepo.EXPECT().GetByName(ctx, "new-name", spaceID, gomock.Any()).Return(nil, false, errors.New("db err"))
 
 	got, err := mgr.UpdateMeta(ctx, param, session)
 	assert.Error(t, err)
 	assert.Nil(t, got)
+}
+
+// TestExptTemplateManagerImpl_Update_EvalSetWhiteListAndVersionOwnership 覆盖
+// Update 方法新增的两条校验：
+//   - 白名单：非白名单空间禁止变更 EvalSetID
+//   - 版本归属：当 EvalSetID/EvalSetVersionID 相对原模板发生变化时，
+//     评测集版本必须属于声明的评测集
+func TestExptTemplateManagerImpl_Update_EvalSetWhiteListAndVersionOwnership(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockRepo := repo_mocks.NewMockIExptTemplateRepo(ctrl)
+	mockEvalSvc := svcmocks.NewMockEvaluatorService(ctrl)
+	mockTargetSvc := svcmocks.NewMockIEvalTargetService(ctrl)
+	mockEvalSetSvc := svcmocks.NewMockIEvaluationSetService(ctrl)
+	mockEvalSetVerSvc := svcmocks.NewMockEvaluationSetVersionService(ctrl)
+	mockLWT := lwtmocks.NewMockILatestWriteTracker(ctrl)
+	mockConfiger := componentmocks.NewMockIConfiger(ctrl)
+
+	mgr := &ExptTemplateManagerImpl{
+		templateRepo:                mockRepo,
+		evaluatorService:            mockEvalSvc,
+		evalTargetService:           mockTargetSvc,
+		evaluationSetService:        mockEvalSetSvc,
+		evaluationSetVersionService: mockEvalSetVerSvc,
+		lwt:                         mockLWT,
+		configer:                    mockConfiger,
+	}
+
+	ctx := context.Background()
+	spaceID := int64(100)
+	templateID := int64(1)
+	session := &entity.Session{UserID: "u1"}
+
+	existing := &entity.ExptTemplate{
+		Meta: &entity.ExptTemplateMeta{
+			ID:          templateID,
+			WorkspaceID: spaceID,
+			Name:        "tpl",
+			ExptType:    entity.ExptType_Offline,
+		},
+		TripleConfig: &entity.ExptTemplateTuple{
+			EvalSetID:        10,
+			EvalSetVersionID: 11,
+			TargetID:         20,
+			TargetVersionID:  21,
+			TargetType:       entity.EvalTargetTypeLoopPrompt,
+		},
+	}
+
+	t.Run("非白名单空间变更 EvalSetID 被拒绝", func(t *testing.T) {
+		param := &entity.UpdateExptTemplateParam{
+			TemplateID: templateID,
+			SpaceID:    spaceID,
+			EvalSetID:  99, // 与 existing.EvalSetID=10 不同
+		}
+
+		mockRepo.EXPECT().GetByID(ctx, templateID, gomock.AssignableToTypeOf(&spaceID)).Return(existing, nil)
+		mockConfiger.EXPECT().GetExptTemplateUpdateEvalSetWhiteList(ctx).
+			Return(&entity.ExptTemplateUpdateEvalSetWhiteList{SpaceIDs: []int64{200, 300}})
+
+		_, err := mgr.Update(ctx, param, session)
+		assert.Error(t, err)
+		code, _, ok := errno.ParseStatusError(err)
+		assert.True(t, ok)
+		assert.Equal(t, errno.CommonInvalidParamCode, int(code))
+	})
+
+	t.Run("nil 白名单也视为非白名单空间", func(t *testing.T) {
+		param := &entity.UpdateExptTemplateParam{
+			TemplateID: templateID,
+			SpaceID:    spaceID,
+			EvalSetID:  99,
+		}
+
+		mockRepo.EXPECT().GetByID(ctx, templateID, gomock.AssignableToTypeOf(&spaceID)).Return(existing, nil)
+		mockConfiger.EXPECT().GetExptTemplateUpdateEvalSetWhiteList(ctx).Return(nil)
+
+		_, err := mgr.Update(ctx, param, session)
+		assert.Error(t, err)
+		code, _, ok := errno.ParseStatusError(err)
+		assert.True(t, ok)
+		assert.Equal(t, errno.CommonInvalidParamCode, int(code))
+	})
+
+	t.Run("传入相同的 EvalSetID 不触发白名单校验", func(t *testing.T) {
+		// 与 existing.EvalSetID 相同，不算变更，应当走过白名单分支并进入后续流程；
+		// 这里不带 EvalSetVersionID 变更，因此也不会触发归属校验。
+		param := &entity.UpdateExptTemplateParam{
+			TemplateID: templateID,
+			SpaceID:    spaceID,
+			EvalSetID:  10, // 与 existing 相同
+		}
+
+		mockRepo.EXPECT().GetByID(ctx, templateID, gomock.AssignableToTypeOf(&spaceID)).Return(existing, nil)
+		mockEvalSvc.EXPECT().BatchGetEvaluatorByIDAndVersion(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+		mockRepo.EXPECT().UpdateWithRefs(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+		mockRepo.EXPECT().GetByID(gomock.Any(), templateID, gomock.AssignableToTypeOf(&spaceID)).Return(existing, nil)
+		mockEvalSetVerSvc.EXPECT().BatchGetEvaluationSetVersions(gomock.Any(), gptr.Of(spaceID), gomock.Any(), gptr.Of(false)).Return(nil, nil).AnyTimes()
+		mockEvalSetSvc.EXPECT().BatchGetEvaluationSets(gomock.Any(), gptr.Of(spaceID), gomock.Any(), gptr.Of(false)).Return(nil, nil).AnyTimes()
+		mockTargetSvc.EXPECT().BatchGetEvalTargetVersion(gomock.Any(), spaceID, gomock.Any(), true).Return(nil, nil).AnyTimes()
+		mockEvalSvc.EXPECT().BatchGetEvaluatorVersion(gomock.Any(), nil, gomock.Any(), true).Return(nil, nil).AnyTimes()
+
+		_, err := mgr.Update(ctx, param, session)
+		assert.NoError(t, err)
+	})
+
+	t.Run("版本归属校验：版本属于其他评测集，拒绝", func(t *testing.T) {
+		// 仅变更 EvalSetVersionID，沿用原 EvalSetID=10
+		param := &entity.UpdateExptTemplateParam{
+			TemplateID:       templateID,
+			SpaceID:          spaceID,
+			EvalSetVersionID: 999,
+		}
+
+		mockRepo.EXPECT().GetByID(ctx, templateID, gomock.AssignableToTypeOf(&spaceID)).Return(existing, nil)
+		mockEvalSvc.EXPECT().BatchGetEvaluatorByIDAndVersion(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+		// 返回的版本归属另一个评测集 EvaluationSetID=12
+		mockEvalSetVerSvc.EXPECT().GetEvaluationSetVersion(ctx, spaceID, int64(999), gptr.Of(false)).
+			Return(&entity.EvaluationSetVersion{ID: 999, EvaluationSetID: 12}, nil, nil)
+
+		_, err := mgr.Update(ctx, param, session)
+		assert.Error(t, err)
+		code, _, ok := errno.ParseStatusError(err)
+		assert.True(t, ok)
+		assert.Equal(t, errno.CommonInvalidParamCode, int(code))
+	})
+
+	t.Run("版本归属校验：service 返回 nil version，拒绝", func(t *testing.T) {
+		param := &entity.UpdateExptTemplateParam{
+			TemplateID:       templateID,
+			SpaceID:          spaceID,
+			EvalSetVersionID: 999,
+		}
+
+		mockRepo.EXPECT().GetByID(ctx, templateID, gomock.AssignableToTypeOf(&spaceID)).Return(existing, nil)
+		mockEvalSvc.EXPECT().BatchGetEvaluatorByIDAndVersion(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+		mockEvalSetVerSvc.EXPECT().GetEvaluationSetVersion(ctx, spaceID, int64(999), gptr.Of(false)).
+			Return(nil, nil, nil)
+
+		_, err := mgr.Update(ctx, param, session)
+		assert.Error(t, err)
+		code, _, ok := errno.ParseStatusError(err)
+		assert.True(t, ok)
+		assert.Equal(t, errno.CommonInvalidParamCode, int(code))
+	})
+
+	t.Run("版本归属校验：service 报错，包错返回", func(t *testing.T) {
+		param := &entity.UpdateExptTemplateParam{
+			TemplateID:       templateID,
+			SpaceID:          spaceID,
+			EvalSetVersionID: 999,
+		}
+
+		mockRepo.EXPECT().GetByID(ctx, templateID, gomock.AssignableToTypeOf(&spaceID)).Return(existing, nil)
+		mockEvalSvc.EXPECT().BatchGetEvaluatorByIDAndVersion(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+		mockEvalSetVerSvc.EXPECT().GetEvaluationSetVersion(ctx, spaceID, int64(999), gptr.Of(false)).
+			Return(nil, nil, errors.New("rpc fail"))
+
+		_, err := mgr.Update(ctx, param, session)
+		assert.Error(t, err)
+	})
+
+	t.Run("白名单命中变更 EvalSetID 且版本归属正确，更新成功", func(t *testing.T) {
+		param := &entity.UpdateExptTemplateParam{
+			TemplateID:       templateID,
+			SpaceID:          spaceID,
+			EvalSetID:        77,
+			EvalSetVersionID: 88,
+		}
+
+		mockRepo.EXPECT().GetByID(ctx, templateID, gomock.AssignableToTypeOf(&spaceID)).Return(existing, nil)
+		mockConfiger.EXPECT().GetExptTemplateUpdateEvalSetWhiteList(ctx).
+			Return(&entity.ExptTemplateUpdateEvalSetWhiteList{SpaceIDs: []int64{spaceID}})
+		mockEvalSvc.EXPECT().BatchGetEvaluatorByIDAndVersion(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+		mockEvalSetVerSvc.EXPECT().GetEvaluationSetVersion(ctx, spaceID, int64(88), gptr.Of(false)).
+			Return(&entity.EvaluationSetVersion{ID: 88, EvaluationSetID: 77}, nil, nil)
+		mockRepo.EXPECT().UpdateWithRefs(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+		updated := &entity.ExptTemplate{
+			Meta: &entity.ExptTemplateMeta{
+				ID:          templateID,
+				WorkspaceID: spaceID,
+				Name:        "tpl",
+				ExptType:    entity.ExptType_Offline,
+			},
+			TripleConfig: &entity.ExptTemplateTuple{
+				EvalSetID:        77,
+				EvalSetVersionID: 88,
+				TargetID:         20,
+				TargetVersionID:  21,
+				TargetType:       entity.EvalTargetTypeLoopPrompt,
+			},
+		}
+		mockRepo.EXPECT().GetByID(gomock.Any(), templateID, gomock.AssignableToTypeOf(&spaceID)).Return(updated, nil)
+		mockEvalSetVerSvc.EXPECT().BatchGetEvaluationSetVersions(gomock.Any(), gptr.Of(spaceID), gomock.Any(), gptr.Of(false)).Return(nil, nil).AnyTimes()
+		mockEvalSetSvc.EXPECT().BatchGetEvaluationSets(gomock.Any(), gptr.Of(spaceID), gomock.Any(), gptr.Of(false)).Return(nil, nil).AnyTimes()
+		mockTargetSvc.EXPECT().BatchGetEvalTargetVersion(gomock.Any(), spaceID, gomock.Any(), true).Return(nil, nil).AnyTimes()
+		mockEvalSvc.EXPECT().BatchGetEvaluatorVersion(gomock.Any(), nil, gomock.Any(), true).Return(nil, nil).AnyTimes()
+
+		got, err := mgr.Update(ctx, param, session)
+		assert.NoError(t, err)
+		assert.NotNil(t, got)
+	})
+
+	t.Run("白名单 allow_all=true，任意空间变更 EvalSetID 放行", func(t *testing.T) {
+		param := &entity.UpdateExptTemplateParam{
+			TemplateID:       templateID,
+			SpaceID:          spaceID,
+			EvalSetID:        77,
+			EvalSetVersionID: 88,
+		}
+
+		mockRepo.EXPECT().GetByID(ctx, templateID, gomock.AssignableToTypeOf(&spaceID)).Return(existing, nil)
+		mockConfiger.EXPECT().GetExptTemplateUpdateEvalSetWhiteList(ctx).
+			Return(&entity.ExptTemplateUpdateEvalSetWhiteList{AllowAll: true})
+		mockEvalSvc.EXPECT().BatchGetEvaluatorByIDAndVersion(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+		mockEvalSetVerSvc.EXPECT().GetEvaluationSetVersion(ctx, spaceID, int64(88), gptr.Of(false)).
+			Return(&entity.EvaluationSetVersion{ID: 88, EvaluationSetID: 77}, nil, nil)
+		mockRepo.EXPECT().UpdateWithRefs(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+		updated := &entity.ExptTemplate{
+			Meta: &entity.ExptTemplateMeta{
+				ID:          templateID,
+				WorkspaceID: spaceID,
+				Name:        "tpl",
+				ExptType:    entity.ExptType_Offline,
+			},
+			TripleConfig: &entity.ExptTemplateTuple{
+				EvalSetID:        77,
+				EvalSetVersionID: 88,
+				TargetID:         20,
+				TargetVersionID:  21,
+				TargetType:       entity.EvalTargetTypeLoopPrompt,
+			},
+		}
+		mockRepo.EXPECT().GetByID(gomock.Any(), templateID, gomock.AssignableToTypeOf(&spaceID)).Return(updated, nil)
+		mockEvalSetVerSvc.EXPECT().BatchGetEvaluationSetVersions(gomock.Any(), gptr.Of(spaceID), gomock.Any(), gptr.Of(false)).Return(nil, nil).AnyTimes()
+		mockEvalSetSvc.EXPECT().BatchGetEvaluationSets(gomock.Any(), gptr.Of(spaceID), gomock.Any(), gptr.Of(false)).Return(nil, nil).AnyTimes()
+		mockTargetSvc.EXPECT().BatchGetEvalTargetVersion(gomock.Any(), spaceID, gomock.Any(), true).Return(nil, nil).AnyTimes()
+		mockEvalSvc.EXPECT().BatchGetEvaluatorVersion(gomock.Any(), nil, gomock.Any(), true).Return(nil, nil).AnyTimes()
+
+		_, err := mgr.Update(ctx, param, session)
+		assert.NoError(t, err)
+	})
+
+	t.Run("原模板 EvalSetID/VersionID 都为零且请求只带 VersionID，触发归属校验并报参数错", func(t *testing.T) {
+		// 原模板 TripleConfig 为零值时，GetEvalSetID()=0；
+		// 请求只带 EvalSetVersionID，最终 EvalSetID 仍为 0，触发 "eval_set_id and eval_set_version_id are required" 分支
+		emptyExisting := &entity.ExptTemplate{
+			Meta: &entity.ExptTemplateMeta{
+				ID:          templateID,
+				WorkspaceID: spaceID,
+				Name:        "tpl",
+				ExptType:    entity.ExptType_Offline,
+			},
+			TripleConfig: &entity.ExptTemplateTuple{},
+		}
+		param := &entity.UpdateExptTemplateParam{
+			TemplateID:       templateID,
+			SpaceID:          spaceID,
+			EvalSetVersionID: 88,
+		}
+
+		mockRepo.EXPECT().GetByID(ctx, templateID, gomock.AssignableToTypeOf(&spaceID)).Return(emptyExisting, nil)
+		mockEvalSvc.EXPECT().BatchGetEvaluatorByIDAndVersion(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+
+		_, err := mgr.Update(ctx, param, session)
+		assert.Error(t, err)
+		code, _, ok := errno.ParseStatusError(err)
+		assert.True(t, ok)
+		assert.Equal(t, errno.CommonInvalidParamCode, int(code))
+	})
 }

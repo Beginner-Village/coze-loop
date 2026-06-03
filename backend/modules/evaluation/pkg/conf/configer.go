@@ -1,4 +1,4 @@
-// Copyright (c) 2025 ynet Authors
+// Copyright (c) 2025 coze-dev Authors
 // SPDX-License-Identifier: Apache-2.0
 
 package conf
@@ -89,6 +89,11 @@ func (c *configer) GetCKDBName(ctx context.Context) *entity.CKDBConfig {
 func (c *configer) GetExptExportWhiteList(ctx context.Context) (eec *entity.ExptExportWhiteList) {
 	const key = "expt_export_white_list"
 	return lo.Ternary(c.loader.UnmarshalKey(ctx, key, &eec) == nil, eec, entity.DefaultExptExportWhiteList())
+}
+
+func (c *configer) GetExptTemplateUpdateEvalSetWhiteList(ctx context.Context) (w *entity.ExptTemplateUpdateEvalSetWhiteList) {
+	const key = "expt_template_update_eval_set_white_list"
+	return lo.Ternary(c.loader.UnmarshalKey(ctx, key, &w) == nil, w, entity.DefaultExptTemplateUpdateEvalSetWhiteList())
 }
 
 func (c *configer) GetMaintainerUserIDs(ctx context.Context) map[string]bool {

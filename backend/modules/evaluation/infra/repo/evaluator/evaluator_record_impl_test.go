@@ -1,4 +1,4 @@
-// Copyright (c) 2025 ynet Authors
+// Copyright (c) 2025 coze-dev Authors
 // SPDX-License-Identifier: Apache-2.0
 
 package evaluator
@@ -91,6 +91,10 @@ func (f *fakeEvaluatorRecordStorageConfiger) GetSchedulerAbortCtrl(ctx context.C
 }
 
 func (f *fakeEvaluatorRecordStorageConfiger) GetTargetTrajectoryConf(ctx context.Context) *entity.TargetTrajectoryConf {
+	return nil
+}
+
+func (f *fakeEvaluatorRecordStorageConfiger) GetExptTemplateUpdateEvalSetWhiteList(ctx context.Context) *entity.ExptTemplateUpdateEvalSetWhiteList {
 	return nil
 }
 

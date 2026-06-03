@@ -1,4 +1,4 @@
-// Copyright (c) 2025 ynet Authors
+// Copyright (c) 2025 coze-dev Authors
 // SPDX-License-Identifier: Apache-2.0
 
 package service
@@ -159,6 +159,11 @@ func (e ExptResultServiceImpl) RecordItemRunLogs(ctx context.Context, exptID, ex
 	itemResults, err := e.ExptItemResultRepo.BatchGet(ctx, spaceID, exptID, []int64{itemID})
 	if err != nil {
 		return nil, err
+	}
+
+	if len(itemResults) == 0 {
+		logs.CtxWarn(ctx, "[ExptEval] found empty item results, expt_id=%v, expt_run_id=%v, item_id=%v", exptID, exptRunID, itemID)
+		return nil, errorx.NewByCode(errno.ResourceNotFoundCode)
 	}
 
 	itemResult := itemResults[0]
@@ -418,11 +423,152 @@ func (e ExptResultServiceImpl) MGetExperimentResult(ctx context.Context, param *
 		return nil, err
 	}
 
+	// 基准实验“行级”结果需要在未终态时也返回 logid：
+	// - `expt_turn_result_run_log` / `expt_item_result_run_log` 中执行中就会写入 log_id
+	// - `expt_turn_result` / `expt_item_result` 的 log_id 往往要等终态回写后才可用
+	// 因此这里优先从 run-log 回填 item(SystemInfo.LogID)。
+	itemID2LogID := make(map[int64]string, len(itemIDs))
+	type itemTurnKey struct {
+		exptRunID int64
+		itemID    int64
+		turnID    int64
+	}
+	turnLogIDByRunItemTurn := make(map[itemTurnKey]string)
+	type itemTurnKeyNoRun struct {
+		itemID int64
+		turnID int64
+	}
+	turnLogIDByItemTurn := make(map[itemTurnKeyNoRun]string)
+	targetResultIDByRunItemTurn := make(map[itemTurnKey]int64)
+
+	// 将基准页内 turn_result 里的 expt_run_id 拆分出来，批量拉取对应的 run-log
+	runID2ItemIDSet := make(map[int64]map[int64]struct{})
+	for _, tr := range turnResultDAOs {
+		if tr == nil {
+			continue
+		}
+		if runID2ItemIDSet[tr.ExptRunID] == nil {
+			runID2ItemIDSet[tr.ExptRunID] = make(map[int64]struct{})
+		}
+		runID2ItemIDSet[tr.ExptRunID][tr.ItemID] = struct{}{}
+	}
+
+	for exptRunID, itemIDSet := range runID2ItemIDSet {
+		if len(itemIDSet) == 0 {
+			continue
+		}
+		exptPageItemIDs := make([]int64, 0, len(itemIDSet))
+		for itemID := range itemIDSet {
+			exptPageItemIDs = append(exptPageItemIDs, itemID)
+		}
+
+		// 先尝试从 item_run_log 回填（若创建时就写入了 log_id，会更准确）
+		itemRunLogs, runLogErr := e.ExptItemResultRepo.MGetItemRunLog(ctx, baseExptID, exptRunID, exptPageItemIDs, spaceID)
+		if runLogErr != nil {
+			return nil, runLogErr
+		}
+		for _, irl := range itemRunLogs {
+			if irl == nil {
+				continue
+			}
+			if irl.LogID != "" {
+				itemID2LogID[irl.ItemID] = irl.LogID
+			}
+		}
+
+		// 再从 turn_run_log 回填（保证执行中也能提供 log_id）
+		turnRunLogs, runLogErr := e.ExptTurnResultRepo.MGetItemTurnRunLogs(ctx, baseExptID, exptRunID, exptPageItemIDs, spaceID)
+		if runLogErr != nil {
+			return nil, runLogErr
+		}
+		for _, trl := range turnRunLogs {
+			if trl == nil {
+				continue
+			}
+			k := itemTurnKey{
+				exptRunID: exptRunID,
+				itemID:    trl.ItemID,
+				turnID:    trl.TurnID,
+			}
+			if trl.LogID != "" {
+				turnLogIDByRunItemTurn[k] = trl.LogID
+				// 兜底：同一分页里同一 item/turn 若出现多个 run_id，只保留第一个非空 logid 用于对外展示
+				noRunKey := itemTurnKeyNoRun{itemID: trl.ItemID, turnID: trl.TurnID}
+				if turnLogIDByItemTurn[noRunKey] == "" {
+					turnLogIDByItemTurn[noRunKey] = trl.LogID
+				}
+			}
+			if trl.TargetResultID > 0 {
+				targetResultIDByRunItemTurn[k] = trl.TargetResultID
+			}
+		}
+	}
+
+	// 确保每个 item 都能回填到一个 logid：按 turn_resultDAOs 的遍历顺序取该 item 的第一个非空 logid。
+	// 异步评测对象执行中会先把 target record id 写入 run-log，turn_result 可能要等终态才回写；
+	// 这里提前补齐 TargetResultID，保证 processing 阶段的结果接口也能返回 target_record/logid。
+	for _, tr := range turnResultDAOs {
+		if tr == nil {
+			continue
+		}
+		key := itemTurnKey{exptRunID: tr.ExptRunID, itemID: tr.ItemID, turnID: tr.TurnID}
+		if itemID2LogID[tr.ItemID] == "" {
+			if logID, ok := turnLogIDByRunItemTurn[key]; ok && logID != "" {
+				itemID2LogID[tr.ItemID] = logID
+			}
+		}
+		if tr.TargetResultID == 0 {
+			if targetResultID := targetResultIDByRunItemTurn[key]; targetResultID > 0 {
+				tr.TargetResultID = targetResultID
+			}
+		}
+	}
+
 	payloadBuilder := NewPayloadBuilder(ctx, param, baseExptID, turnResultDAOs, itemResultDAOs, e.ExperimentRepo, e.ExptTurnResultRepo, e.ExptAnnotateRepo, e.evalTargetService, e.evaluatorRecordService, e.evaluationSetItemService, e.analysisService, nil, nil, itemID2ItemRunState, e.fileProvider)
+
+	// 写回 item 级别 logid 到 payload.SystemInfo，供 BatchGetExperimentResult 返回给业务方
+	for _, item := range payloadBuilder.ItemResults {
+		if item == nil || item.SystemInfo == nil {
+			continue
+		}
+		if item.SystemInfo.LogID != nil && *item.SystemInfo.LogID != "" {
+			continue
+		}
+		if logID := itemID2LogID[item.ItemID]; logID != "" {
+			item.SystemInfo.LogID = gptr.Of(logID)
+		}
+	}
 
 	itemResults, err := payloadBuilder.BuildItemResults(ctx)
 	if err != nil {
 		return nil, err
+	}
+
+	// 写回 turn 级别 logid：若 turn_result 表未回写 log_id，则用 run-log 兜底
+	for _, item := range itemResults {
+		if item == nil {
+			continue
+		}
+		for _, turn := range item.TurnResults {
+			if turn == nil {
+				continue
+			}
+			for _, exptRes := range turn.ExperimentResults {
+				if exptRes == nil || exptRes.Payload == nil || exptRes.Payload.SystemInfo == nil {
+					continue
+				}
+				// 当前接口按 baseExpt 的 turn_result 拉取分页范围，这里只对 baseExpt 的系统信息做兜底即可
+				if exptRes.ExperimentID != baseExptID {
+					continue
+				}
+				if exptRes.Payload.SystemInfo.LogID != nil && *exptRes.Payload.SystemInfo.LogID != "" {
+					continue
+				}
+				if logID := turnLogIDByItemTurn[itemTurnKeyNoRun{itemID: item.ItemID, turnID: turn.TurnID}]; logID != "" {
+					exptRes.Payload.SystemInfo.LogID = gptr.Of(logID)
+				}
+			}
+		}
 	}
 
 	res.ItemResults = itemResults
@@ -1427,6 +1573,10 @@ func (e *ExptResultBuilder) build(ctx context.Context) error {
 		return nil
 	}
 
+	if err := e.fillProcessingTargetResultID(ctx); err != nil {
+		return err
+	}
+
 	// 由于turnID可能为0，以turn_result_id为行的唯一标识聚合数据，组装payload数据时再通过turn_result_id与item_id(单轮)或turn_id(多轮)映射进行组装
 	e.ItemIDTurnID2TurnResultID = make(map[int64]map[int64]int64) // itemID -> turnID -> turn_result_id
 	for _, turnResult := range e.turnResultDO {
@@ -1455,6 +1605,64 @@ func (e *ExptResultBuilder) build(ctx context.Context) error {
 	err = e.buildAnalysis(ctx)
 	if err != nil {
 		return err
+	}
+
+	return nil
+}
+
+func (e *ExptResultBuilder) fillProcessingTargetResultID(ctx context.Context) error {
+	type runItemTurnKey struct {
+		exptRunID int64
+		itemID    int64
+		turnID    int64
+	}
+
+	runID2ItemIDSet := make(map[int64]map[int64]struct{})
+	for _, turnResult := range e.turnResultDO {
+		if turnResult == nil || turnResult.TargetResultID > 0 || turnResult.ExptRunID == 0 {
+			continue
+		}
+		if runID2ItemIDSet[turnResult.ExptRunID] == nil {
+			runID2ItemIDSet[turnResult.ExptRunID] = make(map[int64]struct{})
+		}
+		runID2ItemIDSet[turnResult.ExptRunID][turnResult.ItemID] = struct{}{}
+	}
+	if len(runID2ItemIDSet) == 0 {
+		return nil
+	}
+
+	targetResultIDByRunItemTurn := make(map[runItemTurnKey]int64)
+	for exptRunID, itemIDSet := range runID2ItemIDSet {
+		itemIDs := make([]int64, 0, len(itemIDSet))
+		for itemID := range itemIDSet {
+			itemIDs = append(itemIDs, itemID)
+		}
+		sort.Slice(itemIDs, func(i, j int) bool { return itemIDs[i] < itemIDs[j] })
+
+		turnRunLogs, err := e.ExptTurnResultRepo.MGetItemTurnRunLogs(ctx, e.ExptID, exptRunID, itemIDs, e.SpaceID)
+		if err != nil {
+			return err
+		}
+		for _, turnRunLog := range turnRunLogs {
+			if turnRunLog == nil || turnRunLog.TargetResultID == 0 {
+				continue
+			}
+			targetResultIDByRunItemTurn[runItemTurnKey{
+				exptRunID: exptRunID,
+				itemID:    turnRunLog.ItemID,
+				turnID:    turnRunLog.TurnID,
+			}] = turnRunLog.TargetResultID
+		}
+	}
+
+	for _, turnResult := range e.turnResultDO {
+		if turnResult == nil || turnResult.TargetResultID > 0 {
+			continue
+		}
+		key := runItemTurnKey{exptRunID: turnResult.ExptRunID, itemID: turnResult.ItemID, turnID: turnResult.TurnID}
+		if targetResultID := targetResultIDByRunItemTurn[key]; targetResultID > 0 {
+			turnResult.TargetResultID = targetResultID
+		}
 	}
 
 	return nil

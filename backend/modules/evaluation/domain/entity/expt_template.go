@@ -92,11 +92,12 @@ type FilterFieldDO struct {
 
 // ExptSchedulerDO 定时触发器配置，与 expt.Scheduler 结构对应
 type ExptSchedulerDO struct {
-	Enabled   *bool
-	Frequency *string
-	TriggerAt *int64
-	StartTime *int64
-	EndTime   *int64
+	Enabled         *bool
+	Frequency       *string
+	TriggerAt       *int64
+	StartTime       *int64
+	EndTime         *int64
+	TriggerInterval *int32
 }
 
 // ExptInfo 实验模板关联的实验运行状态信息
@@ -439,6 +440,8 @@ type UpdateExptTemplateParam struct {
 	ExptType                ExptType
 	CronActivate            *bool // nil 表示不修改
 	CreateEvalTargetParam   *CreateEvalTargetParam
+	// ExptSource 实验来源信息；nil 表示不修改，由 service 层保留 DB 已有值
+	ExptSource *ExptSource
 }
 
 // UpdateExptTemplateMetaParam 更新实验模板 Meta 参数
@@ -450,4 +453,30 @@ type UpdateExptTemplateMetaParam struct {
 	ExptType     ExptType
 	Visibility   *Visibility
 	CronActivate *bool // nil 表示不修改
+}
+
+// ExptTemplateUpdateEvalSetWhiteList 控制哪些空间在更新实验模板时允许变更 EvalSetID；
+// 名单外的空间只能更新评测集版本，不能切换评测集本身。
+type ExptTemplateUpdateEvalSetWhiteList struct {
+	SpaceIDs []int64 `json:"space_ids" mapstructure:"space_ids"`
+	AllowAll bool    `json:"allow_all" mapstructure:"allow_all"`
+}
+
+func DefaultExptTemplateUpdateEvalSetWhiteList() *ExptTemplateUpdateEvalSetWhiteList {
+	return &ExptTemplateUpdateEvalSetWhiteList{}
+}
+
+func (w *ExptTemplateUpdateEvalSetWhiteList) IsSpaceAllowed(spaceID int64) bool {
+	if w == nil {
+		return false
+	}
+	if w.AllowAll {
+		return true
+	}
+	for _, id := range w.SpaceIDs {
+		if id == spaceID {
+			return true
+		}
+	}
+	return false
 }

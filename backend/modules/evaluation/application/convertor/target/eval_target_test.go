@@ -1,0 +1,1078 @@
+// Copyright (c) 2025 coze-dev Authors
+// SPDX-License-Identifier: Apache-2.0
+
+package target
+
+import (
+	"testing"
+
+	"github.com/bytedance/gg/gptr"
+	"github.com/stretchr/testify/assert"
+
+	commondto "github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/evaluation/domain/common"
+	dto "github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/evaluation/domain/eval_target"
+	do "github.com/coze-dev/coze-loop/backend/modules/evaluation/domain/entity"
+)
+
+func TestEvalTargetDTO2DO(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		targetDTO *dto.EvalTarget
+		expected  *do.EvalTarget
+	}{
+		{
+			name:      "nil输入",
+			targetDTO: nil,
+			expected:  nil,
+		},
+		{
+			name: "完整的EvalTarget转换",
+			targetDTO: &dto.EvalTarget{
+				ID:             gptr.Of(int64(123)),
+				WorkspaceID:    gptr.Of(int64(456)),
+				SourceTargetID: gptr.Of("source123"),
+				EvalTargetType: gptr.Of(dto.EvalTargetType_CozeBot),
+				BaseInfo: &commondto.BaseInfo{
+					CreatedAt: gptr.Of(int64(1640995200000)),
+					UpdatedAt: gptr.Of(int64(1640995200000)),
+				},
+				EvalTargetVersion: &dto.EvalTargetVersion{
+					ID:                  gptr.Of(int64(789)),
+					WorkspaceID:         gptr.Of(int64(456)),
+					TargetID:            gptr.Of(int64(123)),
+					SourceTargetVersion: gptr.Of("v1.0"),
+				},
+			},
+			expected: &do.EvalTarget{
+				ID:             123,
+				SpaceID:        456,
+				SourceTargetID: "source123",
+				EvalTargetType: do.EvalTargetType(dto.EvalTargetType_CozeBot),
+				BaseInfo: &do.BaseInfo{
+					CreatedAt: gptr.Of(int64(1640995200000)),
+					UpdatedAt: gptr.Of(int64(1640995200000)),
+				},
+				EvalTargetVersion: &do.EvalTargetVersion{
+					ID:                  789,
+					SpaceID:             456,
+					TargetID:            123,
+					SourceTargetVersion: "v1.0",
+				},
+			},
+		},
+		{
+			name: "最小字段的EvalTarget",
+			targetDTO: &dto.EvalTarget{
+				ID:             gptr.Of(int64(1)),
+				WorkspaceID:    gptr.Of(int64(2)),
+				SourceTargetID: gptr.Of("test"),
+				EvalTargetType: gptr.Of(dto.EvalTargetType_CozeLoopPrompt),
+			},
+			expected: &do.EvalTarget{
+				ID:                1,
+				SpaceID:           2,
+				SourceTargetID:    "test",
+				EvalTargetType:    do.EvalTargetType(dto.EvalTargetType_CozeLoopPrompt),
+				EvalTargetVersion: nil,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			result := EvalTargetDTO2DO(tt.targetDTO)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestEvalTargetVersionDTO2DO(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name             string
+		targetVersionDTO *dto.EvalTargetVersion
+		expected         *do.EvalTargetVersion
+	}{
+		{
+			name:             "nil输入",
+			targetVersionDTO: nil,
+			expected:         nil,
+		},
+		{
+			name: "基本版本转换",
+			targetVersionDTO: &dto.EvalTargetVersion{
+				ID:                  gptr.Of(int64(1)),
+				WorkspaceID:         gptr.Of(int64(2)),
+				TargetID:            gptr.Of(int64(3)),
+				SourceTargetVersion: gptr.Of("v1.0"),
+			},
+			expected: &do.EvalTargetVersion{
+				ID:                  1,
+				SpaceID:             2,
+				TargetID:            3,
+				SourceTargetVersion: "v1.0",
+			},
+		},
+		{
+			name: "自定义对象转换",
+			targetVersionDTO: &dto.EvalTargetVersion{
+				ID:                  gptr.Of(int64(1)),
+				WorkspaceID:         gptr.Of(int64(2)),
+				TargetID:            gptr.Of(int64(3)),
+				SourceTargetVersion: gptr.Of("v1.0"),
+				EvalTargetContent: &dto.EvalTargetContent{
+					CustomRPCServer: &dto.CustomRPCServer{
+						ID:   gptr.Of(int64(4)),
+						Name: gptr.Of("test"),
+						InvokeHTTPInfo: &dto.HTTPInfo{
+							Method: gptr.Of(""),
+							Path:   gptr.Of(""),
+						},
+						CustomEvalTarget: &dto.CustomEvalTarget{
+							ID:        gptr.Of(""),
+							Name:      gptr.Of(""),
+							AvatarURL: gptr.Of(""),
+						},
+					},
+				},
+			},
+			expected: &do.EvalTargetVersion{
+				ID:                  1,
+				SpaceID:             2,
+				TargetID:            3,
+				SourceTargetVersion: "v1.0",
+				CustomRPCServer: &do.CustomRPCServer{
+					ID:   4,
+					Name: "test",
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			result := EvalTargetVersionDTO2DO(tt.targetVersionDTO)
+			if tt.name == "自定义对象转换" {
+				assert.Equal(t, result.CustomRPCServer.Name, tt.expected.CustomRPCServer.Name)
+				return
+			}
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestEvalTargetListDO2DTO(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		targetDOList  []*do.EvalTarget
+		expectedCount int
+	}{
+		{
+			name:          "空列表",
+			targetDOList:  []*do.EvalTarget{},
+			expectedCount: 0,
+		},
+		{
+			name: "单个元素列表",
+			targetDOList: []*do.EvalTarget{
+				{
+					ID:             1,
+					SpaceID:        2,
+					SourceTargetID: "test",
+					EvalTargetType: do.EvalTargetTypeLoopPrompt,
+				},
+			},
+			expectedCount: 1,
+		},
+		{
+			name: "多个元素列表",
+			targetDOList: []*do.EvalTarget{
+				{
+					ID:             1,
+					SpaceID:        2,
+					SourceTargetID: "test1",
+					EvalTargetType: do.EvalTargetTypeLoopPrompt,
+				},
+				{
+					ID:             2,
+					SpaceID:        3,
+					SourceTargetID: "test2",
+					EvalTargetType: do.EvalTargetTypeCozeBot,
+				},
+			},
+			expectedCount: 2,
+		},
+		{
+			name:          "nil列表",
+			targetDOList:  nil,
+			expectedCount: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			result := EvalTargetListDO2DTO(tt.targetDOList)
+			assert.Len(t, result, tt.expectedCount)
+
+			// 验证每个元素都正确转换
+			for i, targetDO := range tt.targetDOList {
+				expectedDTO := EvalTargetDO2DTO(targetDO)
+				assert.Equal(t, expectedDTO, result[i])
+			}
+		})
+	}
+}
+
+func TestEvalTargetDO2DTO(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		targetDO *do.EvalTarget
+		expected *dto.EvalTarget
+	}{
+		{
+			name:     "nil输入",
+			targetDO: nil,
+			expected: nil,
+		},
+		{
+			name: "基本EvalTarget转换",
+			targetDO: &do.EvalTarget{
+				ID:             123,
+				SpaceID:        456,
+				SourceTargetID: "source123",
+				EvalTargetType: do.EvalTargetTypeCozeBot,
+				BaseInfo: &do.BaseInfo{
+					CreatedAt: gptr.Of(int64(1640995200000)),
+					UpdatedAt: gptr.Of(int64(1640995200000)),
+				},
+			},
+			expected: &dto.EvalTarget{
+				ID:             gptr.Of(int64(123)),
+				WorkspaceID:    gptr.Of(int64(456)),
+				SourceTargetID: gptr.Of("source123"),
+				EvalTargetType: gptr.Of(dto.EvalTargetType(do.EvalTargetTypeCozeBot)),
+				BaseInfo: &commondto.BaseInfo{
+					CreatedAt: gptr.Of(int64(1640995200000)),
+					UpdatedAt: gptr.Of(int64(1640995200000)),
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			result := EvalTargetDO2DTO(tt.targetDO)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestEvalTargetVersionDO2DTO(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name            string
+		targetVersionDO *do.EvalTargetVersion
+		expected        *dto.EvalTargetVersion
+	}{
+		{
+			name:            "nil输入",
+			targetVersionDO: nil,
+			expected:        nil,
+		},
+		{
+			name: "基本版本转换",
+			targetVersionDO: &do.EvalTargetVersion{
+				ID:                  1,
+				SpaceID:             2,
+				TargetID:            3,
+				SourceTargetVersion: "v1.0",
+				EvalTargetType:      do.EvalTargetTypeCozeBot,
+			},
+			expected: &dto.EvalTargetVersion{
+				ID:                  gptr.Of(int64(1)),
+				WorkspaceID:         gptr.Of(int64(2)),
+				TargetID:            gptr.Of(int64(3)),
+				SourceTargetVersion: gptr.Of("v1.0"),
+				EvalTargetContent: &dto.EvalTargetContent{
+					InputSchemas:  []*commondto.ArgsSchema{},
+					OutputSchemas: []*commondto.ArgsSchema{},
+				},
+			},
+		},
+		{
+			name: "火山转换",
+			targetVersionDO: &do.EvalTargetVersion{
+				ID:                  1,
+				SpaceID:             2,
+				TargetID:            3,
+				SourceTargetVersion: "v1.0",
+				EvalTargetType:      do.EvalTargetTypeVolcengineAgent,
+				VolcengineAgent: &do.VolcengineAgent{
+					VolcengineAgentEndpoints: []*do.VolcengineAgentEndpoint{
+						{
+							EndpointID: "test",
+							APIKey:     "test",
+						},
+					},
+				},
+			},
+			expected: &dto.EvalTargetVersion{
+				ID:                  gptr.Of(int64(1)),
+				WorkspaceID:         gptr.Of(int64(2)),
+				TargetID:            gptr.Of(int64(3)),
+				SourceTargetVersion: gptr.Of("v1.0"),
+				EvalTargetContent: &dto.EvalTargetContent{
+					InputSchemas:  []*commondto.ArgsSchema{},
+					OutputSchemas: []*commondto.ArgsSchema{},
+					VolcengineAgent: &dto.VolcengineAgent{
+						Name:        gptr.Of("agent"),
+						Description: gptr.Of("test"),
+						VolcengineAgentEndpoints: []*dto.VolcengineAgentEndpoint{
+							{
+								EndpointID: gptr.Of("test"),
+								APIKey:     gptr.Of("test"),
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "自定义对象转换",
+			targetVersionDO: &do.EvalTargetVersion{
+				ID:                  1,
+				SpaceID:             2,
+				TargetID:            3,
+				SourceTargetVersion: "v1.0",
+				EvalTargetType:      do.EvalTargetTypeCustomRPCServer,
+				CustomRPCServer: &do.CustomRPCServer{
+					Name:        "test",
+					Description: "test",
+					InvokeHTTPInfo: &do.HTTPInfo{
+						Method: "GET",
+						Path:   "/test",
+					},
+					AsyncInvokeHTTPInfo: &do.HTTPInfo{
+						Method: "GET",
+						Path:   "/test",
+					},
+					SearchHTTPInfo: &do.HTTPInfo{
+						Method: "GET",
+						Path:   "/test",
+					},
+					CustomEvalTarget: &do.CustomEvalTarget{
+						Name: gptr.Of("test"),
+					},
+					IsAsync: gptr.Of(true),
+					Ext: map[string]string{
+						"test": "test",
+					},
+				},
+			},
+			expected: &dto.EvalTargetVersion{
+				ID:                  gptr.Of(int64(1)),
+				WorkspaceID:         gptr.Of(int64(2)),
+				TargetID:            gptr.Of(int64(3)),
+				SourceTargetVersion: gptr.Of("v1.0"),
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			result := EvalTargetVersionDO2DTO(tt.targetVersionDO)
+			if result == nil {
+				assert.Equal(t, tt.expected, result)
+				return
+			}
+			assert.Equal(t, tt.expected.TargetID, result.TargetID)
+			assert.Equal(t, tt.expected.ID, result.ID)
+			assert.Equal(t, tt.expected.SourceTargetVersion, result.SourceTargetVersion)
+		})
+	}
+}
+
+func TestCustomRPCServerConversions(t *testing.T) {
+	t.Parallel()
+
+	trueVal := true
+	timeout := int64(1000)
+	asyncTimeout := int64(2000)
+	execEnv := "prod"
+	doValue := &do.CustomRPCServer{
+		ID:                  123,
+		Name:                "custom",
+		Description:         "desc",
+		ServerName:          "svc",
+		AccessProtocol:      do.AccessProtocolFaasHTTP,
+		Regions:             []do.Region{"cn"},
+		Cluster:             "default",
+		InvokeHTTPInfo:      &do.HTTPInfo{Method: do.HTTPMethodPost, Path: "/invoke"},
+		AsyncInvokeHTTPInfo: &do.HTTPInfo{Method: do.HTTPMethodGet, Path: "/async"},
+		NeedSearchTarget:    &trueVal,
+		SearchHTTPInfo:      &do.HTTPInfo{Method: do.HTTPMethodGet, Path: "/search"},
+		CustomEvalTarget:    &do.CustomEvalTarget{ID: gptr.Of("id"), Name: gptr.Of("target"), AvatarURL: gptr.Of("avatar"), Ext: map[string]string{"k": "v"}},
+		IsAsync:             &trueVal,
+		ExecRegion:          do.RegionCN,
+		ExecEnv:             &execEnv,
+		Timeout:             &timeout,
+		AsyncTimeout:        &asyncTimeout,
+		Ext:                 map[string]string{"extra": "value"},
+	}
+
+	dtoValue := CustomRPCServerDO2DTO(doValue)
+	assert.NotNil(t, dtoValue)
+	assert.Equal(t, doValue.ID, gptr.Indirect(dtoValue.ID))
+	assert.Equal(t, doValue.Name, gptr.Indirect(dtoValue.Name))
+	assert.Equal(t, doValue.Description, gptr.Indirect(dtoValue.Description))
+	assert.Equal(t, doValue.ServerName, gptr.Indirect(dtoValue.ServerName))
+	assert.Equal(t, doValue.AccessProtocol, gptr.Indirect(dtoValue.AccessProtocol))
+	assert.Equal(t, doValue.Regions, dtoValue.Regions)
+	assert.Equal(t, doValue.Cluster, gptr.Indirect(dtoValue.Cluster))
+	assert.Equal(t, doValue.InvokeHTTPInfo.Path, gptr.Indirect(dtoValue.InvokeHTTPInfo.Path))
+	assert.Equal(t, doValue.AsyncInvokeHTTPInfo.Method, gptr.Indirect(dtoValue.AsyncInvokeHTTPInfo.Method))
+	assert.Equal(t, doValue.NeedSearchTarget, dtoValue.NeedSearchTarget)
+	assert.Equal(t, doValue.SearchHTTPInfo.Path, gptr.Indirect(dtoValue.SearchHTTPInfo.Path))
+	assert.Equal(t, doValue.CustomEvalTarget.Name, dtoValue.CustomEvalTarget.Name)
+	assert.Equal(t, doValue.IsAsync, dtoValue.IsAsync)
+	assert.Equal(t, gptr.Indirect(dtoValue.ExecRegion), doValue.ExecRegion)
+	assert.Equal(t, doValue.ExecEnv, dtoValue.ExecEnv)
+	assert.Equal(t, doValue.Timeout, dtoValue.Timeout)
+	assert.Equal(t, doValue.AsyncTimeout, dtoValue.AsyncTimeout)
+	assert.Equal(t, doValue.Ext, dtoValue.Ext)
+
+	roundtrip := CustomRPCServerDTO2DO(dtoValue)
+	assert.Equal(t, doValue.ID, roundtrip.ID)
+	assert.Equal(t, doValue.Name, roundtrip.Name)
+	assert.Equal(t, doValue.Description, roundtrip.Description)
+	assert.Equal(t, doValue.ServerName, roundtrip.ServerName)
+	assert.Equal(t, doValue.AccessProtocol, roundtrip.AccessProtocol)
+	assert.Equal(t, doValue.Regions, roundtrip.Regions)
+	assert.Equal(t, doValue.Cluster, roundtrip.Cluster)
+	assert.Equal(t, doValue.InvokeHTTPInfo.Method, roundtrip.InvokeHTTPInfo.Method)
+	assert.Equal(t, doValue.AsyncInvokeHTTPInfo.Path, roundtrip.AsyncInvokeHTTPInfo.Path)
+	assert.Equal(t, doValue.NeedSearchTarget, roundtrip.NeedSearchTarget)
+	assert.Equal(t, doValue.SearchHTTPInfo.Method, roundtrip.SearchHTTPInfo.Method)
+	assert.Equal(t, doValue.CustomEvalTarget.Ext, roundtrip.CustomEvalTarget.Ext)
+	assert.Equal(t, doValue.IsAsync, roundtrip.IsAsync)
+	assert.Equal(t, doValue.ExecRegion, roundtrip.ExecRegion)
+	assert.Equal(t, doValue.ExecEnv, roundtrip.ExecEnv)
+	assert.Equal(t, doValue.Timeout, roundtrip.Timeout)
+	assert.Equal(t, doValue.AsyncTimeout, roundtrip.AsyncTimeout)
+	assert.Equal(t, doValue.Ext, roundtrip.Ext)
+
+	assert.Nil(t, CustomRPCServerDTO2DO(nil))
+}
+
+func TestCustomEvalTargetConversions(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		dos  []*do.CustomEvalTarget
+	}{
+		{
+			name: "包含nil元素",
+			dos: []*do.CustomEvalTarget{
+				{ID: gptr.Of("1"), Name: gptr.Of("a")},
+				nil,
+			},
+		},
+		{
+			name: "nil输入",
+			dos:  nil,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			dtos := CustomEvalTargetDO2DTOs(tt.dos)
+			if tt.dos == nil {
+				assert.Nil(t, dtos)
+				return
+			}
+			assert.Len(t, dtos, 1)
+			assert.Equal(t, gptr.Indirect(tt.dos[0].ID), gptr.Indirect(dtos[0].ID))
+		})
+	}
+
+	dtoValue := &dto.CustomEvalTarget{ID: gptr.Of("id"), Name: gptr.Of("name"), AvatarURL: gptr.Of("avatar")}
+	doValue := CustomEvalTargetDTO2DO(dtoValue)
+	assert.Equal(t, gptr.Indirect(dtoValue.ID), gptr.Indirect(doValue.ID))
+	assert.Equal(t, gptr.Indirect(dtoValue.Name), gptr.Indirect(doValue.Name))
+	assert.Equal(t, gptr.Indirect(dtoValue.AvatarURL), gptr.Indirect(doValue.AvatarURL))
+	assert.Nil(t, CustomEvalTargetDTO2DO(nil))
+	assert.Nil(t, CustomEvalTargetDO2DTO(nil))
+}
+
+func TestWebAgentDTO2DO(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		input    *dto.WebAgent
+		expected *do.WebAgent
+	}{
+		{
+			name:     "nil输入",
+			input:    nil,
+			expected: nil,
+		},
+		{
+			name: "完整WebAgent转换",
+			input: &dto.WebAgent{
+				ID:          gptr.Of(int64(100)),
+				Name:        gptr.Of("agent-name"),
+				Description: gptr.Of("agent-desc"),
+				AgentConfig: &commondto.AgentConfig{
+					AgentType: gptr.Of("vibe"),
+				},
+				PromptConfig: &dto.WebAgentTargetPromptConfig{
+					MessageList: []*commondto.Message{},
+				},
+			},
+			expected: &do.WebAgent{
+				ID:          100,
+				Name:        "agent-name",
+				Description: "agent-desc",
+				AgentConfig: &do.AgentConfig{
+					AgentType: do.AgentType("vibe"),
+				},
+				PromptConfig: &do.WebAgentTargetPromptConfig{
+					MessageList: []*do.Message{},
+				},
+			},
+		},
+		{
+			name: "AgentConfig为nil",
+			input: &dto.WebAgent{
+				ID:   gptr.Of(int64(1)),
+				Name: gptr.Of("test"),
+			},
+			expected: &do.WebAgent{
+				ID:   1,
+				Name: "test",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			result := WebAgentDTO2DO(tt.input)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestWebAgentDO2DTO(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		input    *do.WebAgent
+		expected *dto.WebAgent
+	}{
+		{
+			name:     "nil输入",
+			input:    nil,
+			expected: nil,
+		},
+		{
+			name: "完整WebAgent转换",
+			input: &do.WebAgent{
+				ID:          100,
+				Name:        "agent-name",
+				Description: "agent-desc",
+				AgentConfig: &do.AgentConfig{
+					AgentType: do.AgentType("vibe"),
+				},
+				PromptConfig: &do.WebAgentTargetPromptConfig{
+					MessageList: []*do.Message{},
+				},
+			},
+			expected: &dto.WebAgent{
+				ID:          gptr.Of(int64(100)),
+				Name:        gptr.Of("agent-name"),
+				Description: gptr.Of("agent-desc"),
+				AgentConfig: &commondto.AgentConfig{
+					AgentType: gptr.Of("vibe"),
+				},
+				PromptConfig: &dto.WebAgentTargetPromptConfig{
+					MessageList: []*commondto.Message{},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			result := WebAgentDO2DTO(tt.input)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestAgentConfigDTO2DO(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		input    *commondto.AgentConfig
+		expected *do.AgentConfig
+	}{
+		{
+			name:     "nil输入",
+			input:    nil,
+			expected: nil,
+		},
+		{
+			name: "正常转换",
+			input: &commondto.AgentConfig{
+				AgentType: gptr.Of("vibe"),
+			},
+			expected: &do.AgentConfig{
+				AgentType: do.AgentType("vibe"),
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			result := AgentConfigDTO2DO(tt.input)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestAgentConfigDO2DTO(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		input    *do.AgentConfig
+		expected *commondto.AgentConfig
+	}{
+		{
+			name:     "nil输入",
+			input:    nil,
+			expected: nil,
+		},
+		{
+			name: "正常转换",
+			input: &do.AgentConfig{
+				AgentType: do.AgentType("vibe"),
+			},
+			expected: &commondto.AgentConfig{
+				AgentType: gptr.Of("vibe"),
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			result := AgentConfigDO2DTO(tt.input)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestWebAgentTargetPromptConfigDTO2DO(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		input    *dto.WebAgentTargetPromptConfig
+		expected *do.WebAgentTargetPromptConfig
+	}{
+		{
+			name:     "nil输入",
+			input:    nil,
+			expected: nil,
+		},
+		{
+			name:  "空MessageList",
+			input: &dto.WebAgentTargetPromptConfig{},
+			expected: &do.WebAgentTargetPromptConfig{
+				MessageList: []*do.Message{},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			result := WebAgentTargetPromptConfigDTO2DO(tt.input)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestWebAgentTargetPromptConfigDO2DTO(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		input    *do.WebAgentTargetPromptConfig
+		expected *dto.WebAgentTargetPromptConfig
+	}{
+		{
+			name:     "nil输入",
+			input:    nil,
+			expected: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			result := WebAgentTargetPromptConfigDO2DTO(tt.input)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestWebAgentTargetPromptConfigOutputRuleDTO2DO(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		input    *dto.WebAgentTargetPromptConfigOutputRule
+		expected *do.WebAgentTargetPromptConfigOutputRule
+	}{
+		{
+			name:     "nil输入",
+			input:    nil,
+			expected: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			result := WebAgentTargetPromptConfigOutputRuleDTO2DO(tt.input)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestWebAgentTargetPromptConfigOutputRuleDO2DTO(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		input    *do.WebAgentTargetPromptConfigOutputRule
+		expected *dto.WebAgentTargetPromptConfigOutputRule
+	}{
+		{
+			name:     "nil输入",
+			input:    nil,
+			expected: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			result := WebAgentTargetPromptConfigOutputRuleDO2DTO(tt.input)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestEvalTargetVersionDO2DTO_WebAgent(t *testing.T) {
+	t.Parallel()
+
+	targetVersionDO := &do.EvalTargetVersion{
+		ID:                  1,
+		SpaceID:             2,
+		TargetID:            3,
+		SourceTargetVersion: "v1.0",
+		EvalTargetType:      do.EvalTargetTypeWebAgent,
+		WebAgent: &do.WebAgent{
+			ID:   1,
+			Name: "test",
+		},
+	}
+
+	result := EvalTargetVersionDO2DTO(targetVersionDO)
+	assert.NotNil(t, result)
+	assert.NotNil(t, result.EvalTargetContent)
+	assert.NotNil(t, result.EvalTargetContent.WebAgent)
+	assert.Equal(t, int64(1), gptr.Indirect(result.EvalTargetContent.WebAgent.ID))
+	assert.Equal(t, "test", gptr.Indirect(result.EvalTargetContent.WebAgent.Name))
+}
+
+func TestEvalTargetDO2DTO_OnlineTypeSameDTOAsBase(t *testing.T) {
+	t.Parallel()
+
+	online := &do.EvalTarget{
+		ID:             1,
+		SpaceID:        2,
+		SourceTargetID: "src",
+		EvalTargetType: do.EvalTargetTypeCozeBotOnline,
+		EvalTargetVersion: &do.EvalTargetVersion{
+			ID:                  10,
+			SpaceID:             2,
+			TargetID:            1,
+			SourceTargetVersion: "v",
+			EvalTargetType:      do.EvalTargetTypeCozeBotOnline,
+			CozeBot: &do.CozeBot{
+				BotID: 999,
+			},
+		},
+	}
+	base := &do.EvalTarget{
+		ID:             online.ID,
+		SpaceID:        online.SpaceID,
+		SourceTargetID: online.SourceTargetID,
+		EvalTargetType: do.EvalTargetTypeCozeBot,
+		EvalTargetVersion: &do.EvalTargetVersion{
+			ID:                  online.EvalTargetVersion.ID,
+			SpaceID:             online.EvalTargetVersion.SpaceID,
+			TargetID:            online.EvalTargetVersion.TargetID,
+			SourceTargetVersion: online.EvalTargetVersion.SourceTargetVersion,
+			EvalTargetType:      do.EvalTargetTypeCozeBot,
+			CozeBot:             online.EvalTargetVersion.CozeBot,
+		},
+	}
+
+	assert.Equal(t, EvalTargetDO2DTO(base), EvalTargetDO2DTO(online))
+}
+
+func TestA2AAgentConversions(t *testing.T) {
+	t.Parallel()
+
+	// nil tests
+	assert.Nil(t, A2AAgentDTO2DO(nil))
+	assert.Nil(t, A2AAgentDO2DTO(nil))
+
+	// roundtrip test
+	doObj := &do.A2AAgent{
+		ID:          123,
+		Name:        "a2a-agent",
+		Description: "test a2a agent",
+		ServerName:  "svc_name",
+		URL:         "http://example.com",
+		ExecRegion:  do.RegionCN,
+		ExecEnv:     gptr.Of("prod"),
+	}
+
+	dtoObj := A2AAgentDO2DTO(doObj)
+	assert.NotNil(t, dtoObj)
+	assert.Equal(t, int64(123), gptr.Indirect(dtoObj.ID))
+	assert.Equal(t, "a2a-agent", gptr.Indirect(dtoObj.Name))
+	assert.Equal(t, "test a2a agent", gptr.Indirect(dtoObj.Description))
+	assert.Equal(t, "svc_name", gptr.Indirect(dtoObj.ServerName))
+	assert.Equal(t, "http://example.com", gptr.Indirect(dtoObj.URL))
+	assert.Equal(t, do.RegionCN, gptr.Indirect(dtoObj.ExecRegion))
+	assert.Equal(t, gptr.Of("prod"), dtoObj.ExecEnv)
+
+	roundtrip := A2AAgentDTO2DO(dtoObj)
+	assert.Equal(t, doObj, roundtrip)
+}
+
+func TestCustomAgentConversions(t *testing.T) {
+	t.Parallel()
+
+	// nil tests
+	assert.Nil(t, CustomAgentDTO2DO(nil))
+	assert.Nil(t, CustomAgentDO2DTO(nil))
+
+	// full roundtrip test
+	doObj := &do.CustomAgent{
+		ID:                  456,
+		Name:                "custom-agent",
+		Description:         "test custom agent",
+		ExecRegion:          do.RegionCN,
+		ExecEnv:             gptr.Of("staging"),
+		Cluster:             gptr.Of("cluster-1"),
+		TimeoutMs:           gptr.Of(int64(5000)),
+		FirstTokenTimeoutMs: gptr.Of(int64(3000)),
+		AgentConnection: &do.AgentConnection{
+			IP:              "10.0.0.1",
+			Region:          "cn-north",
+			IDC:             "lf",
+			SDKVersion:      "1.0.0",
+			ProtocolVersion: "2.0",
+			PSM:             "my.psm",
+			FrontierInfo: &do.FrontierInfo{
+				AppID:     1,
+				ProductID: 2,
+				UserID:    3,
+				DeviceID:  4,
+			},
+			AgentImpl: &do.AgentImpl{
+				Language:  "python",
+				Framework: "Langchain",
+				Kind:      "rag",
+			},
+		},
+	}
+
+	dtoObj := CustomAgentDO2DTO(doObj)
+	assert.NotNil(t, dtoObj)
+	assert.Equal(t, int64(456), gptr.Indirect(dtoObj.ID))
+	assert.Equal(t, "custom-agent", gptr.Indirect(dtoObj.Name))
+	assert.Equal(t, "test custom agent", gptr.Indirect(dtoObj.Description))
+	assert.Equal(t, do.RegionCN, gptr.Indirect(dtoObj.ExecRegion))
+	assert.Equal(t, gptr.Of("staging"), dtoObj.ExecEnv)
+	assert.Equal(t, gptr.Of("cluster-1"), dtoObj.Cluster)
+	assert.Equal(t, gptr.Of(int64(5000)), dtoObj.TimeoutMs)
+	assert.Equal(t, gptr.Of(int64(3000)), dtoObj.FirstTokenTimeoutMs)
+	assert.NotNil(t, dtoObj.AgentConnection)
+	assert.Equal(t, "10.0.0.1", gptr.Indirect(dtoObj.AgentConnection.IP))
+	assert.Equal(t, "cn-north", gptr.Indirect(dtoObj.AgentConnection.Region))
+	assert.Equal(t, "lf", gptr.Indirect(dtoObj.AgentConnection.Idc))
+	assert.Equal(t, "1.0.0", gptr.Indirect(dtoObj.AgentConnection.SdkVersion))
+	assert.Equal(t, "2.0", gptr.Indirect(dtoObj.AgentConnection.ProtocolVersion))
+	assert.Equal(t, "my.psm", gptr.Indirect(dtoObj.AgentConnection.Psm))
+	assert.NotNil(t, dtoObj.AgentConnection.FrontierInfo)
+	assert.Equal(t, int64(1), gptr.Indirect(dtoObj.AgentConnection.FrontierInfo.AppID))
+	assert.NotNil(t, dtoObj.AgentConnection.AgentImpl)
+	assert.Equal(t, "python", gptr.Indirect(dtoObj.AgentConnection.AgentImpl.Language))
+
+	roundtrip := CustomAgentDTO2DO(dtoObj)
+	assert.Equal(t, doObj, roundtrip)
+}
+
+func TestAgentConnectionConversions(t *testing.T) {
+	t.Parallel()
+
+	assert.Nil(t, AgentConnectionDTO2DO(nil))
+	assert.Nil(t, AgentConnectionDO2DTO(nil))
+
+	doObj := &do.AgentConnection{
+		IP:              "1.2.3.4",
+		Region:          "us",
+		IDC:             "va",
+		SDKVersion:      "2.0.0",
+		ProtocolVersion: "3.0",
+		PSM:             "agent.svc",
+	}
+	dtoObj := AgentConnectionDO2DTO(doObj)
+	assert.NotNil(t, dtoObj)
+	roundtrip := AgentConnectionDTO2DO(dtoObj)
+	assert.Equal(t, doObj, roundtrip)
+}
+
+func TestFrontierInfoConversions(t *testing.T) {
+	t.Parallel()
+
+	assert.Nil(t, FrontierInfoDTO2DO(nil))
+	assert.Nil(t, FrontierInfoDO2DTO(nil))
+
+	doObj := &do.FrontierInfo{
+		AppID:     10,
+		ProductID: 20,
+		UserID:    30,
+		DeviceID:  40,
+	}
+	dtoObj := FrontierInfoDO2DTO(doObj)
+	assert.NotNil(t, dtoObj)
+	assert.Equal(t, int64(10), gptr.Indirect(dtoObj.AppID))
+	assert.Equal(t, int64(20), gptr.Indirect(dtoObj.ProductID))
+	assert.Equal(t, int64(30), gptr.Indirect(dtoObj.UserID))
+	assert.Equal(t, int64(40), gptr.Indirect(dtoObj.DeviceID))
+
+	roundtrip := FrontierInfoDTO2DO(dtoObj)
+	assert.Equal(t, doObj, roundtrip)
+}
+
+func TestAgentImplConversions(t *testing.T) {
+	t.Parallel()
+
+	assert.Nil(t, AgentImplDTO2DO(nil))
+	assert.Nil(t, AgentImplDO2DTO(nil))
+
+	doObj := &do.AgentImpl{
+		Language:  "go",
+		Framework: "Eino",
+		Kind:      "chat",
+	}
+	dtoObj := AgentImplDO2DTO(doObj)
+	assert.NotNil(t, dtoObj)
+	assert.Equal(t, "go", gptr.Indirect(dtoObj.Language))
+	assert.Equal(t, "Eino", gptr.Indirect(dtoObj.Framework))
+	assert.Equal(t, "chat", gptr.Indirect(dtoObj.Kind))
+
+	roundtrip := AgentImplDTO2DO(dtoObj)
+	assert.Equal(t, doObj, roundtrip)
+}
+
+func TestEvalTargetVersionDO2DTO_A2AAgent(t *testing.T) {
+	t.Parallel()
+
+	targetVersionDO := &do.EvalTargetVersion{
+		ID:                  1,
+		SpaceID:             2,
+		TargetID:            3,
+		SourceTargetVersion: "v1.0",
+		EvalTargetType:      do.EvalTargetTypeA2AAgent,
+		A2AAgent: &do.A2AAgent{
+			ID:         100,
+			Name:       "my-a2a",
+			ServerName: "svc",
+			URL:        "http://a2a.example.com",
+		},
+	}
+
+	result := EvalTargetVersionDO2DTO(targetVersionDO)
+	assert.NotNil(t, result)
+	assert.NotNil(t, result.EvalTargetContent)
+	assert.NotNil(t, result.EvalTargetContent.A2aAgent)
+	assert.Equal(t, int64(100), gptr.Indirect(result.EvalTargetContent.A2aAgent.ID))
+	assert.Equal(t, "my-a2a", gptr.Indirect(result.EvalTargetContent.A2aAgent.Name))
+	assert.Equal(t, "svc", gptr.Indirect(result.EvalTargetContent.A2aAgent.ServerName))
+	assert.Equal(t, "http://a2a.example.com", gptr.Indirect(result.EvalTargetContent.A2aAgent.URL))
+}
+
+func TestEvalTargetVersionDO2DTO_CustomAgent(t *testing.T) {
+	t.Parallel()
+
+	targetVersionDO := &do.EvalTargetVersion{
+		ID:                  1,
+		SpaceID:             2,
+		TargetID:            3,
+		SourceTargetVersion: "v1.0",
+		EvalTargetType:      do.EvalTargetTypeCustomAgent,
+		CustomAgent: &do.CustomAgent{
+			ID:         200,
+			Name:       "my-custom",
+			ExecRegion: do.RegionCN,
+			Cluster:    gptr.Of("cluster-x"),
+			TimeoutMs:  gptr.Of(int64(10000)),
+			AgentConnection: &do.AgentConnection{
+				IP:           "192.168.1.1",
+				FrontierInfo: &do.FrontierInfo{AppID: 99},
+			},
+		},
+	}
+
+	result := EvalTargetVersionDO2DTO(targetVersionDO)
+	assert.NotNil(t, result)
+	assert.NotNil(t, result.EvalTargetContent)
+	assert.NotNil(t, result.EvalTargetContent.CustomAgent)
+	assert.Equal(t, int64(200), gptr.Indirect(result.EvalTargetContent.CustomAgent.ID))
+	assert.Equal(t, "my-custom", gptr.Indirect(result.EvalTargetContent.CustomAgent.Name))
+	assert.Equal(t, gptr.Of("cluster-x"), result.EvalTargetContent.CustomAgent.Cluster)
+	assert.NotNil(t, result.EvalTargetContent.CustomAgent.AgentConnection)
+	assert.Equal(t, "192.168.1.1", gptr.Indirect(result.EvalTargetContent.CustomAgent.AgentConnection.IP))
+}

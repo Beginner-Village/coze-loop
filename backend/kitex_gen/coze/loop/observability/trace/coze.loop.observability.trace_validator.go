@@ -70,6 +70,11 @@ func (p *TraceAdvanceInfo) IsValid() error {
 	return nil
 }
 func (p *GetTraceRequest) IsValid() error {
+	if p.Filters != nil {
+		if err := p.Filters.IsValid(); err != nil {
+			return fmt.Errorf("field Filters not valid, %w", err)
+		}
+	}
 	if p.Base != nil {
 		if err := p.Base.IsValid(); err != nil {
 			return fmt.Errorf("field Base not valid, %w", err)
@@ -630,6 +635,60 @@ func (p *MetadataItemInfo) IsValid() error {
 	return nil
 }
 func (p *ListMetadataResponse) IsValid() error {
+	if p.BaseResp != nil {
+		if err := p.BaseResp.IsValid(); err != nil {
+			return fmt.Errorf("field BaseResp not valid, %w", err)
+		}
+	}
+	return nil
+}
+func (p *ColumnExtractRule) IsValid() error {
+	return nil
+}
+func (p *UpsertColumnExtractConfigRequest) IsValid() error {
+	if p.Base != nil {
+		if err := p.Base.IsValid(); err != nil {
+			return fmt.Errorf("field Base not valid, %w", err)
+		}
+	}
+	return nil
+}
+func (p *UpsertColumnExtractConfigResponse) IsValid() error {
+	if p.BaseResp != nil {
+		if err := p.BaseResp.IsValid(); err != nil {
+			return fmt.Errorf("field BaseResp not valid, %w", err)
+		}
+	}
+	return nil
+}
+func (p *GetColumnExtractConfigRequest) IsValid() error {
+	if p.Base != nil {
+		if err := p.Base.IsValid(); err != nil {
+			return fmt.Errorf("field Base not valid, %w", err)
+		}
+	}
+	return nil
+}
+func (p *GetColumnExtractConfigResponse) IsValid() error {
+	if p.BaseResp != nil {
+		if err := p.BaseResp.IsValid(); err != nil {
+			return fmt.Errorf("field BaseResp not valid, %w", err)
+		}
+	}
+	return nil
+}
+func (p *AgentMetadata) IsValid() error {
+	return nil
+}
+func (p *GetAgentMetadataRequest) IsValid() error {
+	if p.Base != nil {
+		if err := p.Base.IsValid(); err != nil {
+			return fmt.Errorf("field Base not valid, %w", err)
+		}
+	}
+	return nil
+}
+func (p *GetAgentMetadataResponse) IsValid() error {
 	if p.BaseResp != nil {
 		if err := p.BaseResp.IsValid(); err != nil {
 			return fmt.Errorf("field BaseResp not valid, %w", err)

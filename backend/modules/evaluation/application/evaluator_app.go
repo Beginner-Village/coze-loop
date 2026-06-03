@@ -1,4 +1,4 @@
-// Copyright (c) 2025 ynet Authors
+// Copyright (c) 2025 coze-dev Authors
 // SPDX-License-Identifier: Apache-2.0
 
 package application
@@ -275,7 +275,7 @@ func (e *EvaluatorHandlerImpl) GetEvaluator(ctx context.Context, request *evalua
 
 // CreateEvaluator 创建 evaluator_version
 func (e *EvaluatorHandlerImpl) CreateEvaluator(ctx context.Context, request *evaluatorservice.CreateEvaluatorRequest) (resp *evaluatorservice.CreateEvaluatorResponse, err error) {
-	if request.GetEvaluator() != nil && request.GetEvaluator().GetWorkspaceID() == 0 {
+	if request.GetEvaluator() != nil && request.GetWorkspaceID() != 0 {
 		request.Evaluator.WorkspaceID = request.WorkspaceID
 	}
 	// 校验参数

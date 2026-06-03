@@ -347,6 +347,10 @@ func (f *fakeExperimentClient) CheckExperimentTemplateName(ctx context.Context, 
 	return nil, nil
 }
 
+func (f *fakeExperimentClient) SubmitExptFromTemplate(ctx context.Context, req *expt.SubmitExptFromTemplateRequest, callOptions ...callopt.Option) (*expt.SubmitExptFromTemplateResponse, error) {
+	return nil, nil
+}
+
 // 使用真实 EvaluationProvider 注入 Processor，验证三种路径：BizStatus、非 BizStatus 包装、成功返回条数
 func TestAutoEvaluateProcessor_Invoke_WithEvaluationProvider_BizStatusPassthrough(t *testing.T) {
 	t.Parallel()
@@ -1304,7 +1308,7 @@ func TestAutoEvaluateProcessor_NewAutoEvaluateProcessor(t *testing.T) {
 	taskRepo := repomocks.NewMockITaskRepo(ctrl)
 
 	// Test constructor
-	proc := NewAutoEvaluateProcessor(123, datasetServiceAdaptor, evalMock, evaluationMock, taskRepo, &EvalTargetBuilderImpl{}, nil)
+	proc := NewAutoEvaluateProcessor(123, datasetServiceAdaptor, evalMock, evaluationMock, taskRepo, &EvalTargetBuilderImpl{}, nil, nil)
 
 	assert.NotNil(t, proc)
 	assert.Equal(t, int32(123), proc.aid)

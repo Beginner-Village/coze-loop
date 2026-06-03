@@ -1,4 +1,4 @@
-// Copyright (c) 2025 ynet Authors
+// Copyright (c) 2025 coze-dev Authors
 // SPDX-License-Identifier: Apache-2.0
 
 package consts
@@ -28,8 +28,6 @@ const (
 
 const (
 	MaxEvalSetItemLimit = 5000
-
-	MaxItemConcurrentNum = 50 // TODO(@liushengyang): value
 )
 
 const (

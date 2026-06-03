@@ -5,6 +5,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -820,6 +821,121 @@ func TestTraceApplication_GetTrace(t *testing.T) {
 				},
 			},
 			wantErr: false,
+		},
+		{
+			name: "success with pagination response",
+			fieldsGetter: func(ctrl *gomock.Controller) fields {
+				mockSvc := svcmock.NewMockITraceService(ctrl)
+				mockAuth := rpcmock.NewMockIAuthProvider(ctrl)
+				mockCfg := confmock.NewMockITraceConfig(ctrl)
+				mockAuth.EXPECT().CheckWorkspacePermission(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				mockSvc.EXPECT().GetTrace(gomock.Any(), gomock.Any()).Return(&service.GetTraceResp{
+					HasMore:       true,
+					NextPageToken: "next_token_123",
+				}, nil)
+				mockCfg.EXPECT().GetTraceDataMaxDurationDay(gomock.Any(), gomock.Any()).Return(int64(100))
+				return fields{
+					traceSvc: mockSvc,
+					auth:     mockAuth,
+					traceCfg: mockCfg,
+				}
+			},
+			args: args{
+				ctx: context.Background(),
+				req: &trace.GetTraceRequest{
+					WorkspaceID: 12,
+					StartTime:   time.Now().Add(-time.Hour).UnixMilli(),
+					EndTime:     time.Now().UnixMilli(),
+					TraceID:     "123",
+					PageSize:    ptr.Of(int32(10)),
+				},
+			},
+			want: &trace.GetTraceResponse{
+				Spans: make([]*span.OutputSpan, 0),
+				TracesAdvanceInfo: &trace.TraceAdvanceInfo{
+					Tokens: &trace.TokenCost{},
+				},
+				NextPageToken: ptr.Of("next_token_123"),
+				HasMore:       ptr.Of(true),
+			},
+			wantErr: false,
+		},
+		{
+			name: "success with page_token and filters",
+			fieldsGetter: func(ctrl *gomock.Controller) fields {
+				mockSvc := svcmock.NewMockITraceService(ctrl)
+				mockAuth := rpcmock.NewMockIAuthProvider(ctrl)
+				mockCfg := confmock.NewMockITraceConfig(ctrl)
+				mockAuth.EXPECT().CheckWorkspacePermission(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				mockSvc.EXPECT().GetTrace(gomock.Any(), gomock.Any()).Return(&service.GetTraceResp{
+					HasMore:       false,
+					NextPageToken: "",
+				}, nil)
+				mockCfg.EXPECT().GetTraceDataMaxDurationDay(gomock.Any(), gomock.Any()).Return(int64(100))
+				return fields{
+					traceSvc: mockSvc,
+					auth:     mockAuth,
+					traceCfg: mockCfg,
+				}
+			},
+			args: args{
+				ctx: context.Background(),
+				req: &trace.GetTraceRequest{
+					WorkspaceID: 12,
+					StartTime:   time.Now().Add(-time.Hour).UnixMilli(),
+					EndTime:     time.Now().UnixMilli(),
+					TraceID:     "123",
+					PageToken:   ptr.Of("some_token"),
+					Filters: &filter.FilterFields{
+						FilterFields: []*filter.FilterField{
+							{
+								FieldName: ptr.Of("span_type"),
+								QueryType: ptr.Of(filter.QueryTypeEq),
+								Values:    []string{"model"},
+							},
+						},
+					},
+				},
+			},
+			want: &trace.GetTraceResponse{
+				Spans: make([]*span.OutputSpan, 0),
+				TracesAdvanceInfo: &trace.TraceAdvanceInfo{
+					Tokens: &trace.TokenCost{},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid filter fails validation",
+			fieldsGetter: func(ctrl *gomock.Controller) fields {
+				mockAuth := rpcmock.NewMockIAuthProvider(ctrl)
+				mockCfg := confmock.NewMockITraceConfig(ctrl)
+				mockAuth.EXPECT().CheckWorkspacePermission(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				mockCfg.EXPECT().GetTraceDataMaxDurationDay(gomock.Any(), gomock.Any()).Return(int64(100))
+				return fields{
+					auth:     mockAuth,
+					traceCfg: mockCfg,
+				}
+			},
+			args: args{
+				ctx: context.Background(),
+				req: &trace.GetTraceRequest{
+					WorkspaceID: 12,
+					StartTime:   time.Now().Add(-time.Hour).UnixMilli(),
+					EndTime:     time.Now().UnixMilli(),
+					TraceID:     "123",
+					Filters: &filter.FilterFields{
+						FilterFields: []*filter.FilterField{
+							{
+								FieldName: ptr.Of("span_type"),
+								Values:    []string{"val"},
+							},
+						},
+					},
+				},
+			},
+			want:    nil,
+			wantErr: true,
 		},
 	}
 	for _, tt := range tests {
@@ -3542,6 +3658,105 @@ func TestTraceApplication_ListTraceChat(t *testing.T) {
 	}
 }
 
+func TestTraceApplication_UpsertColumnExtractConfig(t *testing.T) {
+	tests := []struct {
+		name         string
+		fieldsGetter func(ctrl *gomock.Controller) (repo.IColumnExtractConfigRepo, rpc.IAuthProvider)
+		ctx          context.Context
+		req          *trace.UpsertColumnExtractConfigRequest
+		wantErr      bool
+	}{
+		{
+			name: "success",
+			fieldsGetter: func(ctrl *gomock.Controller) (repo.IColumnExtractConfigRepo, rpc.IAuthProvider) {
+				mockRepo := repomock.NewMockIColumnExtractConfigRepo(ctrl)
+				mockAuth := rpcmock.NewMockIAuthProvider(ctrl)
+				mockAuth.EXPECT().CheckWorkspacePermission(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				mockRepo.EXPECT().UpsertColumnExtractConfig(gomock.Any(), gomock.Any()).Return(nil)
+				return mockRepo, mockAuth
+			},
+			ctx: session.WithCtxUser(context.Background(), &session.User{ID: "user-1"}),
+			req: &trace.UpsertColumnExtractConfigRequest{
+				WorkspaceID:  ptr.Of(int64(1)),
+				PlatformType: commondto.PlatformTypeCozeloop,
+				SpanListType: commondto.SpanListTypeLlmSpan,
+				AgentName:    ptr.Of("agent-1"),
+				Columns: []*trace.ColumnExtractRule{
+					{Column: "input", JSONPath: "$.messages[0].content"},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "auth error",
+			fieldsGetter: func(ctrl *gomock.Controller) (repo.IColumnExtractConfigRepo, rpc.IAuthProvider) {
+				mockRepo := repomock.NewMockIColumnExtractConfigRepo(ctrl)
+				mockAuth := rpcmock.NewMockIAuthProvider(ctrl)
+				mockAuth.EXPECT().CheckWorkspacePermission(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("no permission"))
+				return mockRepo, mockAuth
+			},
+			ctx: session.WithCtxUser(context.Background(), &session.User{ID: "user-1"}),
+			req: &trace.UpsertColumnExtractConfigRequest{
+				WorkspaceID:  ptr.Of(int64(1)),
+				PlatformType: commondto.PlatformTypeCozeloop,
+				SpanListType: commondto.SpanListTypeLlmSpan,
+			},
+			wantErr: true,
+		},
+		{
+			name: "no user id",
+			fieldsGetter: func(ctrl *gomock.Controller) (repo.IColumnExtractConfigRepo, rpc.IAuthProvider) {
+				mockRepo := repomock.NewMockIColumnExtractConfigRepo(ctrl)
+				mockAuth := rpcmock.NewMockIAuthProvider(ctrl)
+				mockAuth.EXPECT().CheckWorkspacePermission(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				return mockRepo, mockAuth
+			},
+			ctx: context.Background(),
+			req: &trace.UpsertColumnExtractConfigRequest{
+				WorkspaceID:  ptr.Of(int64(1)),
+				PlatformType: commondto.PlatformTypeCozeloop,
+				SpanListType: commondto.SpanListTypeLlmSpan,
+			},
+			wantErr: true,
+		},
+		{
+			name: "repo error",
+			fieldsGetter: func(ctrl *gomock.Controller) (repo.IColumnExtractConfigRepo, rpc.IAuthProvider) {
+				mockRepo := repomock.NewMockIColumnExtractConfigRepo(ctrl)
+				mockAuth := rpcmock.NewMockIAuthProvider(ctrl)
+				mockAuth.EXPECT().CheckWorkspacePermission(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				mockRepo.EXPECT().UpsertColumnExtractConfig(gomock.Any(), gomock.Any()).Return(errors.New("db error"))
+				return mockRepo, mockAuth
+			},
+			ctx: session.WithCtxUser(context.Background(), &session.User{ID: "user-1"}),
+			req: &trace.UpsertColumnExtractConfigRequest{
+				WorkspaceID:  ptr.Of(int64(1)),
+				PlatformType: commondto.PlatformTypeCozeloop,
+				SpanListType: commondto.SpanListTypeLlmSpan,
+			},
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+			columnExtractConfigRepo, auth := tt.fieldsGetter(ctrl)
+			tr := &TraceApplication{
+				columnExtractConfigRepo: columnExtractConfigRepo,
+				authSvc:                 auth,
+			}
+			got, err := tr.UpsertColumnExtractConfig(tt.ctx, tt.req)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, got)
+			}
+		})
+	}
+}
+
 func TestTraceApplication_ListThreadChat(t *testing.T) {
 	type fields struct {
 		traceSvc  service.ITraceService
@@ -3690,6 +3905,108 @@ func TestTraceApplication_ListThreadChat(t *testing.T) {
 			got, err := tr.ListThreadChat(tt.args.ctx, tt.args.req)
 			assert.Equal(t, tt.wantErr, err != nil)
 			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestTraceApplication_GetColumnExtractConfig(t *testing.T) {
+	tests := []struct {
+		name         string
+		fieldsGetter func(ctrl *gomock.Controller) (repo.IColumnExtractConfigRepo, rpc.IAuthProvider)
+		ctx          context.Context
+		req          *trace.GetColumnExtractConfigRequest
+		wantErr      bool
+		wantColumns  int
+	}{
+		{
+			name: "success with columns",
+			fieldsGetter: func(ctrl *gomock.Controller) (repo.IColumnExtractConfigRepo, rpc.IAuthProvider) {
+				mockRepo := repomock.NewMockIColumnExtractConfigRepo(ctrl)
+				mockAuth := rpcmock.NewMockIAuthProvider(ctrl)
+				mockAuth.EXPECT().CheckWorkspacePermission(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				mockRepo.EXPECT().GetColumnExtractConfig(gomock.Any(), gomock.Any()).Return(&entity.ColumnExtractConfig{
+					Columns: []entity.ColumnExtractRule{
+						{Column: "input", JSONPath: "$.messages[0].content"},
+					},
+				}, nil)
+				return mockRepo, mockAuth
+			},
+			ctx: context.Background(),
+			req: &trace.GetColumnExtractConfigRequest{
+				WorkspaceID:  ptr.Of(int64(1)),
+				PlatformType: commondto.PlatformTypeCozeloop,
+				SpanListType: commondto.SpanListTypeLlmSpan,
+			},
+			wantErr:     false,
+			wantColumns: 1,
+		},
+		{
+			name: "success nil response",
+			fieldsGetter: func(ctrl *gomock.Controller) (repo.IColumnExtractConfigRepo, rpc.IAuthProvider) {
+				mockRepo := repomock.NewMockIColumnExtractConfigRepo(ctrl)
+				mockAuth := rpcmock.NewMockIAuthProvider(ctrl)
+				mockAuth.EXPECT().CheckWorkspacePermission(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				mockRepo.EXPECT().GetColumnExtractConfig(gomock.Any(), gomock.Any()).Return(nil, nil)
+				return mockRepo, mockAuth
+			},
+			ctx: context.Background(),
+			req: &trace.GetColumnExtractConfigRequest{
+				WorkspaceID:  ptr.Of(int64(1)),
+				PlatformType: commondto.PlatformTypeCozeloop,
+				SpanListType: commondto.SpanListTypeLlmSpan,
+			},
+			wantErr:     false,
+			wantColumns: 0,
+		},
+		{
+			name: "auth error",
+			fieldsGetter: func(ctrl *gomock.Controller) (repo.IColumnExtractConfigRepo, rpc.IAuthProvider) {
+				mockRepo := repomock.NewMockIColumnExtractConfigRepo(ctrl)
+				mockAuth := rpcmock.NewMockIAuthProvider(ctrl)
+				mockAuth.EXPECT().CheckWorkspacePermission(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("forbidden"))
+				return mockRepo, mockAuth
+			},
+			ctx: context.Background(),
+			req: &trace.GetColumnExtractConfigRequest{
+				WorkspaceID: ptr.Of(int64(1)),
+			},
+			wantErr: true,
+		},
+		{
+			name: "repo error",
+			fieldsGetter: func(ctrl *gomock.Controller) (repo.IColumnExtractConfigRepo, rpc.IAuthProvider) {
+				mockRepo := repomock.NewMockIColumnExtractConfigRepo(ctrl)
+				mockAuth := rpcmock.NewMockIAuthProvider(ctrl)
+				mockAuth.EXPECT().CheckWorkspacePermission(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				mockRepo.EXPECT().GetColumnExtractConfig(gomock.Any(), gomock.Any()).Return(nil, errors.New("db error"))
+				return mockRepo, mockAuth
+			},
+			ctx: context.Background(),
+			req: &trace.GetColumnExtractConfigRequest{
+				WorkspaceID:  ptr.Of(int64(1)),
+				PlatformType: commondto.PlatformTypeCozeloop,
+				SpanListType: commondto.SpanListTypeLlmSpan,
+			},
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+			columnExtractConfigRepo, auth := tt.fieldsGetter(ctrl)
+			tr := &TraceApplication{
+				columnExtractConfigRepo: columnExtractConfigRepo,
+				authSvc:                 auth,
+			}
+			got, err := tr.GetColumnExtractConfig(tt.ctx, tt.req)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, got)
+				assert.Len(t, got.GetColumns(), tt.wantColumns)
+			}
 		})
 	}
 }
@@ -3852,6 +4169,125 @@ func TestTraceApplication_GetThreadStat(t *testing.T) {
 			got, err := tr.GetThreadStat(tt.args.ctx, tt.args.req)
 			assert.Equal(t, tt.wantErr, err != nil)
 			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestTraceApplication_GetAgentMetadata(t *testing.T) {
+	pCozeloop := commondto.PlatformType(commondto.PlatformTypeCozeloop)
+	tests := []struct {
+		name         string
+		fieldsGetter func(ctrl *gomock.Controller) (service.ITraceService, rpc.IAuthProvider)
+		ctx          context.Context
+		req          *trace.GetAgentMetadataRequest
+		wantErr      bool
+		wantAgents   int
+	}{
+		{
+			name: "success with agents",
+			fieldsGetter: func(ctrl *gomock.Controller) (service.ITraceService, rpc.IAuthProvider) {
+				mockSvc := svcmock.NewMockITraceService(ctrl)
+				mockAuth := rpcmock.NewMockIAuthProvider(ctrl)
+				mockAuth.EXPECT().CheckWorkspacePermission(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				mockSvc.EXPECT().GetAgentMetadata(gomock.Any(), gomock.Any()).Return(&service.GetAgentMetadataResponse{
+					Agents: []service.AgentMetadataItem{
+						{AgentName: "agent-1"},
+						{AgentName: "agent-2"},
+					},
+				}, nil)
+				return mockSvc, mockAuth
+			},
+			ctx: context.Background(),
+			req: &trace.GetAgentMetadataRequest{
+				WorkspaceID:  1,
+				PlatformType: &pCozeloop,
+			},
+			wantErr:    false,
+			wantAgents: 2,
+		},
+		{
+			name: "success with nil platform defaults to coze_loop",
+			fieldsGetter: func(ctrl *gomock.Controller) (service.ITraceService, rpc.IAuthProvider) {
+				mockSvc := svcmock.NewMockITraceService(ctrl)
+				mockAuth := rpcmock.NewMockIAuthProvider(ctrl)
+				mockAuth.EXPECT().CheckWorkspacePermission(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				mockSvc.EXPECT().GetAgentMetadata(gomock.Any(), gomock.Any()).Return(&service.GetAgentMetadataResponse{
+					Agents: []service.AgentMetadataItem{{AgentName: "a1"}},
+				}, nil)
+				return mockSvc, mockAuth
+			},
+			ctx: context.Background(),
+			req: &trace.GetAgentMetadataRequest{
+				WorkspaceID: 1,
+			},
+			wantErr:    false,
+			wantAgents: 1,
+		},
+		{
+			name: "success nil response",
+			fieldsGetter: func(ctrl *gomock.Controller) (service.ITraceService, rpc.IAuthProvider) {
+				mockSvc := svcmock.NewMockITraceService(ctrl)
+				mockAuth := rpcmock.NewMockIAuthProvider(ctrl)
+				mockAuth.EXPECT().CheckWorkspacePermission(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				mockSvc.EXPECT().GetAgentMetadata(gomock.Any(), gomock.Any()).Return(nil, nil)
+				return mockSvc, mockAuth
+			},
+			ctx: context.Background(),
+			req: &trace.GetAgentMetadataRequest{
+				WorkspaceID:  1,
+				PlatformType: &pCozeloop,
+			},
+			wantErr:    false,
+			wantAgents: 0,
+		},
+		{
+			name: "auth error",
+			fieldsGetter: func(ctrl *gomock.Controller) (service.ITraceService, rpc.IAuthProvider) {
+				mockSvc := svcmock.NewMockITraceService(ctrl)
+				mockAuth := rpcmock.NewMockIAuthProvider(ctrl)
+				mockAuth.EXPECT().CheckWorkspacePermission(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("forbidden"))
+				return mockSvc, mockAuth
+			},
+			ctx: context.Background(),
+			req: &trace.GetAgentMetadataRequest{
+				WorkspaceID: 1,
+			},
+			wantErr: true,
+		},
+		{
+			name: "service error",
+			fieldsGetter: func(ctrl *gomock.Controller) (service.ITraceService, rpc.IAuthProvider) {
+				mockSvc := svcmock.NewMockITraceService(ctrl)
+				mockAuth := rpcmock.NewMockIAuthProvider(ctrl)
+				mockAuth.EXPECT().CheckWorkspacePermission(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				mockSvc.EXPECT().GetAgentMetadata(gomock.Any(), gomock.Any()).Return(nil, errors.New("ck error"))
+				return mockSvc, mockAuth
+			},
+			ctx: context.Background(),
+			req: &trace.GetAgentMetadataRequest{
+				WorkspaceID:  1,
+				PlatformType: &pCozeloop,
+			},
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+			svc, auth := tt.fieldsGetter(ctrl)
+			tr := &TraceApplication{
+				traceService: svc,
+				authSvc:      auth,
+			}
+			got, err := tr.GetAgentMetadata(tt.ctx, tt.req)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, got)
+				assert.Len(t, got.GetAgents(), tt.wantAgents)
+			}
 		})
 	}
 }
