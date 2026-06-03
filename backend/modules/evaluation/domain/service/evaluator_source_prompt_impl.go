@@ -33,6 +33,7 @@ import (
 	"github.com/coze-dev/coze-loop/backend/pkg/errorx"
 	"github.com/coze-dev/coze-loop/backend/pkg/lang/ptr"
 	"github.com/coze-dev/coze-loop/backend/pkg/logs"
+	"github.com/coze-dev/coze-loop/backend/pkg/observability"
 )
 
 const (
@@ -76,6 +77,8 @@ func (p *EvaluatorSourcePromptServiceImpl) ShouldIntercept(_ context.Context, _ 
 }
 
 func (p *EvaluatorSourcePromptServiceImpl) Run(ctx context.Context, evaluator *entity.Evaluator, input *entity.EvaluatorInputData, evaluatorRunConf *entity.EvaluatorRunConfig, exptSpaceID int64, disableTracing bool) (output *entity.EvaluatorOutputData, runStatus entity.EvaluatorRunStatus, traceID string) {
+	observability.LoopEvaluatorInvocationTotal.WithLabelValues(evaluator.Name).Inc()
+
 	var err error
 	startTime := time.Now()
 	var rootSpan *evaluatorSpan

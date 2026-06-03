@@ -27,6 +27,7 @@ import (
 	"github.com/coze-dev/coze-loop/backend/pkg/lang/maps"
 	"github.com/coze-dev/coze-loop/backend/pkg/lang/ptr"
 	"github.com/coze-dev/coze-loop/backend/pkg/logs"
+	"github.com/coze-dev/coze-loop/backend/pkg/observability"
 )
 
 type ExptCheckFn = func(ctx context.Context, expt *entity.Experiment, session *entity.Session) error
@@ -404,6 +405,8 @@ func (e *ExptMangerImpl) RetryItems(ctx context.Context, exptID, runID, spaceID 
 		return err
 	}
 
+	observability.LoopTaskTotal.WithLabelValues("queued").Inc()
+
 	return nil
 }
 
@@ -673,9 +676,30 @@ func (e *ExptMangerImpl) CompleteExpt(ctx context.Context, exptID int64, exptRun
 	}
 
 	e.mtr.EmitExptExecResult(spaceID, int64(got.ExptType), int64(status), gptr.Indirect(got.StartAt))
+
+	observability.LoopTaskTotal.WithLabelValues(exptStatusLabel(status)).Inc()
+	if got.StartAt != nil {
+		observability.LoopTaskDuration.WithLabelValues("total").Observe(time.Since(*got.StartAt).Seconds())
+	}
+
 	logs.CtxInfo(ctx, "[ExptEval] CompleteExpt success, expt_id: %v, status: %v, stats: %v", exptID, status, json.Jsonify(stats))
 
 	return nil
+}
+
+func exptStatusLabel(s entity.ExptStatus) string {
+	switch s {
+	case entity.ExptStatus_Success:
+		return "success"
+	case entity.ExptStatus_Failed:
+		return "failed"
+	case entity.ExptStatus_Terminated:
+		return "terminated"
+	case entity.ExptStatus_SystemTerminated:
+		return "system_terminated"
+	default:
+		return "other"
+	}
 }
 
 // notifyWorkflowPipelineOnExptFinished 评测实验进入终态时，source_type=workflow 则回调 Pipeline 节点完成；首参传实验 ID（ExperimentID）
