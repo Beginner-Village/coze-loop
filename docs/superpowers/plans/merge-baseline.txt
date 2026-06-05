@@ -1,0 +1,8 @@
+fusion branch: ynet-upstream-merge-2026-06
+base (origin/main HEAD): 05b38287 docs(deploy): obs-merge-20260518 runbook for 220 docker compose
+merge-base with upstream/main: d8b2a6f4b045871fa0ca9ac642937c2473f992c6
+upstream/main HEAD: d8b2a6f4 [fix][evaluation] auth (#536)  (latest as of record; #537 = d32684a1 is one commit behind HEAD)
+recorded: 2026-06-06
+
+note: upstream/main HEAD at record time is d8b2a6f4 (#536); commit #537 (d32684a1) is present in upstream/main history one commit back.
+      The merge-base equals upstream/main HEAD, meaning the fusion branch tip has already incorporated all upstream commits through #536/#537.
