@@ -62,7 +62,42 @@ func TestWorkflowProvider_BatchGetWorkflows(t *testing.T) {
 				},
 			},
 			wantErr:  false,
-			wantSize: 0, // 当前实现返回空 map
+			wantSize: 0, // need workflow 但 span 自身无 workflow tag，跳过
+		},
+		{
+			name: "span with need workflow and workflow tag is extracted",
+			spans: loop_span.SpanList{
+				{
+					TraceID:     "trace-9",
+					SpanID:      "span-9",
+					WorkspaceID: "ws-9",
+					TagsString:  map[string]string{"workflow": "wf-payload-9"},
+					Encryption: loop_span.EncryptionInfo{
+						NeedWorkflow: true,
+					},
+				},
+				{
+					// need workflow 但无 tag -> 跳过
+					TraceID:     "trace-10",
+					SpanID:      "span-10",
+					WorkspaceID: "ws-10",
+					Encryption: loop_span.EncryptionInfo{
+						NeedWorkflow: true,
+					},
+				},
+				{
+					// 有 tag 但不 need workflow -> 跳过
+					TraceID:     "trace-11",
+					SpanID:      "span-11",
+					WorkspaceID: "ws-11",
+					TagsString:  map[string]string{"workflow": "wf-payload-11"},
+					Encryption: loop_span.EncryptionInfo{
+						NeedWorkflow: false,
+					},
+				},
+			},
+			wantErr:  false,
+			wantSize: 1,
 		},
 		{
 			name: "spans without need workflow",
@@ -93,4 +128,18 @@ func TestWorkflowProvider_BatchGetWorkflows(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestWorkflowProvider_BatchGetWorkflows_KeyAndValue(t *testing.T) {
+	provider := NewWorkflowProvider()
+	got, err := provider.BatchGetWorkflows(context.Background(), loop_span.SpanList{
+		{
+			TraceID:    "trace-1",
+			SpanID:     "span-1",
+			TagsString: map[string]string{"workflow": "wf-payload"},
+			Encryption: loop_span.EncryptionInfo{NeedWorkflow: true},
+		},
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, map[string]string{"trace-1-span-1": "wf-payload"}, got)
 }
