@@ -5,141 +5,175 @@ package workflow
 
 import (
 	"context"
+	"errors"
 	"testing"
 
-	"github.com/coze-dev/coze-loop/backend/modules/observability/domain/trace/entity/loop_span"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/coze-dev/coze-loop/backend/modules/observability/domain/trace/entity/loop_span"
+	"github.com/coze-dev/coze-loop/backend/modules/observability/infra/repo/mysql"
+	"github.com/coze-dev/coze-loop/backend/modules/observability/infra/repo/mysql/gorm_gen/model"
 )
 
+// fakeMetaDao is a hand-written stand-in for mysql.IWorkflowMetaDao backed by a
+// fixed in-memory map seeded from the production workflow_meta snapshot.
+type fakeMetaDao struct {
+	rows map[int64]*model.ObservabilityWorkflowMeta
+	err  error
+}
+
+func (f *fakeMetaDao) BatchGet(_ context.Context, ids []int64) (map[int64]*model.ObservabilityWorkflowMeta, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	out := make(map[int64]*model.ObservabilityWorkflowMeta)
+	for _, id := range ids {
+		if r, ok := f.rows[id]; ok {
+			out[id] = r
+		}
+	}
+	return out, nil
+}
+
+var _ mysql.IWorkflowMetaDao = (*fakeMetaDao)(nil)
+
+// snapshotFixture mirrors three real rows from workflow_meta_all.tsv.
+func snapshotFixture() map[int64]*model.ObservabilityWorkflowMeta {
+	return map[int64]*model.ObservabilityWorkflowMeta{
+		7647058738179735552: {ID: 7647058738179735552, Name: "test", IconURI: "default_icon/plugin_default_icon.png"},
+		7647056212059488256: {ID: 7647056212059488256, Name: "tessss", IconURI: "default_icon/default_workflow_icon.png"},
+		7647061441349943296: {ID: 7647061441349943296, Name: "tranfer_202601_linan_1", IconURI: ""},
+	}
+}
+
+func newProviderWithDao(dao mysql.IWorkflowMetaDao) *WorkflowProvider {
+	return &WorkflowProvider{metaDao: dao}
+}
+
 func TestNewWorkflowProvider(t *testing.T) {
-	provider := NewWorkflowProvider()
+	provider := NewWorkflowProvider(nil)
 	assert.NotNil(t, provider)
 	assert.Implements(t, (*interface {
 		BatchGetWorkflows(context.Context, loop_span.SpanList) (map[string]string, error)
 	})(nil), provider)
 }
 
-func TestWorkflowProvider_BatchGetWorkflows(t *testing.T) {
-	provider := NewWorkflowProvider()
-	ctx := context.Background()
+func TestWorkflowProvider_ResolvesWorkflowIDFromSnapshot(t *testing.T) {
+	provider := newProviderWithDao(&fakeMetaDao{rows: snapshotFixture()})
 
-	tests := []struct {
-		name     string
-		spans    loop_span.SpanList
-		wantErr  bool
-		wantSize int
-	}{
-		{
-			name:     "empty spans list",
-			spans:    loop_span.SpanList{},
-			wantErr:  false,
-			wantSize: 0,
-		},
-		{
-			name:     "nil spans list",
-			spans:    nil,
-			wantErr:  false,
-			wantSize: 0,
-		},
-		{
-			name: "spans with need workflow",
-			spans: loop_span.SpanList{
-				{
-					TraceID:     "trace-1",
-					SpanID:      "span-1",
-					WorkspaceID: "ws-1",
-					Encryption: loop_span.EncryptionInfo{
-						NeedWorkflow: true,
-					},
-				},
-				{
-					TraceID:     "trace-2",
-					SpanID:      "span-2",
-					WorkspaceID: "ws-2",
-					Encryption: loop_span.EncryptionInfo{
-						NeedWorkflow: true,
-					},
-				},
-			},
-			wantErr:  false,
-			wantSize: 0, // need workflow 但 span 自身无 workflow tag，跳过
-		},
-		{
-			name: "span with need workflow and workflow tag is extracted",
-			spans: loop_span.SpanList{
-				{
-					TraceID:     "trace-9",
-					SpanID:      "span-9",
-					WorkspaceID: "ws-9",
-					TagsString:  map[string]string{"workflow": "wf-payload-9"},
-					Encryption: loop_span.EncryptionInfo{
-						NeedWorkflow: true,
-					},
-				},
-				{
-					// need workflow 但无 tag -> 跳过
-					TraceID:     "trace-10",
-					SpanID:      "span-10",
-					WorkspaceID: "ws-10",
-					Encryption: loop_span.EncryptionInfo{
-						NeedWorkflow: true,
-					},
-				},
-				{
-					// 有 tag 但不 need workflow -> 跳过
-					TraceID:     "trace-11",
-					SpanID:      "span-11",
-					WorkspaceID: "ws-11",
-					TagsString:  map[string]string{"workflow": "wf-payload-11"},
-					Encryption: loop_span.EncryptionInfo{
-						NeedWorkflow: false,
-					},
-				},
-			},
-			wantErr:  false,
-			wantSize: 1,
-		},
-		{
-			name: "spans without need workflow",
-			spans: loop_span.SpanList{
-				{
-					TraceID:     "trace-1",
-					SpanID:      "span-1",
-					WorkspaceID: "ws-1",
-					Encryption: loop_span.EncryptionInfo{
-						NeedWorkflow: false,
-					},
-				},
-			},
-			wantErr:  false,
-			wantSize: 0,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := provider.BatchGetWorkflows(ctx, tt.spans)
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-				assert.NotNil(t, got)
-				assert.Equal(t, tt.wantSize, len(got))
-			}
-		})
-	}
-}
-
-func TestWorkflowProvider_BatchGetWorkflows_KeyAndValue(t *testing.T) {
-	provider := NewWorkflowProvider()
 	got, err := provider.BatchGetWorkflows(context.Background(), loop_span.SpanList{
 		{
-			TraceID:    "trace-1",
-			SpanID:     "span-1",
-			TagsString: map[string]string{"workflow": "wf-payload"},
-			Encryption: loop_span.EncryptionInfo{NeedWorkflow: true},
+			TraceID:    "trace-a",
+			SpanID:     "span-a",
+			TagsString: map[string]string{"workflow_id": "7647058738179735552"},
+		},
+		{
+			TraceID:    "trace-b",
+			SpanID:     "span-b",
+			TagsString: map[string]string{"workflow_id": "7647056212059488256"},
 		},
 	})
 	assert.NoError(t, err)
-	assert.Equal(t, map[string]string{"trace-1-span-1": "wf-payload"}, got)
+	assert.Len(t, got, 2)
+	assert.JSONEq(t,
+		`{"id":7647058738179735552,"name":"test","icon_uri":"default_icon/plugin_default_icon.png"}`,
+		got["trace-a-span-a"])
+	assert.JSONEq(t,
+		`{"id":7647056212059488256,"name":"tessss","icon_uri":"default_icon/default_workflow_icon.png"}`,
+		got["trace-b-span-b"])
+}
+
+func TestWorkflowProvider_WorkflowIDFromLongTag(t *testing.T) {
+	provider := newProviderWithDao(&fakeMetaDao{rows: snapshotFixture()})
+
+	got, err := provider.BatchGetWorkflows(context.Background(), loop_span.SpanList{
+		{
+			TraceID:  "trace-c",
+			SpanID:   "span-c",
+			TagsLong: map[string]int64{"workflow_id": 7647061441349943296},
+		},
+	})
+	assert.NoError(t, err)
+	assert.JSONEq(t,
+		`{"id":7647061441349943296,"name":"tranfer_202601_linan_1","icon_uri":""}`,
+		got["trace-c-span-c"])
+}
+
+func TestWorkflowProvider_UnknownIDStillReturnsID(t *testing.T) {
+	provider := newProviderWithDao(&fakeMetaDao{rows: snapshotFixture()})
+
+	got, err := provider.BatchGetWorkflows(context.Background(), loop_span.SpanList{
+		{
+			TraceID:    "trace-d",
+			SpanID:     "span-d",
+			TagsString: map[string]string{"workflow_id": "111222333444"},
+		},
+	})
+	assert.NoError(t, err)
+	assert.JSONEq(t, `{"id":111222333444,"name":"","icon_uri":""}`, got["trace-d-span-d"])
+}
+
+func TestWorkflowProvider_LegacyWorkflowTagPassthrough(t *testing.T) {
+	provider := newProviderWithDao(&fakeMetaDao{rows: snapshotFixture()})
+
+	got, err := provider.BatchGetWorkflows(context.Background(), loop_span.SpanList{
+		{
+			TraceID:    "trace-e",
+			SpanID:     "span-e",
+			TagsString: map[string]string{"workflow": "already-resolved-payload"},
+		},
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, map[string]string{"trace-e-span-e": "already-resolved-payload"}, got)
+}
+
+func TestWorkflowProvider_DaoErrorDegradesToIDOnly(t *testing.T) {
+	provider := newProviderWithDao(&fakeMetaDao{err: errors.New("db down")})
+
+	got, err := provider.BatchGetWorkflows(context.Background(), loop_span.SpanList{
+		{
+			TraceID:    "trace-f",
+			SpanID:     "span-f",
+			TagsString: map[string]string{"workflow_id": "7647058738179735552"},
+		},
+	})
+	assert.NoError(t, err)
+	assert.JSONEq(t, `{"id":7647058738179735552,"name":"","icon_uri":""}`, got["trace-f-span-f"])
+}
+
+func TestWorkflowProvider_NilDaoDegrades(t *testing.T) {
+	provider := newProviderWithDao(nil)
+
+	got, err := provider.BatchGetWorkflows(context.Background(), loop_span.SpanList{
+		{TraceID: "t", SpanID: "s", TagsString: map[string]string{"workflow_id": "7647058738179735552"}},
+		{TraceID: "t2", SpanID: "s2", TagsString: map[string]string{"workflow": "legacy"}},
+	})
+	assert.NoError(t, err)
+	assert.JSONEq(t, `{"id":7647058738179735552,"name":"","icon_uri":""}`, got["t-s"])
+	assert.Equal(t, "legacy", got["t2-s2"])
+}
+
+func TestWorkflowProvider_NoWorkflowTagsSkipped(t *testing.T) {
+	provider := newProviderWithDao(&fakeMetaDao{rows: snapshotFixture()})
+
+	got, err := provider.BatchGetWorkflows(context.Background(), loop_span.SpanList{
+		{TraceID: "t", SpanID: "s"},
+		nil,
+		{TraceID: "t2", SpanID: "s2", TagsString: map[string]string{"workflow_id": "0"}},
+		{TraceID: "t3", SpanID: "s3", TagsString: map[string]string{"workflow_id": "not-a-number"}},
+	})
+	assert.NoError(t, err)
+	assert.Empty(t, got)
+}
+
+func TestWorkflowProvider_EmptyAndNilSpans(t *testing.T) {
+	provider := newProviderWithDao(&fakeMetaDao{rows: snapshotFixture()})
+
+	got, err := provider.BatchGetWorkflows(context.Background(), loop_span.SpanList{})
+	assert.NoError(t, err)
+	assert.Empty(t, got)
+
+	got, err = provider.BatchGetWorkflows(context.Background(), nil)
+	assert.NoError(t, err)
+	assert.Empty(t, got)
 }

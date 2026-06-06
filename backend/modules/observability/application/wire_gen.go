@@ -138,7 +138,7 @@ func InitTraceApplication(db2 db.Provider, ckDb ck.Provider, redis3 redis.Cmdabl
 	iAuthProvider := auth.NewAuthProvider(authClient)
 	iUserProvider := user.NewUserRPCProvider(userClient)
 	iTagRPCAdapter := tag.NewTagRPCProvider(tagService)
-	iWorkflowProvider := workflow.NewWorkflowProvider()
+	iWorkflowProvider := workflow.NewWorkflowProvider(db2)
 	iTimeRangeProvider := time_range.NewTimeRangeProvider()
 	iTraceApplication, err := NewTraceApplication(iTraceService, iTraceExportService, iViewRepo, iColumnExtractConfigRepo, benefit2, iTenantProvider, iTraceMetrics, iTraceConfig, iAuthProvider, iEvaluatorRPCAdapter, iUserProvider, iTagRPCAdapter, iWorkflowProvider, iTimeRangeProvider)
 	if err != nil {
