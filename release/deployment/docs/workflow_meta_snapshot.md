@@ -1,9 +1,27 @@
 # 工作流元数据快照 (observability_workflow_meta)
 
-observability 的 trace 详情需要把 span 上仅有的 `workflow_id` 解析成可读的工作流
-名称 / 图标。生产里 span 通常只带 `workflow_id`，没有 name/icon，因此需要从生产
-`workflow_meta` 表只读导出一份快照，灌进 coze-loop 自己的
-`observability_workflow_meta` 表，由 `WorkflowProvider` 查表补全。
+observability 的 trace 详情需要把 span 上的工作流 id 解析成可读的工作流名称 / 图标。
+生产里 span 只带工作流 id（没有 name/icon），因此需要从生产 `workflow_meta` 表只读
+导出一份快照，灌进 coze-loop 自己的 `observability_workflow_meta` 表，由
+`WorkflowProvider` 查表补全。
+
+## span 上的工作流 id tag（已用生产真实数据核对）
+
+经核对生产 `observability_spans` 真实数据，结论:
+
+- 工作流 id 的真实 tag key 是 **`sub_workflow_id`**，类型 **Int64**，存在 span 的
+  **`tags_long`** map 里(**不是** `tags_string`，**也不是** `workflow_id`)。
+- 同一工作流的多个 node span(span_name = 开始 / 选择器 / 代码 / 输出 / 结束 等)都
+  带同一个 `sub_workflow_id`。
+- span 上**没有**顶层 `workflow_id` tag。
+- 次要来源(评测场景):span 带 `eval_target_id`(tags_long) + `eval_target_type`
+  (tags_string，值如 `CozeWorkflow` / `LoopPrompt`)。当 `eval_target_type` 表示工作流
+  (`CozeWorkflow`)时，`eval_target_id` 也是工作流 id，作为 `sub_workflow_id` 缺失时的兜底。
+- `sub_workflow_id` / `eval_target_id` 的值都与 `workflow_meta.id` 对得上。
+
+`WorkflowProvider.extractWorkflowID` 优先从 `tags_long` 取 `sub_workflow_id`(Int64，
+兼容 string 数字)，缺失时再走 workflow 类型的 `eval_target_id`，最后回退到已解析的
+legacy `workflow` tag。0 / 缺失 / 不可解析的值跳过。
 
 数据链路:
 
@@ -16,6 +34,7 @@ _workflow_export/workflow_meta_all.tsv   (本地快照, 含表头)
       ▼
 observability_workflow_meta 表
       │  WorkflowProvider.BatchGetWorkflows
+      │  (从 span tags_long.sub_workflow_id 取 id, 查表补 name/icon)
       ▼
 trace 详情里的 workflow {id,name,icon_uri}
 ```
@@ -72,5 +91,5 @@ go run ./cmd/workflow_meta_import \
 - 上线 / 部署新环境时全量灌一次 `workflow_meta_all.tsv`。
 - 周期性(如每周)用 `workflow_meta_recent90d.tsv` 增量刷新近期改动。
 
-未在快照里的 `workflow_id` 仍会返回 `{"id":<id>,"name":"","icon_uri":""}`，不会报错，
+未在快照里的 `sub_workflow_id` 仍会返回 `{"id":<id>,"name":"","icon_uri":""}`，不会报错，
 也不阻塞 trace 读取——只是 name/icon 为空，刷新快照后即可补齐。
