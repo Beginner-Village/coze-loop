@@ -93,3 +93,8 @@ go run ./cmd/workflow_meta_import \
 
 未在快照里的 `sub_workflow_id` 仍会返回 `{"id":<id>,"name":"","icon_uri":""}`，不会报错，
 也不阻塞 trace 读取——只是 name/icon 为空，刷新快照后即可补齐。
+
+## 导入策略(2026-06 定)
+- **采用全量导入**: workflow_meta_all.tsv (11,349 行存活工作流), 非近90天增量。
+- dev/测试环境已导入 220:3308 `ynet-loop`.observability_workflow_meta (已验 11349 行)。
+- 刷新: 重跑 `_workflow_export/export-workflow-meta.sh` 只读导出 + `cmd/workflow_meta_import` 幂等 upsert; 建议部署时一次 + 按需手动刷新。
