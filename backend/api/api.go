@@ -129,14 +129,12 @@ func Init(
 			return lotrace.NewLocalTraceService(observabilityHandler.ITraceApplication)
 		},
 		func() taskservice.Client {
-			// provideTaskClient (wire_gen line 141) calls this factory
-			// eagerly during InitEvaluationHandler — observabilityHandler
-			// is still nil at that point. We return a service with nil
-			// impl so init can complete; this means task-related calls
-			// during the InitEvaluation phase no-op, but the live
-			// observabilityHandler is wired into ITaskApplication after
-			// InitObservabilityHandler runs below, which is the path
-			// actually exercised at request time.
+			// provideTaskClient now wraps this factory in a lazy client
+			// (see task_client_lazy.go), so it is no longer invoked
+			// eagerly during InitEvaluationHandler. By the time a task
+			// call actually fires, observabilityHandler has been
+			// constructed below, so the live ITaskApplication is used.
+			// The nil guard remains a defensive fallback.
 			if observabilityHandler == nil {
 				return lotask.NewLocalTaskService(nil)
 			}
