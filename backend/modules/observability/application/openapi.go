@@ -75,6 +75,7 @@ func NewOpenAPIApplication(
 	collector collector.ICollectorProvider,
 	timeRange time_range.ITimeRangeProvider,
 	spanContextExtractor span_context_extractor.ISpanContextExtractor,
+	workflowSvc rpc.IWorkflowProvider,
 ) (IObservabilityOpenAPIApplication, error) {
 	return &OpenAPIApplication{
 		traceService:         traceService,
@@ -88,6 +89,7 @@ func NewOpenAPIApplication(
 		collector:            collector,
 		timeRange:            timeRange,
 		spanContextExtractor: spanContextExtractor,
+		workflowSvc:          workflowSvc,
 	}, nil
 }
 
@@ -103,6 +105,24 @@ type OpenAPIApplication struct {
 	collector            collector.ICollectorProvider
 	timeRange            time_range.ITimeRangeProvider
 	spanContextExtractor span_context_extractor.ISpanContextExtractor
+	workflowSvc          rpc.IWorkflowProvider
+}
+
+// buildWorkflowMap resolves sub_workflow_id (and the evaluation fallback) on the
+// given spans into a map keyed by "{traceID}-{spanID}" carrying the workflow
+// info payload. Mirrors the non-open-api path (TraceApplication.GetDisplayInfo)
+// so the OApi responses surface workflow name/icon too. Never errors the request
+// out: a failed lookup just yields no workflow info.
+func (o *OpenAPIApplication) buildWorkflowMap(ctx context.Context, spans loop_span.SpanList) map[string]string {
+	if o.workflowSvc == nil || len(spans) == 0 {
+		return nil
+	}
+	workflowMap, err := o.workflowSvc.BatchGetWorkflows(ctx, spans)
+	if err != nil {
+		logs.CtxWarn(ctx, "batch get workflows failed: %v", err)
+		return nil
+	}
+	return workflowMap
 }
 
 func (o *OpenAPIApplication) IngestTraces(ctx context.Context, req *openapi.IngestTracesRequest) (*openapi.IngestTracesResponse, error) {
@@ -591,9 +611,10 @@ func (o *OpenAPIApplication) SearchTraceOApi(ctx context.Context, req *openapi.S
 	}
 	spansSize = loop_span.SizeofSpans(sResp.Spans)
 	logs.CtxInfo(ctx, "SearchTrace successfully, spans count %d", len(sResp.Spans))
+	workflowMap := o.buildWorkflowMap(ctx, sResp.Spans)
 	return &openapi.SearchTraceOApiResponse{
 		Data: &openapi.SearchTraceOApiData{
-			Spans: tconv.SpanListDO2DTO(sResp.Spans, nil, nil, nil, nil, req.GetNeedOriginalTags()),
+			Spans: tconv.SpanListDO2DTO(sResp.Spans, nil, nil, nil, workflowMap, req.GetNeedOriginalTags()),
 			TracesAdvanceInfo: &trace.TraceAdvanceInfo{
 				Tokens: &trace.TokenCost{
 					Input:  inTokens,
@@ -737,9 +758,10 @@ func (o *OpenAPIApplication) SearchTraceTreeOApi(ctx context.Context, req *opena
 		logs.CtxInfo(ctx, "SearchTrace successfully, spans count %d", len(sResp.Spans))
 	}
 
+	workflowMap := o.buildWorkflowMap(ctx, sResp.Spans)
 	return &openapi.SearchTraceTreeOApiResponse{
 		Data: &openapi.SearchTraceOApiData{
-			Spans: tconv.SpanListDO2DTO(sResp.Spans, nil, nil, nil, nil, false),
+			Spans: tconv.SpanListDO2DTO(sResp.Spans, nil, nil, nil, workflowMap, false),
 			TracesAdvanceInfo: &trace.TraceAdvanceInfo{
 				Tokens: &trace.TokenCost{
 					Input:  inTokens,

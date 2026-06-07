@@ -117,12 +117,12 @@ var (
 		redis2.NewSpansRedisDaoImpl,
 		mysqldao.NewTrajectoryConfigDaoImpl,
 		mysqldao.NewColumnExtractConfigDaoImpl,
+		obrepo.NewColumnExtractConfigRepoImpl,
 		taskDomainSet,
 	)
 	traceSet = wire.NewSet(
 		NewTraceApplication,
 		obrepo.NewViewRepoImpl,
-		obrepo.NewColumnExtractConfigRepoImpl,
 		mysqldao.NewViewDaoImpl,
 		auth.NewAuthProvider,
 		user.NewUserRPCProvider,
@@ -147,6 +147,7 @@ var (
 	openApiSet = wire.NewSet(
 		NewOpenAPIApplication,
 		auth.NewAuthProvider,
+		workflow.NewWorkflowProvider,
 		traceDomainSet,
 		time_range.NewTimeRangeProvider,
 	)
@@ -227,6 +228,7 @@ func NewTraceProcessorBuilder(
 	traceConfig config.ITraceConfig,
 	fileProvider rpc.IFileProvider,
 	benefitSvc benefit.IBenefitService,
+	columnExtractConfigRepo repo.IColumnExtractConfigRepo,
 ) service.TraceFilterProcessorBuilder {
 	processorFactories := map[entity.ProcessorScene][]span_processor.Factory{
 		entity.SceneGetTrace: {
@@ -234,10 +236,12 @@ func NewTraceProcessorBuilder(
 			span_processor.NewCheckProcessorFactory(),
 			span_processor.NewAttrTosProcessorFactory(fileProvider),
 			span_processor.NewExpireErrorProcessorFactory(benefitSvc),
+			span_processor.NewClipProcessorFactory(columnExtractConfigRepo),
 		},
 		entity.SceneListSpans: {
 			span_processor.NewPlatformProcessorFactory(traceConfig),
 			span_processor.NewExpireErrorProcessorFactory(benefitSvc),
+			span_processor.NewClipProcessorFactory(columnExtractConfigRepo),
 		},
 		entity.SceneAdvanceInfo: {
 			span_processor.NewCheckProcessorFactory(),
@@ -248,10 +252,12 @@ func NewTraceProcessorBuilder(
 			span_processor.NewCheckProcessorFactory(),
 			span_processor.NewAttrTosProcessorFactory(fileProvider),
 			span_processor.NewExpireErrorProcessorFactory(benefitSvc),
+			span_processor.NewClipProcessorFactory(columnExtractConfigRepo),
 		},
 		entity.SceneListSpansOApi: {
 			span_processor.NewPlatformProcessorFactory(traceConfig),
 			span_processor.NewExpireErrorProcessorFactory(benefitSvc),
+			span_processor.NewClipProcessorFactory(columnExtractConfigRepo),
 		},
 		entity.SceneTraceChat: {
 			span_processor.NewPlatformProcessorFactory(traceConfig),

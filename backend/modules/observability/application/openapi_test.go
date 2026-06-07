@@ -1001,6 +1001,7 @@ func TestNewOpenAPIApplication(t *testing.T) {
 	collectorMock := collectormocks.NewMockICollectorProvider(ctrl)
 	timeRangeMock := time_rangemocks.NewMockITimeRangeProvider(ctrl)
 	spanContextExtractorMock := newSpanContextExtractorMock(ctrl)
+	workflowMock := rpcmocks.NewMockIWorkflowProvider(ctrl)
 
 	rateLimiterFactoryMock.EXPECT().NewRateLimiter().Return(rateLimiterMock)
 
@@ -1016,6 +1017,7 @@ func TestNewOpenAPIApplication(t *testing.T) {
 		collectorMock,
 		timeRangeMock,
 		spanContextExtractorMock,
+		workflowMock,
 	)
 
 	assert.NoError(t, err)

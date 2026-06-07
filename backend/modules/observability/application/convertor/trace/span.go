@@ -127,7 +127,13 @@ func SpanDO2DTO(
 			outSpan.Annotations = annotationDTOList
 		}
 	}
-	if s.Encryption.NeedWorkflow {
+	// Write the resolved workflow info whenever the WorkflowProvider produced an
+	// entry for this span. The legacy Encryption.NeedWorkflow flag is never set
+	// anywhere in the current pipeline, so gating on it alone made this a no-op
+	// (the whole point of the WorkflowProvider was to resolve sub_workflow_id ->
+	// name/icon and surface it here). Presence in workflowMap is itself the gate:
+	// BatchGetWorkflows only emits a key for spans that actually carry a workflow.
+	if len(workflowMap) > 0 {
 		key := fmt.Sprintf("%s-%s", s.TraceID, s.SpanID)
 		if workflowURL, ok := workflowMap[key]; ok {
 			outSpan.Encryption = &span.EncryptionInfo{

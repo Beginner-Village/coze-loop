@@ -9,6 +9,7 @@ import (
 	"github.com/coze-dev/coze-loop/backend/modules/observability/domain/trace/entity/loop_span"
 )
 
+//go:generate mockgen -destination=mocks/workflow.go -package=mocks . IWorkflowProvider
 type IWorkflowProvider interface {
 	BatchGetWorkflows(ctx context.Context, spans loop_span.SpanList) (map[string]string, error)
 }

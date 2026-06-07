@@ -114,7 +114,9 @@ func InitTraceApplication(db2 db.Provider, ckDb ck.Provider, redis3 redis.Cmdabl
 	}
 	iTraceMetrics := metrics2.NewTraceMetricsImpl(meter)
 	iFileProvider := file.NewFileRPCProvider(fileClient)
-	traceFilterProcessorBuilder := NewTraceProcessorBuilder(iTraceConfig, iFileProvider, benefit2)
+	iColumnExtractConfigDao := mysql.NewColumnExtractConfigDaoImpl(db2)
+	iColumnExtractConfigRepo := repo.NewColumnExtractConfigRepoImpl(iColumnExtractConfigDao, idgen2)
+	traceFilterProcessorBuilder := NewTraceProcessorBuilder(iTraceConfig, iFileProvider, benefit2, iColumnExtractConfigRepo)
 	iTenantProvider := tenant.NewTenantProvider(iTraceConfig)
 	iEvaluatorRPCAdapter := evaluator.NewEvaluatorRPCProvider(evalService)
 	iTaskDao := mysql.NewTaskDaoImpl(db2)
@@ -133,8 +135,6 @@ func InitTraceApplication(db2 db.Provider, ckDb ck.Provider, redis3 redis.Cmdabl
 	}
 	iViewDao := mysql.NewViewDaoImpl(db2)
 	iViewRepo := repo.NewViewRepoImpl(iViewDao, idgen2)
-	iColumnExtractConfigDao := mysql.NewColumnExtractConfigDaoImpl(db2)
-	iColumnExtractConfigRepo := repo.NewColumnExtractConfigRepoImpl(iColumnExtractConfigDao, idgen2)
 	iAuthProvider := auth.NewAuthProvider(authClient)
 	iUserProvider := user.NewUserRPCProvider(userClient)
 	iTagRPCAdapter := tag.NewTagRPCProvider(tagService)
@@ -177,7 +177,9 @@ func InitOpenAPIApplication(mqFactory mq.IFactory, configFactory conf.IConfigLoa
 	}
 	iTraceMetrics := metrics2.NewTraceMetricsImpl(meter)
 	iFileProvider := file.NewFileRPCProvider(fileClient)
-	traceFilterProcessorBuilder := NewTraceProcessorBuilder(iTraceConfig, iFileProvider, benefit2)
+	iColumnExtractConfigDao := mysql.NewColumnExtractConfigDaoImpl(db2)
+	iColumnExtractConfigRepo := repo.NewColumnExtractConfigRepoImpl(iColumnExtractConfigDao, idgen2)
+	traceFilterProcessorBuilder := NewTraceProcessorBuilder(iTraceConfig, iFileProvider, benefit2, iColumnExtractConfigRepo)
 	iTenantProvider := tenant.NewTenantProvider(iTraceConfig)
 	iEvaluatorRPCAdapter := evaluator.NewEvaluatorRPCProvider(evalService)
 	iTaskDao := mysql.NewTaskDaoImpl(db2)
@@ -194,7 +196,8 @@ func InitOpenAPIApplication(mqFactory mq.IFactory, configFactory conf.IConfigLoa
 	iCollectorProvider := collector.NewEventCollectorProvider()
 	iTimeRangeProvider := time_range.NewTimeRangeProvider()
 	iSpanContextExtractor := span_context_extractor.NewSpanContextExtractor()
-	iObservabilityOpenAPIApplication, err := NewOpenAPIApplication(iTraceService, iAuthProvider, benefit2, iTenantProvider, iWorkSpaceProvider, limiterFactory, iTraceConfig, iTraceMetrics, iCollectorProvider, iTimeRangeProvider, iSpanContextExtractor)
+	iWorkflowProvider := workflow.NewWorkflowProvider(db2)
+	iObservabilityOpenAPIApplication, err := NewOpenAPIApplication(iTraceService, iAuthProvider, benefit2, iTenantProvider, iWorkSpaceProvider, limiterFactory, iTraceConfig, iTraceMetrics, iCollectorProvider, iTimeRangeProvider, iSpanContextExtractor, iWorkflowProvider)
 	if err != nil {
 		return nil, err
 	}
@@ -221,7 +224,7 @@ func InitMetricApplication(ckDb ck.Provider, storageProvider storage2.IStoragePr
 	}
 	iTenantProvider := tenant.NewTenantProvider(iTraceConfig)
 	iFileProvider := file.NewFileRPCProvider(fileClient)
-	traceFilterProcessorBuilder := NewTraceProcessorBuilder(iTraceConfig, iFileProvider, benefit2)
+	traceFilterProcessorBuilder := NewTraceProcessorBuilder(iTraceConfig, iFileProvider, benefit2, nil)
 	platformMetrics := NewMetricsPlatformConfig()
 	iMetricsService, err := service2.NewMetricsService(iMetricRepo, iOfflineMetricRepo, iTenantProvider, traceFilterProcessorBuilder, iTraceConfig, platformMetrics)
 	if err != nil {
@@ -286,7 +289,9 @@ func InitTaskApplication(db2 db.Provider, idgen2 idgen.IIDGenerator, configFacto
 	iStorageProvider := storage.NewTraceStorageProvider()
 	iTenantProvider := tenant.NewTenantProvider(iTraceConfig)
 	iFileProvider := file.NewFileRPCProvider(fileClient)
-	traceFilterProcessorBuilder := NewTraceProcessorBuilder(iTraceConfig, iFileProvider, benefit2)
+	iColumnExtractConfigDao := mysql.NewColumnExtractConfigDaoImpl(db2)
+	iColumnExtractConfigRepo := repo.NewColumnExtractConfigRepoImpl(iColumnExtractConfigDao, idgen2)
+	traceFilterProcessorBuilder := NewTraceProcessorBuilder(iTraceConfig, iFileProvider, benefit2, iColumnExtractConfigRepo)
 	iTaskService, err := service3.NewTaskServiceImpl(iTaskRepo, idgen2, iBackfillProducer, processorTaskProcessor, iStorageProvider, iTenantProvider, traceFilterProcessorBuilder)
 	if err != nil {
 		return nil, err
@@ -410,8 +415,9 @@ func NewTraceProcessorBuilder(
 	traceConfig config2.ITraceConfig,
 	fileProvider rpc.IFileProvider,
 	benefitSvc benefit.IBenefitService,
+	columnExtractConfigRepo repo2.IColumnExtractConfigRepo,
 ) service.TraceFilterProcessorBuilder {
-	processorFactories := map[entity.ProcessorScene][]span_processor.Factory{entity.SceneGetTrace: {span_processor.NewPlatformProcessorFactory(traceConfig), span_processor.NewCheckProcessorFactory(), span_processor.NewAttrTosProcessorFactory(fileProvider), span_processor.NewExpireErrorProcessorFactory(benefitSvc)}, entity.SceneListSpans: {span_processor.NewPlatformProcessorFactory(traceConfig), span_processor.NewExpireErrorProcessorFactory(benefitSvc)}, entity.SceneAdvanceInfo: {span_processor.NewCheckProcessorFactory()}, entity.SceneIngestTrace: {}, entity.SceneSearchTraceOApi: {span_processor.NewPlatformProcessorFactory(traceConfig), span_processor.NewCheckProcessorFactory(), span_processor.NewAttrTosProcessorFactory(fileProvider), span_processor.NewExpireErrorProcessorFactory(benefitSvc)}, entity.SceneListSpansOApi: {span_processor.NewPlatformProcessorFactory(traceConfig), span_processor.NewExpireErrorProcessorFactory(benefitSvc)}, entity.SceneTraceChat: {span_processor.NewPlatformProcessorFactory(traceConfig), span_processor.NewCheckProcessorFactory(), span_processor.NewAttrTosProcessorFactory(fileProvider), span_processor.NewChatProcessorFactory()}, entity.SceneThreadChat: {span_processor.NewPlatformProcessorFactory(traceConfig), span_processor.NewCheckProcessorFactory(), span_processor.NewAttrTosProcessorFactory(fileProvider), span_processor.NewChatProcessorFactory()}, entity.SceneThreadStat: {span_processor.NewPlatformProcessorFactory(traceConfig), span_processor.NewCheckProcessorFactory()}}
+	processorFactories := map[entity.ProcessorScene][]span_processor.Factory{entity.SceneGetTrace: {span_processor.NewPlatformProcessorFactory(traceConfig), span_processor.NewCheckProcessorFactory(), span_processor.NewAttrTosProcessorFactory(fileProvider), span_processor.NewExpireErrorProcessorFactory(benefitSvc), span_processor.NewClipProcessorFactory(columnExtractConfigRepo)}, entity.SceneListSpans: {span_processor.NewPlatformProcessorFactory(traceConfig), span_processor.NewExpireErrorProcessorFactory(benefitSvc), span_processor.NewClipProcessorFactory(columnExtractConfigRepo)}, entity.SceneAdvanceInfo: {span_processor.NewCheckProcessorFactory()}, entity.SceneIngestTrace: {}, entity.SceneSearchTraceOApi: {span_processor.NewPlatformProcessorFactory(traceConfig), span_processor.NewCheckProcessorFactory(), span_processor.NewAttrTosProcessorFactory(fileProvider), span_processor.NewExpireErrorProcessorFactory(benefitSvc), span_processor.NewClipProcessorFactory(columnExtractConfigRepo)}, entity.SceneListSpansOApi: {span_processor.NewPlatformProcessorFactory(traceConfig), span_processor.NewExpireErrorProcessorFactory(benefitSvc), span_processor.NewClipProcessorFactory(columnExtractConfigRepo)}, entity.SceneTraceChat: {span_processor.NewPlatformProcessorFactory(traceConfig), span_processor.NewCheckProcessorFactory(), span_processor.NewAttrTosProcessorFactory(fileProvider), span_processor.NewChatProcessorFactory()}, entity.SceneThreadChat: {span_processor.NewPlatformProcessorFactory(traceConfig), span_processor.NewCheckProcessorFactory(), span_processor.NewAttrTosProcessorFactory(fileProvider), span_processor.NewChatProcessorFactory()}, entity.SceneThreadStat: {span_processor.NewPlatformProcessorFactory(traceConfig), span_processor.NewCheckProcessorFactory()}}
 	return service.NewTraceFilterProcessorBuilder(span_filter.NewPlatformFilterFactory(
 		[]span_filter.Factory{span_filter.NewCozeLoopFilterFactory(), span_filter.NewPromptFilterFactory(traceConfig), span_filter.NewEvaluatorFilterFactory(), span_filter.NewEvalTargetFilterFactory()}), processorFactories)
 }
