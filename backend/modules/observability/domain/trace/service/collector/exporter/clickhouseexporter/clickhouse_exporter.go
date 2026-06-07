@@ -5,6 +5,7 @@ package clickhouseexporter
 
 import (
 	"context"
+	"errors"
 
 	"github.com/coze-dev/coze-loop/backend/modules/observability/domain/trace/entity/collector/consumer"
 	"github.com/coze-dev/coze-loop/backend/modules/observability/domain/trace/entity/loop_span"
@@ -42,6 +43,14 @@ func (c *ckExporter) ConsumeTraces(ctx context.Context, td consumer.Traces) erro
 			Tenant: td.Tenant,
 			TTL:    ttl,
 		}); err != nil {
+			// Spans for tenants not configured in this deployment (e.g. legacy
+			// or foreign tenants sharing the MQ topic) have no table mapping.
+			// Skip them with a warning instead of failing the whole batch,
+			// otherwise one poison message blocks all downstream consumption.
+			if errors.Is(err, repo.ErrNoTableConfig) {
+				logs.CtxWarn(ctx, "skip %d spans for unknown tenant %s: %v", len(spans), td.Tenant, err)
+				continue
+			}
 			logs.CtxError(ctx, "inert %d spans failed, %v", len(spans), err)
 			return err
 		}

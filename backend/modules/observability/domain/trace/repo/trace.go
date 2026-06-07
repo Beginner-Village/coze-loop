@@ -5,10 +5,17 @@ package repo
 
 import (
 	"context"
+	"errors"
 
 	"github.com/coze-dev/coze-loop/backend/modules/observability/domain/trace/entity"
 	"github.com/coze-dev/coze-loop/backend/modules/observability/domain/trace/entity/loop_span"
 )
+
+// ErrNoTableConfig indicates that no table mapping exists for a (tenant, ttl)
+// pair. Callers consuming an external MQ may receive spans for tenants that are
+// not configured in this deployment (e.g. legacy/foreign tenants); they should
+// skip such spans instead of failing the whole batch.
+var ErrNoTableConfig = errors.New("no table config found for tenant")
 
 type GetTraceParam struct {
 	WorkSpaceID        string

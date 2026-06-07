@@ -652,9 +652,9 @@ func (t *TraceRepoImpl) getSpanInsertTable(ctx context.Context, tenant string, t
 	}
 	tableCfg, ok := tenantTableCfg.TenantTables[tenant][ttl]
 	if !ok {
-		return "", fmt.Errorf("no table config found for tenant %s with ttl %s", tenant, ttl)
+		return "", fmt.Errorf("%w %s with ttl %s", repo.ErrNoTableConfig, tenant, ttl)
 	} else if tableCfg.SpanTable == "" {
-		return "", fmt.Errorf("no table config found for tenant %s with ttl %s", tenant, ttl)
+		return "", fmt.Errorf("%w %s with ttl %s", repo.ErrNoTableConfig, tenant, ttl)
 	}
 	return tableCfg.SpanTable, nil
 }
