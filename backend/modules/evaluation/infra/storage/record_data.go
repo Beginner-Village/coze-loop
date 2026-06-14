@@ -16,7 +16,6 @@ import (
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/domain/component"
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/domain/entity"
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/pkg/utils"
-	"github.com/coze-dev/coze-loop/backend/pkg/json"
 	"github.com/coze-dev/coze-loop/backend/pkg/logs"
 )
 
@@ -90,7 +89,8 @@ func (s *RecordDataStorage) SaveEvalTargetRecordData(ctx context.Context, record
 	if fieldMaxSize <= 0 {
 		return nil
 	}
-	logs.CtxInfo(ctx, "SaveEvalTargetRecordData record: %v", json.Jsonify(record))
+	// 不打印完整 record（含对话 input/output 原文），仅记录标识，避免敏感数据落日志。
+	logs.CtxInfo(ctx, "SaveEvalTargetRecordData record id: %d", record.ID)
 	if record.EvalTargetInputData != nil {
 		if err := s.processEvalTargetInputData(ctx, record.EvalTargetInputData, fieldMaxSize); err != nil {
 			return errors.WithMessage(err, "process eval target input data")
@@ -237,7 +237,8 @@ func (s *RecordDataStorage) processContent(ctx context.Context, content *entity.
 		return nil
 	}
 	text := *content.Text
-	logs.CtxInfo(ctx, "judging Content need for tos storage, text: %s, int64(len(text)): %v, fieldMaxSize: %v", text, int64(len(text)), fieldMaxSize)
+	// 不打印 text 原文（对话内容），仅记录长度与阈值。
+	logs.CtxInfo(ctx, "judging Content need for tos storage, len(text): %v, fieldMaxSize: %v", int64(len(text)), fieldMaxSize)
 	if int64(len(text)) <= fieldMaxSize {
 		return nil
 	}

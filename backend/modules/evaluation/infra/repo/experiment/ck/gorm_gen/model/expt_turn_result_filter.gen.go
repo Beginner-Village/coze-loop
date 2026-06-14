@@ -12,25 +12,25 @@ const TableNameExptTurnResultFilter = "expt_turn_result_filter"
 
 // ExptTurnResultFilter mapped from table <expt_turn_result_filter>
 type ExptTurnResultFilter struct {
-	SpaceID                 string             `gorm:"column:space_id;type:String;not null" json:"space_id"`
-	ExptID                  string             `gorm:"column:expt_id;type:String;not null" json:"expt_id"`
-	ItemID                  string             `gorm:"column:item_id;type:String;not null" json:"item_id"`
-	ItemIdx                 int32              `gorm:"column:item_idx;type:Int32;not null" json:"item_idx"`
-	TurnID                  string             `gorm:"column:turn_id;type:String;not null" json:"turn_id"`
-	Status                  int32              `gorm:"column:status;type:Int32;not null" json:"status"`
-	EvalTargetData          map[string]string  `gorm:"column:eval_target_data;type:Map(String, String);not null" json:"eval_target_data"`
-	EvaluatorScore          map[string]float64 `gorm:"column:evaluator_score;type:Map(String, Float64);not null" json:"evaluator_score"`
-	AnnotationFloat         map[string]float64 `gorm:"column:annotation_float;type:Map(String, Float64);not null" json:"annotation_float"`
-	AnnotationBool          map[string]int8    `gorm:"column:annotation_bool;type:Map(String, Int8);not null" json:"annotation_bool"`
-	AnnotationString        map[string]string  `gorm:"column:annotation_string;type:Map(String, String);not null" json:"annotation_string"`
-	EvalTargetMetrics       map[string]int64   `gorm:"column:eval_target_metrics;type:Map(String, Int64);not null" json:"eval_target_metrics"`
-	EvaluatorScoreCorrected int32              `gorm:"column:evaluator_score_corrected;type:Int32;not null" json:"evaluator_score_corrected"`
-	EvalSetID               string             `gorm:"column:eval_set_id;type:String;not null" json:"eval_set_id"`
-	EvaluatorWeightedScore  float64            `gorm:"column:evaluator_weighted_score;type:Float64;not null" json:"evaluator_weighted_score"`
-	EvalSetVersionID        string             `gorm:"column:eval_set_version_id;type:String;not null" json:"eval_set_version_id"`
-	CreatedDate             time.Time          `gorm:"column:created_date;type:Date;not null" json:"created_date"`
-	UpdatedAt               time.Time          `gorm:"column:updated_at;type:DateTime;not null" json:"updated_at"`
-	CreatedAt               time.Time          `gorm:"column:created_at;type:DateTime;not null" json:"created_at"`
+	SpaceID                 string             `gorm:"column:space_id;type:String;not null;comment:空间ID" json:"space_id"`                                              // 空间ID
+	ExptID                  string             `gorm:"column:expt_id;type:String;not null;comment:实验ID" json:"expt_id"`                                                // 实验ID
+	ItemID                  string             `gorm:"column:item_id;type:String;not null;comment:评测集数据项ID" json:"item_id"`                                            // 评测集数据项ID
+	ItemIdx                 int32              `gorm:"column:item_idx;type:Int32;not null;comment:数据项序号" json:"item_idx"`                                              // 数据项序号
+	TurnID                  string             `gorm:"column:turn_id;type:String;not null;comment:轮次ID" json:"turn_id"`                                                // 轮次ID
+	Status                  int32              `gorm:"column:status;type:Int32;not null;comment:状态" json:"status"`                                                     // 状态
+	EvalTargetData          map[string]string  `gorm:"column:eval_target_data;type:Map(String, String);not null;comment:评测目标数据(敏感:可能含评测内容)" json:"eval_target_data"`   // 评测目标数据(敏感:可能含评测内容)
+	EvaluatorScore          map[string]float64 `gorm:"column:evaluator_score;type:Map(String, Float64);not null;comment:评估器得分" json:"evaluator_score"`                 // 评估器得分
+	AnnotationFloat         map[string]float64 `gorm:"column:annotation_float;type:Map(String, Float64);not null;comment:标注浮点值" json:"annotation_float"`               // 标注浮点值
+	AnnotationBool          map[string]int8    `gorm:"column:annotation_bool;type:Map(String, Int8);not null;comment:标注布尔值" json:"annotation_bool"`                    // 标注布尔值
+	AnnotationString        map[string]string  `gorm:"column:annotation_string;type:Map(String, String);not null;comment:标注字符串值(敏感:可能含评测内容)" json:"annotation_string"` // 标注字符串值(敏感:可能含评测内容)
+	EvalTargetMetrics       map[string]int64   `gorm:"column:eval_target_metrics;type:Map(String, Int64);not null;comment:评测目标指标" json:"eval_target_metrics"`          // 评测目标指标
+	EvaluatorScoreCorrected int32              `gorm:"column:evaluator_score_corrected;type:Int32;not null;comment:评估器得分是否被人工修正" json:"evaluator_score_corrected"`     // 评估器得分是否被人工修正
+	EvalSetID               string             `gorm:"column:eval_set_id;type:String;not null;comment:评测集ID" json:"eval_set_id"`                                       // 评测集ID
+	EvaluatorWeightedScore  float64            `gorm:"column:evaluator_weighted_score;type:Float64;not null;comment:评估器加权总分" json:"evaluator_weighted_score"`          // 评估器加权总分
+	EvalSetVersionID        string             `gorm:"column:eval_set_version_id;type:String;not null;comment:评测集版本ID" json:"eval_set_version_id"`                     // 评测集版本ID
+	CreatedDate             time.Time          `gorm:"column:created_date;type:Date;not null;comment:创建日期(分区键)" json:"created_date"`                                   // 创建日期(分区键)
+	UpdatedAt               time.Time          `gorm:"column:updated_at;type:DateTime;not null;comment:更新时间" json:"updated_at"`                                        // 更新时间
+	CreatedAt               time.Time          `gorm:"column:created_at;type:DateTime;not null;comment:创建时间" json:"created_at"`                                        // 创建时间
 }
 
 // TableName ExptTurnResultFilter's table name

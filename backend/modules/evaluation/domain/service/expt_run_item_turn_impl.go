@@ -81,7 +81,9 @@ func (e *DefaultExptTurnEvaluationImpl) Eval(ctx context.Context, etec *entity.E
 		return trr.SetEvalErr(err)
 	}
 
-	logs.CtxInfo(ctx, "[ExptTurnEval] call target success, target_result: %v", json.Jsonify(targetResult))
+	// 去日志:target_result 含评测目标输入/输出原文(对话/会话内容),仅打印记录标识与状态,不打印明文
+	logs.CtxInfo(ctx, "[ExptTurnEval] call target success, target_record_id: %v, item_id: %v, turn_id: %v, status: %v",
+		targetResult.ID, targetResult.ItemID, targetResult.TurnID, targetResult.Status)
 
 	if trr.SetTargetResult(targetResult).AbortWithTargetResult(etec.Expt) {
 		return trr
@@ -93,7 +95,8 @@ func (e *DefaultExptTurnEvaluationImpl) Eval(ctx context.Context, etec *entity.E
 		return trr.SetEvaluatorResults(evaluatorResults).SetEvalErr(err)
 	}
 
-	logs.CtxInfo(ctx, "[ExptTurnEval] call evaluators success, evaluator_results: %v", json.Jsonify(evaluatorResults))
+	// 去日志:evaluator_results 含评估器输入/输出原文(对话内容与评分理由),仅打印数量,不打印明文
+	logs.CtxInfo(ctx, "[ExptTurnEval] call evaluators success, evaluator_results count: %v", len(evaluatorResults))
 
 	if trr.SetEvaluatorResults(evaluatorResults).AbortWithEvaluatorResults(ctx, etec.Event) {
 		return trr

@@ -8,32 +8,32 @@ const TableNameObservabilitySpan = "observability_spans"
 
 // ObservabilitySpan mapped from table <observability_spans>
 type ObservabilitySpan struct {
-	TraceID           string             `gorm:"column:trace_id;type:String;not null" json:"trace_id"`
-	SpanID            string             `gorm:"column:span_id;type:String;not null" json:"span_id"`
-	SpaceID           string             `gorm:"column:space_id;type:String;not null" json:"space_id"`
-	SpanType          string             `gorm:"column:span_type;type:String;not null" json:"span_type"`
-	SpanName          string             `gorm:"column:span_name;type:String;not null" json:"span_name"`
-	ParentID          string             `gorm:"column:parent_id;type:String;not null" json:"parent_id"`
-	Method            *string            `gorm:"column:method;type:Nullable(String)" json:"method"`
-	Psm               *string            `gorm:"column:psm;type:Nullable(String)" json:"psm"`
-	Logid             *string            `gorm:"column:logid;type:Nullable(String)" json:"logid"`
-	StartTime         int64              `gorm:"column:start_time;type:Int64;primaryKey" json:"start_time"`
-	CallType          *string            `gorm:"column:call_type;type:Nullable(String)" json:"call_type"`
-	Duration          int64              `gorm:"column:duration;type:Int64;not null" json:"duration"`
-	StatusCode        int32              `gorm:"column:status_code;type:Int32;not null" json:"status_code"`
-	ObjectStorage     *string            `gorm:"column:object_storage;type:Nullable(String)" json:"object_storage"`
-	Input             string             `gorm:"column:input;type:String;not null" json:"input"`
-	Output            string             `gorm:"column:output;type:String;not null" json:"output"`
-	LogicDeleteDate   int64              `gorm:"column:logic_delete_date;type:Int64;not null" json:"logic_delete_date"`
-	ReserveCreateTime *string            `gorm:"column:reserve_create_time;type:Nullable(String)" json:"reserve_create_time"`
-	TagsBool          map[string]uint8   `gorm:"column:tags_bool;type:Map(String, UInt8);not null" json:"tags_bool"`
-	TagsFloat         map[string]float64 `gorm:"column:tags_float;type:Map(String, Float64);not null" json:"tags_float"`
-	TagsString        map[string]string  `gorm:"column:tags_string;type:Map(String, String);not null" json:"tags_string"`
-	TagsLong          map[string]int64   `gorm:"column:tags_long;type:Map(String, Int64);not null" json:"tags_long"`
-	TagsByte          map[string]string  `gorm:"column:tags_byte;type:Map(String, String);not null" json:"tags_byte"`
-	SystemTagsFloat   map[string]float64 `gorm:"column:system_tags_float;type:Map(String, Float64);not null" json:"system_tags_float"`
-	SystemTagsLong    map[string]int64   `gorm:"column:system_tags_long;type:Map(String, Int64);not null" json:"system_tags_long"`
-	SystemTagsString  map[string]string  `gorm:"column:system_tags_string;type:Map(String, String);not null" json:"system_tags_string"`
+	TraceID           string             `gorm:"column:trace_id;type:String;not null;comment:链路ID" json:"trace_id"`                                     // 链路ID
+	SpanID            string             `gorm:"column:span_id;type:String;not null;comment:SpanID" json:"span_id"`                                     // SpanID
+	SpaceID           string             `gorm:"column:space_id;type:String;not null;comment:空间ID" json:"space_id"`                                     // 空间ID
+	SpanType          string             `gorm:"column:span_type;type:String;not null;comment:Span类型" json:"span_type"`                                 // Span类型
+	SpanName          string             `gorm:"column:span_name;type:String;not null;comment:Span名称" json:"span_name"`                                 // Span名称
+	ParentID          string             `gorm:"column:parent_id;type:String;not null;comment:父SpanID" json:"parent_id"`                                // 父SpanID
+	Method            *string            `gorm:"column:method;type:Nullable(String);comment:方法名" json:"method"`                                         // 方法名
+	Psm               *string            `gorm:"column:psm;type:Nullable(String);comment:服务标识(PSM)" json:"psm"`                                         // 服务标识(PSM)
+	Logid             *string            `gorm:"column:logid;type:Nullable(String);comment:日志ID" json:"logid"`                                          // 日志ID
+	StartTime         int64              `gorm:"column:start_time;type:Int64;primaryKey;comment:开始时间(微秒时间戳)" json:"start_time"`                         // 开始时间(微秒时间戳)
+	CallType          *string            `gorm:"column:call_type;type:Nullable(String);comment:调用类型" json:"call_type"`                                  // 调用类型
+	Duration          int64              `gorm:"column:duration;type:Int64;not null;comment:耗时(微秒)" json:"duration"`                                    // 耗时(微秒)
+	StatusCode        int32              `gorm:"column:status_code;type:Int32;not null;comment:状态码" json:"status_code"`                                 // 状态码
+	ObjectStorage     *string            `gorm:"column:object_storage;type:Nullable(String);comment:对象存储引用(大字段外置存储信息)" json:"object_storage"`           // 对象存储引用(大字段外置存储信息)
+	Input             string             `gorm:"column:input;type:String;not null;comment:输入内容(敏感:对话/调用入参原文)" json:"input"`                             // 输入内容(敏感:对话/调用入参原文)
+	Output            string             `gorm:"column:output;type:String;not null;comment:输出内容(敏感:对话/调用结果原文)" json:"output"`                           // 输出内容(敏感:对话/调用结果原文)
+	LogicDeleteDate   int64              `gorm:"column:logic_delete_date;type:Int64;not null;comment:逻辑删除日期" json:"logic_delete_date"`                  // 逻辑删除日期
+	ReserveCreateTime *string            `gorm:"column:reserve_create_time;type:Nullable(String);comment:保留创建时间" json:"reserve_create_time"`            // 保留创建时间
+	TagsBool          map[string]uint8   `gorm:"column:tags_bool;type:Map(String, UInt8);not null;comment:布尔类型标签" json:"tags_bool"`                     // 布尔类型标签
+	TagsFloat         map[string]float64 `gorm:"column:tags_float;type:Map(String, Float64);not null;comment:浮点类型标签" json:"tags_float"`                 // 浮点类型标签
+	TagsString        map[string]string  `gorm:"column:tags_string;type:Map(String, String);not null;comment:字符串类型标签" json:"tags_string"`               // 字符串类型标签
+	TagsLong          map[string]int64   `gorm:"column:tags_long;type:Map(String, Int64);not null;comment:整型标签" json:"tags_long"`                       // 整型标签
+	TagsByte          map[string]string  `gorm:"column:tags_byte;type:Map(String, String);not null;comment:字节类型标签" json:"tags_byte"`                    // 字节类型标签
+	SystemTagsFloat   map[string]float64 `gorm:"column:system_tags_float;type:Map(String, Float64);not null;comment:系统浮点标签" json:"system_tags_float"`   // 系统浮点标签
+	SystemTagsLong    map[string]int64   `gorm:"column:system_tags_long;type:Map(String, Int64);not null;comment:系统整型标签" json:"system_tags_long"`       // 系统整型标签
+	SystemTagsString  map[string]string  `gorm:"column:system_tags_string;type:Map(String, String);not null;comment:系统字符串标签" json:"system_tags_string"` // 系统字符串标签
 }
 
 // TableName ObservabilitySpan's table name

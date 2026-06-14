@@ -13,7 +13,6 @@ import (
 	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/data/domain/dataset_job"
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/application/convertor/common"
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/domain/entity"
-	"github.com/coze-dev/coze-loop/backend/pkg/json"
 	"github.com/coze-dev/coze-loop/backend/pkg/logs"
 )
 
@@ -640,7 +639,9 @@ func convert2EvaluationSetTurn(ctx context.Context, item *dataset.DatasetItem) (
 		turn.FieldDataList = append(turn.FieldDataList, convert2EvaluationSetFieldData(ctx, e))
 	}
 	turns = append(turns, turn)
-	logs.CtxInfo(ctx, "conv turn from item: %v", json.Jsonify(item))
+	// 去日志:item 含评测集数据项字段原文(input/reference 内容),仅打印标识与字段数,不打印明文
+	logs.CtxInfo(ctx, "conv turn from item, item_id: %v, dataset_id: %v, field_count: %v",
+		gptr.Indirect(item.ItemID), item.GetDatasetID(), len(data))
 	return turns
 }
 

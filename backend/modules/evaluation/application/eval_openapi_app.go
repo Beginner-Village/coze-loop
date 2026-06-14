@@ -862,7 +862,13 @@ func (e *EvalOpenAPIApplication) UpdateEvaluationSetSchemaOApi(ctx context.Conte
 }
 
 func (e *EvalOpenAPIApplication) ReportEvalTargetInvokeResult_(ctx context.Context, req *openapi.ReportEvalTargetInvokeResultRequest) (r *openapi.ReportEvalTargetInvokeResultResponse, err error) {
-	logs.CtxInfo(ctx, "ReportEvalTargetInvokeResult receive req: %v", json.Jsonify(req))
+	// 不打印完整 req(output 含评测目标调用输出原文),仅记录标识字段与输出长度。
+	var targetOutputLen int
+	if req.GetOutput() != nil {
+		targetOutputLen = len(json.Jsonify(req.GetOutput()))
+	}
+	logs.CtxInfo(ctx, "ReportEvalTargetInvokeResult receive req, invoke_id: %v, workspace_id: %v, status: %v, callee: %v, output_len: %v",
+		req.GetInvokeID(), req.GetWorkspaceID(), req.GetStatus(), req.GetCallee(), targetOutputLen)
 
 	actx, err := e.asyncRepo.GetEvalAsyncCtx(ctx, strconv.FormatInt(req.GetInvokeID(), 10))
 	if err != nil {
@@ -2421,7 +2427,13 @@ func (e *EvalOpenAPIApplication) ListExptTemplatesOApi(ctx context.Context, req 
 }
 
 func (e *EvalOpenAPIApplication) ReportEvaluatorInvokeResult_(ctx context.Context, req *openapi.ReportEvaluatorInvokeResultRequest) (r *openapi.ReportEvaluatorInvokeResultResponse, err error) {
-	logs.CtxInfo(ctx, "ReportEvaluatorInvokeResult receive req: %v", json.Jsonify(req))
+	// 不打印完整 req(output 含评测器输出原文),仅记录标识字段与输出长度。
+	var evaluatorOutputLen int
+	if req.GetOutput() != nil {
+		evaluatorOutputLen = len(json.Jsonify(req.GetOutput()))
+	}
+	logs.CtxInfo(ctx, "ReportEvaluatorInvokeResult receive req, invoke_id: %v, workspace_id: %v, status: %v, output_len: %v",
+		req.GetInvokeID(), req.GetWorkspaceID(), req.GetStatus(), evaluatorOutputLen)
 
 	err = e.auth.Authorization(ctx, &rpc.AuthorizationParam{
 		ObjectID:      strconv.FormatInt(req.GetWorkspaceID(), 10),

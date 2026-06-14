@@ -8,29 +8,29 @@ const TableNameAnnotation = "observability_annotations"
 
 // ObservabilityAnnotation mapped from table <observability_annotation>
 type ObservabilityAnnotation struct {
-	ID              string   `gorm:"column:id;type:String;not null" json:"id"`
-	SpanID          string   `gorm:"column:span_id;type:String;not null" json:"span_id"`
-	TraceID         string   `gorm:"column:trace_id;type:String;not null" json:"trace_id"`
-	StartTime       int64    `gorm:"column:start_time;type:Int64;not null" json:"start_time"`
-	SpaceID         string   `gorm:"column:space_id;type:String;not null" json:"space_id"`
-	AnnotationType  string   `gorm:"column:annotation_type;type:String;not null" json:"annotation_type"`
-	AnnotationIndex []string `gorm:"column:annotation_index;type:Array(String);not null" json:"annotation_index"`
-	Key             string   `gorm:"column:key;type:String;not null" json:"key"`
-	ValueType       string   `gorm:"column:value_type;type:String;not null" json:"value_type"`
-	ValueString     string   `gorm:"column:value_string;type:String;not null" json:"value_string"`
-	ValueLong       int64    `gorm:"column:value_long;type:Int64;not null" json:"value_long"`
-	ValueFloat      float64  `gorm:"column:value_float;type:Float64;not null" json:"value_float"`
-	ValueBool       bool     `gorm:"column:value_bool;type:Bool;not null" json:"value_bool"`
-	Reasoning       string   `gorm:"column:reasoning;type:String;not null" json:"reasoning"`
-	Correction      string   `gorm:"column:correction;type:String;not null" json:"correction"`
-	Metadata        string   `gorm:"column:metadata;type:String;not null" json:"metadata"`
-	Status          string   `gorm:"column:status;type:String;not null" json:"status"`
-	CreatedBy       string   `gorm:"column:created_by;type:String;not null" json:"created_by"`
-	CreatedAt       uint64   `gorm:"column:created_at;type:UInt64;not null" json:"created_at"`
-	UpdatedBy       string   `gorm:"column:updated_by;type:String;not null" json:"updated_by"`
-	UpdatedAt       uint64   `gorm:"column:updated_at;type:UInt64;not null" json:"updated_at"`
-	DeletedAt       uint64   `gorm:"column:deleted_at;type:UInt64;not null" json:"deleted_at"`
-	StartDate       string   `gorm:"column:start_date;type:Date;not null" json:"start_date"`
+	ID              string   `gorm:"column:id;type:String;not null;comment:标注ID" json:"id"`                                    // 标注ID
+	SpanID          string   `gorm:"column:span_id;type:String;not null;comment:SpanID" json:"span_id"`                        // SpanID
+	TraceID         string   `gorm:"column:trace_id;type:String;not null;comment:链路ID" json:"trace_id"`                        // 链路ID
+	StartTime       int64    `gorm:"column:start_time;type:Int64;not null;comment:Span开始时间(微秒时间戳)" json:"start_time"`          // Span开始时间(微秒时间戳)
+	SpaceID         string   `gorm:"column:space_id;type:String;not null;comment:空间ID" json:"space_id"`                        // 空间ID
+	AnnotationType  string   `gorm:"column:annotation_type;type:String;not null;comment:标注类型" json:"annotation_type"`          // 标注类型
+	AnnotationIndex []string `gorm:"column:annotation_index;type:Array(String);not null;comment:标注索引" json:"annotation_index"` // 标注索引
+	Key             string   `gorm:"column:key;type:String;not null;comment:标注键" json:"key"`                                   // 标注键
+	ValueType       string   `gorm:"column:value_type;type:String;not null;comment:值类型" json:"value_type"`                     // 值类型
+	ValueString     string   `gorm:"column:value_string;type:String;not null;comment:字符串值(敏感:可能含评测内容)" json:"value_string"`    // 字符串值(敏感:可能含评测内容)
+	ValueLong       int64    `gorm:"column:value_long;type:Int64;not null;comment:整型值" json:"value_long"`                      // 整型值
+	ValueFloat      float64  `gorm:"column:value_float;type:Float64;not null;comment:浮点值" json:"value_float"`                  // 浮点值
+	ValueBool       bool     `gorm:"column:value_bool;type:Bool;not null;comment:布尔值" json:"value_bool"`                       // 布尔值
+	Reasoning       string   `gorm:"column:reasoning;type:String;not null;comment:评分理由(敏感:可能含评测内容)" json:"reasoning"`          // 评分理由(敏感:可能含评测内容)
+	Correction      string   `gorm:"column:correction;type:String;not null;comment:人工修正内容(敏感:可能含评测内容)" json:"correction"`      // 人工修正内容(敏感:可能含评测内容)
+	Metadata        string   `gorm:"column:metadata;type:String;not null;comment:元数据" json:"metadata"`                         // 元数据
+	Status          string   `gorm:"column:status;type:String;not null;comment:状态" json:"status"`                              // 状态
+	CreatedBy       string   `gorm:"column:created_by;type:String;not null;comment:创建人" json:"created_by"`                     // 创建人
+	CreatedAt       uint64   `gorm:"column:created_at;type:UInt64;not null;comment:创建时间" json:"created_at"`                    // 创建时间
+	UpdatedBy       string   `gorm:"column:updated_by;type:String;not null;comment:更新人" json:"updated_by"`                     // 更新人
+	UpdatedAt       uint64   `gorm:"column:updated_at;type:UInt64;not null;comment:更新时间" json:"updated_at"`                    // 更新时间
+	DeletedAt       uint64   `gorm:"column:deleted_at;type:UInt64;not null;comment:删除时间(逻辑删除)" json:"deleted_at"`              // 删除时间(逻辑删除)
+	StartDate       string   `gorm:"column:start_date;type:Date;not null;comment:开始日期(分区键)" json:"start_date"`                 // 开始日期(分区键)
 }
 
 // TableName Annotation's table name

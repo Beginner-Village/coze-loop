@@ -70,3 +70,5 @@ openspec/
 .agents/
 .trae-cn/
 .hermes/
+# codegraph local index (tooling artifact)
+.codegraph/

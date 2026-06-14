@@ -5,6 +5,8 @@ package middleware
 
 import (
 	"context"
+	"crypto/subtle"
+	"os"
 	"strings"
 
 	"github.com/bytedance/gg/gptr"
@@ -21,10 +23,21 @@ func PatTokenVerifyMW(handler *apis.APIHandler) app.HandlerFunc {
 	return func(ctx context.Context, c *app.RequestContext) {
 		// Internal server-to-server trace ingest endpoints don't carry a
 		// real PAT (they're hit by Studio backend via service DNS, not by
-		// end-user SDKs). Skip PAT verification for those paths.
+		// end-user SDKs). They are instead authenticated with a shared service
+		// token: when COZE_LOOP_TRACE_INGEST_TOKEN is configured, the request
+		// must present it as a Bearer token (constant-time compared). Configure
+		// this token in production and have the Studio backend send it.
 		path := string(c.Path())
 		if strings.HasPrefix(path, "/v1/loop/opentelemetry/") ||
 			path == "/v1/loop/traces/ingest" {
+			if ingestToken := os.Getenv("COZE_LOOP_TRACE_INGEST_TOKEN"); ingestToken != "" {
+				got := strings.TrimPrefix(string(c.GetHeader("Authorization")), "Bearer ")
+				if subtle.ConstantTimeCompare([]byte(got), []byte(ingestToken)) != 1 {
+					_ = c.Error(errorx.New("invalid trace ingest token"))
+					c.Abort()
+					return
+				}
+			}
 			c.Next(ctx)
 			return
 		}

@@ -16,7 +16,12 @@ func IsFullUrl(url string) bool {
 }
 
 func ImageURLToBase64(url string) (base64Str string, mimeType string, err error) {
-	resp, err := http.Get(url)
+	// SSRF defense: only allow http(s) and block non-public targets.
+	if err := validateFetchURL(url); err != nil {
+		return "", "", err
+	}
+
+	resp, err := safeHTTPClient.Get(url)
 	if err != nil {
 		return "", "", fmt.Errorf("获取图片失败: %w", err)
 	}
@@ -28,7 +33,7 @@ func ImageURLToBase64(url string) (base64Str string, mimeType string, err error)
 		return "", "", fmt.Errorf("HTTP请求失败: %s", resp.Status)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxImageFetchBytes))
 	if err != nil {
 		return "", "", fmt.Errorf("读取响应失败: %w", err)
 	}

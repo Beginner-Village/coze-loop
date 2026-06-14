@@ -206,7 +206,8 @@ func (c *EvaluatorSourceCodeServiceImpl) ShouldIntercept(_ context.Context, _ *e
 
 // Run 执行Code评估器
 func (c *EvaluatorSourceCodeServiceImpl) Run(ctx context.Context, evaluator *entity.Evaluator, input *entity.EvaluatorInputData, evaluatorRunConf *entity.EvaluatorRunConfig, exptSpaceID int64, disableTracing bool) (output *entity.EvaluatorOutputData, runStatus entity.EvaluatorRunStatus, traceID string) {
-	logs.CtxInfo(ctx, "[Run] Run Code Evaluator input: %v", input)
+	// 不打印 input 原文（含对话内容），避免敏感数据落日志。
+	logs.CtxInfo(ctx, "[Run] Run Code Evaluator start")
 	var err error
 	var code string
 	startTime := time.Now()
@@ -242,7 +243,8 @@ func (c *EvaluatorSourceCodeServiceImpl) Run(ctx context.Context, evaluator *ent
 
 // handleRunDefer 处理Run方法的defer逻辑
 func (c *EvaluatorSourceCodeServiceImpl) handleRunDefer(ctx context.Context, rootSpan *codeEvaluatorSpan, output **entity.EvaluatorOutputData, errInfo *error, input *entity.EvaluatorInputData, evaluator *entity.Evaluator, code string, runStatus entity.EvaluatorRunStatus) {
-	logs.CtxInfo(ctx, "[handleRunDefer] Run Code Evaluator input: %v", input)
+	// 不打印 input 原文（含对话内容），避免敏感数据落日志。
+	logs.CtxInfo(ctx, "[handleRunDefer] Run Code Evaluator finished")
 	if *output == nil {
 		*output = &entity.EvaluatorOutputData{
 			EvaluatorRunError: &entity.EvaluatorRunError{},
