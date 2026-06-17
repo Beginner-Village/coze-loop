@@ -141,22 +141,6 @@ We welcome community contributions. For contribution guidelines, please refer to
 
 If you identify potential security issues in this project or believe you may have found one, please notify the security team in time.
 
-## Join the Community
-
-We are committed to building an open and friendly developer community. All developers interested in AI Agent development are welcome to join us!
-
-### Issue Reports & Feature Requests
-
-To efficiently track and resolve issues while ensuring transparency and collaboration, we recommend participating through the project's issue and merge request channels.
-
-### Technical Discussion & Communication
-
-Join our technical discussion groups to share experiences with other developers and stay updated with the latest project developments:
-
-* Discord Server: [YNET Community](https://discord.com/invite/sTVN9EVS4B)
-
-* Telegram Group: [YNET](https://t.me/+pP9CkPnomDA0Mjgx)
-
 ## Acknowledgments
 
 Thanks to all developers and community members who contributed to the YNET Loop project Special thanks:
