@@ -4,7 +4,7 @@
 
 ## Overview
 
-This package is part of the Coze Studio monorepo and provides utilities functionality. It serves as a core component in the Coze ecosystem.
+This package is part of the YNET Studio monorepo and provides utilities functionality. It serves as a core component in the YNET ecosystem.
 
 ## Getting Started
 
@@ -37,7 +37,7 @@ import { /* exported functions/components */ } from '@coze-arch/idl2ts-helper';
 
 ## Features
 
-- Core functionality for Coze Studio
+- Core functionality for YNET Studio
 - TypeScript support
 - Modern ES modules
 
@@ -65,7 +65,7 @@ This package is built with:
 
 ## Contributing
 
-This package is part of the Coze Studio monorepo. Please follow the monorepo contribution guidelines.
+This package is part of the YNET Studio monorepo. Please follow the monorepo contribution guidelines.
 
 ## License
 

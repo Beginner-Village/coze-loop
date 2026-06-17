@@ -1,10 +1,10 @@
 # @cozeloop/biz-config-adapter
 
-Biz config for CozeLoop
+Biz config for YNET Loop
 
 ## Overview
 
-This package is part of the Coze Loop monorepo and provides community features functionality. It serves as a core component in the Coze Loop ecosystem.
+This package is part of the YNET Loop monorepo and provides community features functionality. It serves as a core component in the YNET Loop ecosystem.
 
 ## Getting Started
 
@@ -37,7 +37,7 @@ import { /* exported config */ } from '@cozeloop/biz-config-adapter';
 
 ## Features
 
-- Core functionality for Coze Loop
+- Core functionality for YNET Loop
 - TypeScript support
 - Modern ES modules
 
@@ -52,7 +52,7 @@ This package is built with:
 
 ## Contributing
 
-This package is part of the Coze Loop monorepo. Please follow the monorepo contribution guidelines.
+This package is part of the YNET Loop monorepo. Please follow the monorepo contribution guidelines.
 
 ## License
 

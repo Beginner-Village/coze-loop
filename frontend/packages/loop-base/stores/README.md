@@ -4,7 +4,7 @@ Stores For Devops
 
 ## Overview
 
-This package is part of the Coze Loop monorepo and provides state management functionality. It includes store.
+This package is part of the YNET Loop monorepo and provides state management functionality. It includes store.
 
 ## Getting Started
 
@@ -60,7 +60,7 @@ This package is built with:
 
 ## Contributing
 
-This package is part of the Coze Loop monorepo. Please follow the monorepo contribution guidelines.
+This package is part of the YNET Loop monorepo. Please follow the monorepo contribution guidelines.
 
 ## License
 

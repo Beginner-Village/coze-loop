@@ -1,10 +1,10 @@
-# Contributing to Cozeloop
+# Contributing to YNETloop
 
-Thank you for your interest in contributing to Cozeloop! This document provides guidelines for contributing to the project, covering contribution methods, project overview, development environment setup, code submission process, coding style and conventions, testing requirements, documentation requirements, and CI/CD processes.
+Thank you for your interest in contributing to YNETloop! This document provides guidelines for contributing to the project, covering contribution methods, project overview, development environment setup, code submission process, coding style and conventions, testing requirements, documentation requirements, and CI/CD processes.
 
 ## Ways to Contribute
 
-You can contribute to the Cozeloop project in several ways:
+You can contribute to the YNETloop project in several ways:
 
 * Submit and vote for new feature ideas
 * Create and comment on issues
@@ -179,7 +179,7 @@ The project uses a CI system for automated testing and building. Each Pull Reque
 
 ## License and CLA
 
-Cozeloop is licensed under the [Apache 2.0 License](LICENSE). By submitting code to the project, you agree that your contributions will be available under this license.
+YNETloop is licensed under the [Apache 2.0 License](LICENSE). By submitting code to the project, you agree that your contributions will be available under this license.
 
 ### Contributor License Agreement
 
@@ -202,4 +202,4 @@ If you have questions or need help, please contact the project maintainers.
 
 ---
 
-Thank you for contributing to the Cozeloop project!
+Thank you for contributing to the YNETloop project!

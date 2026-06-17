@@ -1,10 +1,10 @@
 # @cozeloop/observation-pages
 
-Observability and tracing pages for CozeLoop platform, providing comprehensive trace monitoring, analysis, and debugging capabilities.
+Observability and tracing pages for YNET Loop platform, providing comprehensive trace monitoring, analysis, and debugging capabilities.
 
 ## Overview
 
-This package provides the observability system pages for the CozeLoop platform. It offers trace monitoring and analysis capabilities, allowing users to track, search, and debug application execution flows. The package integrates with the CozeLoop observation infrastructure to provide detailed insights into span execution, performance metrics, and trace data.
+This package provides the observability system pages for the YNET Loop platform. It offers trace monitoring and analysis capabilities, allowing users to track, search, and debug application execution flows. The package integrates with the YNET Loop observation infrastructure to provide detailed insights into span execution, performance metrics, and trace data.
 
 ## Getting Started
 
@@ -141,7 +141,7 @@ This package is built with:
 - React Router for navigation
 - Vitest for testing
 - ESLint for code quality
-- Coze Design System for UI components
+- YNET Design System for UI components
 
 ### Scripts
 
@@ -161,7 +161,7 @@ npm run test:cov
 
 ## Contributing
 
-This package is part of the CozeLoop monorepo. Please follow the monorepo contribution guidelines.
+This package is part of the YNET Loop monorepo. Please follow the monorepo contribution guidelines.
 
 ## License
 

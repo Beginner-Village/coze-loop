@@ -1,10 +1,10 @@
 # @cozeloop/adapter-interfaces
 
-CozeLoop adapter interfaces
+YNET Loop adapter interfaces
 
 ## Overview
 
-This package is part of the Coze Loop monorepo and provides adapter interfaces definition.
+This package is part of the YNET Loop monorepo and provides adapter interfaces definition.
 
 ## Getting Started
 
@@ -50,7 +50,7 @@ This package is built with:
 
 ## Contributing
 
-This package is part of the Coze Loop monorepo. Please follow the monorepo contribution guidelines.
+This package is part of the YNET Loop monorepo. Please follow the monorepo contribution guidelines.
 
 ## License
 

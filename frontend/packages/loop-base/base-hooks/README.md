@@ -1,10 +1,10 @@
 # @cozeloop/hooks
 
-Hooks for CozeLoop
+Hooks for YNET Loop
 
 ## Overview
 
-This package is part of the Coze Loop monorepo and provides community features functionality. It includes modal.
+This package is part of the YNET Loop monorepo and provides community features functionality. It includes modal.
 
 ## Getting Started
 
@@ -63,7 +63,7 @@ This package is built with:
 
 ## Contributing
 
-This package is part of the Coze Loop monorepo. Please follow the monorepo contribution guidelines.
+This package is part of the YNET Loop monorepo. Please follow the monorepo contribution guidelines.
 
 ## License
 

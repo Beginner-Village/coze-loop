@@ -4,7 +4,7 @@ A postcss plugin to add namespace prefix for all css selector
 
 ## Overview
 
-This package is part of the Coze Studio monorepo and provides architecture functionality. It serves as a core component in the Coze Studio ecosystem.
+This package is part of the YNET Studio monorepo and provides architecture functionality. It serves as a core component in the YNET Studio ecosystem.
 
 ## Getting Started
 
@@ -37,7 +37,7 @@ import { /* exported functions/components */ } from '@coze-arch/postcss-plugin';
 
 ## Features
 
-- Core functionality for Coze Studio
+- Core functionality for YNET Studio
 - TypeScript support
 - Modern ES modules
 
@@ -56,7 +56,7 @@ This package is built with:
 
 ## Contributing
 
-This package is part of the Coze Studio monorepo. Please follow the monorepo contribution guidelines.
+This package is part of the YNET Studio monorepo. Please follow the monorepo contribution guidelines.
 
 ## License
 

@@ -82,7 +82,7 @@ The main export containing all environment variables organized by category:
 #### Configuration Variables
 - `CDN`: Content delivery network URL
 - `UPLOAD_CDN`: Upload CDN configuration
-- `COZE_DOMAIN`: Coze service domain
+- `COZE_DOMAIN`: YNET service domain
 - `APP_ID`: Application identifier
 - `APP_KEY`: Application key
 - Various service-specific configurations

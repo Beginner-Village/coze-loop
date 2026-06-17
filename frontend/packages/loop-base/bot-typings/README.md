@@ -1,6 +1,6 @@
 # @coze-arch/bot-typings
 
-A comprehensive TypeScript type definitions package extracted from the bot application, providing essential type declarations for the Coze bot platform. This package centralizes common type definitions, interfaces, and module declarations to ensure type safety across the bot ecosystem.
+A comprehensive TypeScript type definitions package extracted from the bot application, providing essential type declarations for the YNET bot platform. This package centralizes common type definitions, interfaces, and module declarations to ensure type safety across the bot ecosystem.
 
 ## Features
 
@@ -229,4 +229,4 @@ Apache-2.0
 
 **Author**: fanwenjie.fe@bytedance.com
 
-This package is part of the Coze bot platform architecture and provides essential type safety for bot development workflows.
+This package is part of the YNET bot platform architecture and provides essential type safety for bot development workflows.

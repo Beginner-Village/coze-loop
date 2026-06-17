@@ -1,10 +1,10 @@
 # @cozeloop/upload-toolkit-adapter
 
-A utilities package for the Coze Loop ecosystem
+A utilities package for the YNET Loop ecosystem
 
 ## Overview
 
-This package is part of the Coze Loop monorepo and provides utilities functionality. It includes api, evaluation.
+This package is part of the YNET Loop monorepo and provides utilities functionality. It includes api, evaluation.
 
 ## Getting Started
 
@@ -55,7 +55,7 @@ This package is built with:
 
 ## Contributing
 
-This package is part of the Coze Loop monorepo. Please follow the monorepo contribution guidelines.
+This package is part of the YNET Loop monorepo. Please follow the monorepo contribution guidelines.
 
 ## License
 

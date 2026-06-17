@@ -1,10 +1,10 @@
 # @cozeloop/tag-pages
 
-Tag management pages for CozeLoop platform, providing tag organization, categorization, and CRUD operations.
+Tag management pages for YNET Loop platform, providing tag organization, categorization, and CRUD operations.
 
 ## Overview
 
-This package provides the tag management system pages for the CozeLoop platform. It offers a complete workflow for creating, viewing, editing, and organizing tags to help categorize and manage resources within the workspace. The package includes a tag list view, detail pages, and creation interfaces.
+This package provides the tag management system pages for the YNET Loop platform. It offers a complete workflow for creating, viewing, editing, and organizing tags to help categorize and manage resources within the workspace. The package includes a tag list view, detail pages, and creation interfaces.
 
 ## Getting Started
 
@@ -148,7 +148,7 @@ This package currently serves as a routing wrapper around `@cozeloop/tag-compone
 
 ## Contributing
 
-This package is part of the CozeLoop monorepo. Please follow the monorepo contribution guidelines.
+This package is part of the YNET Loop monorepo. Please follow the monorepo contribution guidelines.
 
 ## License
 

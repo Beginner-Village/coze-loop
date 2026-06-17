@@ -4,7 +4,7 @@ rush logger
 
 ## Overview
 
-This package is part of the Coze Studio monorepo and provides utilities functionality. It includes logger.
+This package is part of the YNET Studio monorepo and provides utilities functionality. It includes logger.
 
 ## Getting Started
 
@@ -60,7 +60,7 @@ This package is built with:
 
 ## Contributing
 
-This package is part of the Coze Studio monorepo. Please follow the monorepo contribution guidelines.
+This package is part of the YNET Studio monorepo. Please follow the monorepo contribution guidelines.
 
 ## License
 

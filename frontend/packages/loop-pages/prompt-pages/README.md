@@ -1,10 +1,10 @@
 # @cozeloop/prompt-pages
 
-Prompt engineering and management pages for CozeLoop platform, providing comprehensive prompt development, testing, and lifecycle management.
+Prompt engineering and management pages for YNET Loop platform, providing comprehensive prompt development, testing, and lifecycle management.
 
 ## Overview
 
-This package provides the prompt engineering (PE) system pages for the CozeLoop platform. It offers a complete workflow for creating, editing, testing, and managing prompts with integrated observability features. The package includes a prompt list view, development environment, and playground for experimentation.
+This package provides the prompt engineering (PE) system pages for the YNET Loop platform. It offers a complete workflow for creating, editing, testing, and managing prompts with integrated observability features. The package includes a prompt list view, development environment, and playground for experimentation.
 
 ## Getting Started
 
@@ -156,7 +156,7 @@ This package is built with:
 - React Router for navigation with lazy loading
 - Vitest for testing
 - ESLint for code quality
-- Coze Design System for UI components
+- YNET Design System for UI components
 
 ### Scripts
 
@@ -176,7 +176,7 @@ npm run test:cov
 
 ## Contributing
 
-This package is part of the CozeLoop monorepo. Please follow the monorepo contribution guidelines.
+This package is part of the YNET Loop monorepo. Please follow the monorepo contribution guidelines.
 
 ## License
 

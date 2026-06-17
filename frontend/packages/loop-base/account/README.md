@@ -1,10 +1,10 @@
 # @cozeloop/account
 
-CozeLoop account
+YNET Loop account
 
 ## Overview
 
-This package is part of the Coze Loop monorepo and provides authentication functionality. It includes hook, store, service.
+This package is part of the YNET Loop monorepo and provides authentication functionality. It includes hook, store, service.
 
 ## Getting Started
 
@@ -72,7 +72,7 @@ This package is built with:
 
 ## Contributing
 
-This package is part of the Coze Loop monorepo. Please follow the monorepo contribution guidelines.
+This package is part of the YNET Loop monorepo. Please follow the monorepo contribution guidelines.
 
 ## License
 

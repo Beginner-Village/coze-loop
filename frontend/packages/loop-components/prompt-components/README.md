@@ -4,7 +4,7 @@ Prompt common components for cozeloop
 
 ## Overview
 
-This package is part of the Coze Loop monorepo and provides ui component functionality. It includes editor, prompt.
+This package is part of the YNET Loop monorepo and provides ui component functionality. It includes editor, prompt.
 
 ## Getting Started
 
@@ -74,7 +74,7 @@ This package is built with:
 
 ## Contributing
 
-This package is part of the Coze Loop monorepo. Please follow the monorepo contribution guidelines.
+This package is part of the YNET Loop monorepo. Please follow the monorepo contribution guidelines.
 
 ## License
 

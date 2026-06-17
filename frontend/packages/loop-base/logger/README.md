@@ -1,6 +1,6 @@
 # @coze-arch/logger
 
-A comprehensive logging and error reporting library for the Coze architecture ecosystem, providing unified console logging, React error boundaries, and performance tracing capabilities.
+A comprehensive logging and error reporting library for the YNET architecture ecosystem, providing unified console logging, React error boundaries, and performance tracing capabilities.
 
 ## Features
 
@@ -337,4 +337,4 @@ rushx ts-check
 
 ## License
 
-This package is part of the Coze architecture ecosystem and follows the project's licensing terms.
+This package is part of the YNET architecture ecosystem and follows the project's licensing terms.

@@ -1,10 +1,10 @@
-# CozeLoop
+# YNET Loop
 
 <div align="center">
 
-![CozeLoop Logo](src/assets/images/logo.svg)
+![YNET Loop Logo](src/assets/images/logo.svg)
 
-🧭 **CozeLoop** - 智能化的 AI 提示工程与评估平台
+🧭 **YNET Loop** - 智能化的 AI 提示工程与评估平台
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](../../LICENSE)
 [![Version](https://img.shields.io/badge/version-1.5.1-green.svg)](package.json)
@@ -15,7 +15,7 @@
 
 ## 📖 项目简介
 
-CozeLoop 是一个专业的 AI 提示工程与评估平台，为开发者和研究人员提供完整的 AI 应用开发工具链。平台集成了提示开发、模型评估、实验管理、可观测性监控等核心功能，帮助用户高效构建和优化 AI 应用。
+YNET Loop 是一个专业的 AI 提示工程与评估平台，为开发者和研究人员提供完整的 AI 应用开发工具链。平台集成了提示开发、模型评估、实验管理、可观测性监控等核心功能，帮助用户高效构建和优化 AI 应用。
 
 ## ✨ 核心功能
 
@@ -160,8 +160,8 @@ npm run build:ts
 
 ### 内部包依赖
 
-- `@cozeloop/*`: CozeLoop 业务模块包
-- `@coze-arch/*`: Coze 架构基础包
+- `@cozeloop/*`: YNET Loop 业务模块包
+- `@coze-arch/*`: YNET 架构基础包
 
 ## 🌍 国际化
 
@@ -215,6 +215,6 @@ npm run build:ts
 
 **[⬆ 回到顶部](#cozeloop)**
 
-Made with ❤️ by the CozeLoop Team
+Made with ❤️ by the YNET Loop Team
 
 </div>

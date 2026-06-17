@@ -1,6 +1,6 @@
 # @coze-arch/tailwind-config
 
-A comprehensive Tailwind CSS configuration package for the Coze design system, providing consistent theming, color palettes, and semantic design tokens across all applications.
+A comprehensive Tailwind CSS configuration package for the YNET design system, providing consistent theming, color palettes, and semantic design tokens across all applications.
 
 ## Features
 
@@ -47,7 +47,7 @@ module.exports = {
 };
 ```
 
-### Using the Coze Plugin
+### Using the YNET Plugin
 
 For semantic utilities and CSS variables:
 
@@ -135,9 +135,9 @@ The default export provides a complete Tailwind configuration with:
 'text-24px'            // 24px
 ```
 
-### Coze Plugin
+### YNET Plugin
 
-The Coze plugin adds semantic utility classes and CSS variables:
+The YNET plugin adds semantic utility classes and CSS variables:
 
 ```javascript
 // Semantic foreground classes
@@ -273,4 +273,4 @@ pnpm build
 
 ## License
 
-This package is part of the Coze architecture and follows the project's licensing terms.
+This package is part of the YNET architecture and follows the project's licensing terms.

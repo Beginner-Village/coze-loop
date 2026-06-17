@@ -1,10 +1,10 @@
 # @coze-arch/idl2ts-runtime
 
-A architecture package for the Coze Studio monorepo
+A architecture package for the YNET Studio monorepo
 
 ## Overview
 
-This package is part of the Coze Studio monorepo and provides architecture functionality. It includes api.
+This package is part of the YNET Studio monorepo and provides architecture functionality. It includes api.
 
 ## Getting Started
 
@@ -61,7 +61,7 @@ This package is built with:
 
 ## Contributing
 
-This package is part of the Coze Studio monorepo. Please follow the monorepo contribution guidelines.
+This package is part of the YNET Studio monorepo. Please follow the monorepo contribution guidelines.
 
 ## License
 

@@ -1,10 +1,10 @@
 # @cozeloop/auth-pages
 
-Authentication and account management pages for CozeLoop.
+Authentication and account management pages for YNET Loop.
 
 ## Overview
 
-This package provides authentication-related pages and components for the CozeLoop platform, including login pages, account settings, and user management interfaces. It's part of the CozeLoop monorepo and integrates with the platform's authentication system.
+This package provides authentication-related pages and components for the YNET Loop platform, including login pages, account settings, and user management interfaces. It's part of the YNET Loop monorepo and integrates with the platform's authentication system.
 
 ## Getting Started
 
@@ -84,7 +84,7 @@ function SettingsPage() {
 
 - `AuthFrame`: Layout wrapper for auth pages
 - `LoginPanel`: Login form component
-- `Logo`: CozeLoop logo component
+- `Logo`: YNET Loop logo component
 - `UserInfoPanel`: User profile management
 - `PATPanel`: Personal Access Token management
 
@@ -130,7 +130,7 @@ This package is built with:
 - React Router for navigation
 - Vitest for testing
 - ESLint for code quality
-- Coze Design System for UI components
+- YNET Design System for UI components
 
 ### Scripts
 
@@ -150,7 +150,7 @@ npm run test:cov
 
 ## Contributing
 
-This package is part of the CozeLoop monorepo. Please follow the monorepo contribution guidelines.
+This package is part of the YNET Loop monorepo. Please follow the monorepo contribution guidelines.
 
 ## License
 

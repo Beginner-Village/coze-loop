@@ -1,10 +1,10 @@
 # @cozeloop/i18n-adapter
 
-I18n For CozeLoop
+I18n For YNET Loop
 
 ## Overview
 
-This package is part of the Coze Loop monorepo and provides internationalization functionality. It includes adapter.
+This package is part of the YNET Loop monorepo and provides internationalization functionality. It includes adapter.
 
 ## Getting Started
 
@@ -59,7 +59,7 @@ This package is built with:
 
 ## Contributing
 
-This package is part of the Coze Loop monorepo. Please follow the monorepo contribution guidelines.
+This package is part of the YNET Loop monorepo. Please follow the monorepo contribution guidelines.
 
 ## License
 

@@ -131,30 +131,30 @@ error_code:
     no_affect_stability: true
 
   # [5000, 5500) saas 模型相关错误
-  - name: CozeModelNotExist
+  - name: YNETModelNotExist
     code: 5001
     message: coze model not exist
-    description: Coze模型不存在
+    description: YNET模型不存在
   - name: InterfaceNotAvailableInHouse
     code: 5002
     message: the interface is not available in house
-    description: 当前接口不支持Coze罗盘内场
-  - name: GetCozeModelListFailed
+    description: 当前接口不支持YNET罗盘内场
+  - name: GetYNETModelListFailed
     code: 5003
     message: get coze model list failed
-    description: 请求Coze模型列表接口失败
-  - name: GetCozeModelFailed
+    description: 请求YNET模型列表接口失败
+  - name: GetYNETModelFailed
     code: 5004
     message: get coze model failed
-    description: 请求Coze模型详情接口失败
-  - name: GetCozeModelListParamFailed
+    description: 请求YNET模型详情接口失败
+  - name: GetYNETModelListParamFailed
     code: 5005
     message: get coze model list param failed
-    description: 请求Coze模型列表参数接口失败
-  - name: GetCozeModelUsageFailed
+    description: 请求YNET模型列表参数接口失败
+  - name: GetYNETModelUsageFailed
     code: 5006
     message: get coze model usage failed
-    description: 请求Coze模型用量接口失败
+    description: 请求YNET模型用量接口失败
   - name: GetLLMGatewayModelConfigFailed
     code: 5007
     message: get llm gateway model config failed

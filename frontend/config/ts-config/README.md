@@ -1,10 +1,10 @@
 # @coze-arch/ts-config
 
-> Shared TypeScript configuration presets for the Coze Bot Studio platform
+> Shared TypeScript configuration presets for the YNET Bot Studio platform
 
 ## Project Overview
 
-This package provides standardized TypeScript configuration presets for all projects within the Coze Bot Studio monorepo. It offers multiple configuration options optimized for different project types (web applications, Node.js services, and base configurations) while ensuring consistency across the entire platform. The configurations include strict type checking, modern JavaScript features, and appropriate compiler options for optimal development experience and build performance.
+This package provides standardized TypeScript configuration presets for all projects within the YNET Bot Studio monorepo. It offers multiple configuration options optimized for different project types (web applications, Node.js services, and base configurations) while ensuring consistency across the entire platform. The configurations include strict type checking, modern JavaScript features, and appropriate compiler options for optimal development experience and build performance.
 
 ## Features
 

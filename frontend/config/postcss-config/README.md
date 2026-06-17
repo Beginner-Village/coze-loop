@@ -1,6 +1,6 @@
 # @coze-arch/postcss-config
 
-A shared PostCSS configuration for Coze architecture projects that provides a standardized set of PostCSS plugins for modern CSS preprocessing and Tailwind CSS integration.
+A shared PostCSS configuration for YNET architecture projects that provides a standardized set of PostCSS plugins for modern CSS preprocessing and Tailwind CSS integration.
 
 ## Features
 
@@ -222,4 +222,4 @@ rush build
 
 ## License
 
-Internal use within Coze architecture projects.
+Internal use within YNET architecture projects.

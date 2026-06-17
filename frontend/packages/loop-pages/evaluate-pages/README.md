@@ -1,10 +1,10 @@
 # @cozeloop/evaluate-pages
 
-Evaluation and testing pages for CozeLoop platform, providing comprehensive experiment management, dataset handling, and evaluator configuration.
+Evaluation and testing pages for YNET Loop platform, providing comprehensive experiment management, dataset handling, and evaluator configuration.
 
 ## Overview
 
-This package provides the complete evaluation system pages for the CozeLoop platform. It integrates evaluation workflows including dataset management, evaluator creation and configuration, and experiment execution and analysis. The package serves as the main entry point for the evaluation feature set in CozeLoop.
+This package provides the complete evaluation system pages for the YNET Loop platform. It integrates evaluation workflows including dataset management, evaluator creation and configuration, and experiment execution and analysis. The package serves as the main entry point for the evaluation feature set in YNET Loop.
 
 ## Getting Started
 
@@ -128,7 +128,7 @@ This package is built with:
 - React Router for navigation
 - Vitest for testing
 - ESLint for code quality
-- Coze Design System for UI components
+- YNET Design System for UI components
 
 ### Scripts
 
@@ -148,7 +148,7 @@ npm run test:cov
 
 ## Contributing
 
-This package is part of the CozeLoop monorepo. Please follow the monorepo contribution guidelines.
+This package is part of the YNET Loop monorepo. Please follow the monorepo contribution guidelines.
 
 ## License
 
