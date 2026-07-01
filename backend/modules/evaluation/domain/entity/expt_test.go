@@ -275,12 +275,13 @@ func TestTargetConf_Valid_MoreBranches(t *testing.T) {
 			wantErr:    false,
 		},
 		{
+			// 用非豁免类型(VolcengineAgent):CozeBot/CozeWorkflow 现已从 FieldConfs 校验豁免。
 			name: "IngressConf的EvalSetAdapter为nil返回错误",
 			conf: &TargetConf{
 				TargetVersionID: 1,
 				IngressConf:     &TargetIngressConf{EvalSetAdapter: nil},
 			},
-			targetType: EvalTargetTypeCozeBot,
+			targetType: EvalTargetTypeVolcengineAgent,
 			wantErr:    true,
 		},
 		{
@@ -291,7 +292,21 @@ func TestTargetConf_Valid_MoreBranches(t *testing.T) {
 					EvalSetAdapter: &FieldAdapter{FieldConfs: []*FieldConf{{}}},
 				},
 			},
+			targetType: EvalTargetTypeVolcengineAgent,
+			wantErr:    false,
+		},
+		{
+			// CozeBot 自取用户提问、不强制 target FieldConfs,缺 IngressConf 也应通过。
+			name:       "CozeBot类型无需IngressConf",
+			conf:       &TargetConf{TargetVersionID: 1},
 			targetType: EvalTargetTypeCozeBot,
+			wantErr:    false,
+		},
+		{
+			// CozeWorkflow 按名透传评测集字段、不强制 target FieldConfs,缺 IngressConf 也应通过。
+			name:       "CozeWorkflow类型无需IngressConf",
+			conf:       &TargetConf{TargetVersionID: 1},
+			targetType: EvalTargetTypeCozeWorkflow,
 			wantErr:    false,
 		},
 	}

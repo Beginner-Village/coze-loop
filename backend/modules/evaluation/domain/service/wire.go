@@ -15,6 +15,7 @@ import (
 	evaluatorrepo "github.com/coze-dev/coze-loop/backend/modules/evaluation/infra/repo/evaluator"
 	experimentrepo "github.com/coze-dev/coze-loop/backend/modules/evaluation/infra/repo/experiment"
 	targetrepo "github.com/coze-dev/coze-loop/backend/modules/evaluation/infra/repo/target"
+	"github.com/coze-dev/coze-loop/backend/modules/evaluation/infra/rpc/cozestudio"
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/infra/rpc/data"
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/infra/rpc/llm"
 	"github.com/coze-dev/coze-loop/backend/modules/evaluation/infra/rpc/pipeline"
@@ -107,7 +108,12 @@ func NewEvaluatorSourceServices(
 
 // NewSourceTargetOperators 创建源目标操作器映射
 func NewSourceTargetOperators(adapter rpc.IPromptRPCAdapter) map[entity.EvalTargetType]ISourceEvalTargetOperateService {
+	// CozeBot / CozeWorkflow 通过 studio OpenAPI 真实运行；studio 地址/PAT 由环境变量注入
+	// (YNET_STUDIO_OPENAPI_BASE_URL / YNET_STUDIO_OPENAPI_TOKEN)。未配置时执行会返回明确错误。
+	cozeAdapter := cozestudio.NewCozeTargetRPCAdapterFromEnv()
 	return map[entity.EvalTargetType]ISourceEvalTargetOperateService{
-		entity.EvalTargetTypeLoopPrompt: NewPromptSourceEvalTargetServiceImpl(adapter),
+		entity.EvalTargetTypeLoopPrompt:   NewPromptSourceEvalTargetServiceImpl(adapter),
+		entity.EvalTargetTypeCozeWorkflow: NewCozeWorkflowSourceEvalTargetServiceImpl(cozeAdapter),
+		entity.EvalTargetTypeCozeBot:      NewCozeBotSourceEvalTargetServiceImpl(cozeAdapter),
 	}
 }

@@ -253,8 +253,11 @@ func (t *TargetConf) Valid(ctx context.Context, targetType EvalTargetType) error
 	if t == nil || t.TargetVersionID == 0 {
 		return fmt.Errorf("invalid TargetConf: %v", json.Jsonify(t))
 	}
-	// prompt/custom_rpc 可能无输入；仅记录型不需要执行，仅需记录对象类型和基本信息
-	if targetType == EvalTargetTypeLoopPrompt || targetType == EvalTargetTypeCustomRPCServer || targetType == EvalTargetTypeWebAgent || targetType.IsRecordOnlyType() {
+	// prompt/custom_rpc 可能无输入；仅记录型不需要执行，仅需记录对象类型和基本信息。
+	// CozeWorkflow/CozeBot 与 prompt 同样自行处理输入(工作流按名透传评测集字段、
+	// 智能体取用户提问)，不强制要求 target 连接器 FieldConfs，故一并豁免。
+	if targetType == EvalTargetTypeLoopPrompt || targetType == EvalTargetTypeCustomRPCServer || targetType == EvalTargetTypeWebAgent ||
+		targetType == EvalTargetTypeCozeWorkflow || targetType == EvalTargetTypeCozeBot || targetType.IsRecordOnlyType() {
 		return nil
 	}
 	if t.IngressConf != nil && t.IngressConf.EvalSetAdapter != nil && len(t.IngressConf.EvalSetAdapter.FieldConfs) > 0 {

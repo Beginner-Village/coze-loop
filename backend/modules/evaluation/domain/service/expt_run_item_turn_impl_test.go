@@ -2921,7 +2921,9 @@ func TestDefaultExptTurnEvaluationImpl_callTarget_EdgeCases(t *testing.T) {
 						Target: &entity.EvalTarget{
 							ID:                1,
 							EvalTargetVersion: &entity.EvalTargetVersion{ID: 1},
-							EvalTargetType:    entity.EvalTargetTypeCozeBot,
+							// 用非豁免类型:CozeBot/CozeWorkflow 现自行处理输入已从 FieldConfs 校验豁免,
+							// 这里改用仍强制 FieldConfs 的类型来触发"缺 IngressConf → 校验失败"。
+							EvalTargetType: entity.EvalTargetTypeVolcengineAgent,
 						},
 						EvalConf: &entity.EvaluationConfiguration{
 							ConnectorConf: entity.Connector{
