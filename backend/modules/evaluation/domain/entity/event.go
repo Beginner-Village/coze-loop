@@ -181,6 +181,9 @@ type ExptTurnResultFilterEvent struct {
 
 	RetryTimes *int32
 	FilterType *UpsertExptTurnResultFilterType
+	// Session 携带发布时的用户上下文;异步 consumer 需据此 WithCtxUser,
+	// 否则建结果时 foundation auth 会报 invalid user_id in context。
+	Session *Session
 }
 
 type ExportCSVEvent struct {

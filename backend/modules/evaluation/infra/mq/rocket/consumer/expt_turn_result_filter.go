@@ -8,6 +8,7 @@ import (
 
 	"github.com/bytedance/sonic"
 
+	"github.com/coze-dev/coze-loop/backend/infra/middleware/session"
 	"github.com/coze-dev/coze-loop/backend/infra/mq"
 	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/evaluation"
 	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/evaluation/expt"
@@ -39,6 +40,12 @@ func (c *ExptTurnResultFilterConsumer) HandleMessage(ctx context.Context, ext *m
 	if err := sonic.Unmarshal(body, event); err != nil {
 		logs.CtxError(ctx, "ExptTurnResultFilterEvent json unmarshal fail, raw: %v, err: %s", string(body), err)
 		return nil
+	}
+
+	// 异步 consumer 无 session,需从事件携带的用户上下文重建,否则建结果时
+	// foundation auth 会报 invalid user_id in context(与 expt_record_eval 等兄弟 consumer 一致)。
+	if event.Session != nil && event.Session.UserID != "" {
+		ctx = session.WithCtxUser(ctx, &session.User{ID: event.Session.UserID})
 	}
 
 	logs.CtxInfo(ctx, "ExptTurnResultFilterConsumer consume message, event: %v, msg_id: %v", string(body), ext.MsgID)

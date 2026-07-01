@@ -154,6 +154,11 @@ func (e *exptEventPublisher) PublishExptOnlineEvalResult(ctx context.Context, ev
 }
 
 func (e *exptEventPublisher) PublishExptTurnResultFilterEvent(ctx context.Context, event *entity.ExptTurnResultFilterEvent, duration *time.Duration) error {
+	// 在发布处统一从 ctx 捕获用户上下文(覆盖全部生产者),供异步 consumer 重建 session,
+	// 否则建结果时 foundation auth 会报 invalid user_id in context。
+	if event != nil && event.Session == nil {
+		event.Session = entity.NewSession(ctx)
+	}
 	return e.batchSend(ctx, rocket.ExptTurnResultFilterRMQKey, []any{event}, duration)
 }
 
