@@ -122,9 +122,15 @@ func (d *exptTurnResultFilterDAOImpl) Save(ctx context.Context, filter []*model.
 // 定义浮点数比较的精度
 const floatEpsilon = 1e-8
 
-// getClickHouseDatabaseName 从环境变量获取ClickHouse数据库名
+// getClickHouseDatabaseName 从环境变量获取ClickHouse数据库名。
+// ynet 部署已把前缀从 COZE_ 迁移到 YNET_（容器设 YNET_LOOP_CLICKHOUSE_DATABASE=ynet-loop-clickhouse，
+// 与 infrastructure.yaml 的 clickhouse.database 一致），故优先读 YNET_ 前缀，
+// 回落旧的 COZE_ 前缀以向后兼容，最后回落默认值。
 func getClickHouseDatabaseName() string {
-	dbName := os.Getenv("COZE_LOOP_CLICKHOUSE_DATABASE")
+	dbName := os.Getenv("YNET_LOOP_CLICKHOUSE_DATABASE")
+	if dbName == "" {
+		dbName = os.Getenv("COZE_LOOP_CLICKHOUSE_DATABASE")
+	}
 	if dbName == "" {
 		// 默认值，保持向后兼容
 		dbName = "cozeloop-clickhouse"
