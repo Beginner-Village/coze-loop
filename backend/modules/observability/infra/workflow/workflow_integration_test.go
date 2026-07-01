@@ -8,7 +8,7 @@
 // explicitly against a real MySQL carrying the production workflow_meta
 // snapshot:
 //
-//	WF_TEST_DSN='root:<pw>@tcp(10.10.10.220:3308)/ynet-loop?charset=utf8mb4&parseTime=true&loc=Local' \
+//	WF_TEST_DSN='root:<pw>@tcp(10.10.10.226:13306)/ynet-loop?charset=utf8mb4&parseTime=true&loc=Local' \
 //	  go test -tags integration -run TestWorkflowProviderRealDB \
 //	  ./modules/observability/infra/workflow/ -v -count=1
 //

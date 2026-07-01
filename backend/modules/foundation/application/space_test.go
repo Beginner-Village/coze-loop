@@ -12,6 +12,7 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/coze-dev/coze-loop/backend/infra/middleware/session"
+	domainspace "github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/foundation/domain/space"
 	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/foundation/space"
 	"github.com/coze-dev/coze-loop/backend/modules/foundation/application/convertor"
 	"github.com/coze-dev/coze-loop/backend/modules/foundation/domain/user/entity"
@@ -194,6 +195,87 @@ func TestSpaceApplicationImpl_ListUserSpaces(t *testing.T) {
 			want: &space.ListUserSpaceResponse{
 				Spaces: slices.Map([]*entity.Space{{ID: 200, Name: "space-200"}}, convertor.SpaceDO2DTO),
 				Total:  ptr.Of(int32(1)),
+			},
+			wantErr: nil,
+		},
+		{
+			name: "external studio user empty spaces returns synthetic workspace",
+			fields: fields{
+				userRepo: func() repo.IUserRepo {
+					ctrl := gomock.NewController(t)
+					mockRepo := repomocks.NewMockIUserRepo(ctrl)
+					mockRepo.EXPECT().ListUserSpace(gomock.Any(), int64(123), int32(10), int32(1)).
+						Return(nil, int32(0), nil)
+					return mockRepo
+				}(),
+			},
+			args: args{
+				ctx: session.WithExternalWorkspaceID(
+					session.WithCtxUser(context.Background(), &session.User{
+						AppID: 111,
+						ID:    "123",
+						Name:  "external-123",
+						Email: "",
+					}),
+					"7652614054615187456",
+				),
+				req: &space.ListUserSpaceRequest{
+					PageSize:   ptr.Of(int32(10)),
+					PageNumber: ptr.Of(int32(1)),
+				},
+			},
+			want: &space.ListUserSpaceResponse{
+				Spaces: []*domainspace.Space{
+					{
+						ID:          7652614054615187456,
+						Name:        "Studio Workspace",
+						Description: "External Studio workspace",
+						SpaceType:   domainspace.SpaceType_Personal,
+						OwnerUserID: "123",
+					},
+				},
+				Total: ptr.Of(int32(1)),
+			},
+			wantErr: nil,
+		},
+		{
+			name: "signed studio identity empty spaces returns synthetic workspace",
+			fields: fields{
+				userRepo: func() repo.IUserRepo {
+					ctrl := gomock.NewController(t)
+					mockRepo := repomocks.NewMockIUserRepo(ctrl)
+					mockRepo.EXPECT().ListUserSpace(gomock.Any(), int64(123), int32(10), int32(1)).
+						Return(nil, int32(0), nil)
+					return mockRepo
+				}(),
+			},
+			args: args{
+				ctx: session.WithExternalWorkspaceID(
+					session.WithCtxUser(context.Background(), &session.User{
+						AppID:      111,
+						ID:         "123",
+						Name:       "Lu",
+						Email:      "402087139@qq.com",
+						IsExternal: true,
+					}),
+					"7652614054615187456",
+				),
+				req: &space.ListUserSpaceRequest{
+					PageSize:   ptr.Of(int32(10)),
+					PageNumber: ptr.Of(int32(1)),
+				},
+			},
+			want: &space.ListUserSpaceResponse{
+				Spaces: []*domainspace.Space{
+					{
+						ID:          7652614054615187456,
+						Name:        "Studio Workspace",
+						Description: "External Studio workspace",
+						SpaceType:   domainspace.SpaceType_Personal,
+						OwnerUserID: "123",
+					},
+				},
+				Total: ptr.Of(int32(1)),
 			},
 			wantErr: nil,
 		},

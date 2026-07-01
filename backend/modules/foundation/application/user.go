@@ -205,7 +205,7 @@ func (u *UserApplicationImpl) ModifyUserProfile(ctx context.Context, request *us
 func (u *UserApplicationImpl) GetUserInfoByToken(ctx context.Context, request *user.GetUserInfoByTokenRequest) (r *user.GetUserInfoByTokenResponse, err error) {
 	userIDStr, ok := session.UserIDInCtx(ctx)
 	if !ok {
-		return nil, errorx.NewByCode(errno.CommonInvalidParamCode, errorx.WithExtraMsg("missing user session"))
+		return &user.GetUserInfoByTokenResponse{}, nil
 	}
 
 	userID, err := conv.Int64(userIDStr)
@@ -215,6 +215,11 @@ func (u *UserApplicationImpl) GetUserInfoByToken(ctx context.Context, request *u
 
 	userDO, err := u.userService.GetUserProfile(ctx, userID)
 	if err != nil {
+		if ctxUser, ok := session.UserInCtx(ctx); ok && isExternalSessionUser(ctxUser) {
+			return &user.GetUserInfoByTokenResponse{
+				UserInfo: externalSessionUserInfo(userIDStr, ctxUser),
+			}, nil
+		}
 		return nil, err
 	}
 
@@ -223,6 +228,26 @@ func (u *UserApplicationImpl) GetUserInfoByToken(ctx context.Context, request *u
 	}
 
 	return r, nil
+}
+
+func isExternalSessionUser(ctxUser *session.User) bool {
+	if ctxUser == nil || ctxUser.ID == "" {
+		return false
+	}
+	return ctxUser.IsExternal || strings.HasPrefix(ctxUser.Name, "external-")
+}
+
+func externalSessionUserInfo(userID string, ctxUser *session.User) *domain.UserInfoDetail {
+	name := ctxUser.Name
+	if name == "" {
+		name = "Studio User " + userID
+	}
+	return &domain.UserInfoDetail{
+		UserID:   ptr.Of(userID),
+		Name:     ptr.Of(name),
+		NickName: ptr.Of(name),
+		Email:    ptr.Of(ctxUser.Email),
+	}
 }
 
 func (u *UserApplicationImpl) GetUserInfo(ctx context.Context, req *user.GetUserInfoRequest) (r *user.GetUserInfoResponse, err error) {

@@ -6,16 +6,21 @@ package session
 import "context"
 
 type User struct {
-	AppID int32  `json:"app_id,omitempty"`
-	ID    string `json:"id"`
-	Name  string `json:"name,omitempty"`
-	Email string `json:"email,omitempty"`
+	AppID      int32  `json:"app_id,omitempty"`
+	ID         string `json:"id"`
+	Name       string `json:"name,omitempty"`
+	Email      string `json:"email,omitempty"`
+	IsExternal bool   `json:"is_external,omitempty"`
 }
 
 // userKeyType 定义自定义类型作为context键，避免键冲突
 type userKeyType struct{}
 
 var userKey = userKeyType{}
+
+type externalWorkspaceIDKeyType struct{}
+
+var externalWorkspaceIDKey = externalWorkspaceIDKeyType{}
 
 // UserIDInCtx returns the user ID from the context.
 // Notice: NewSessionMD must be used in your service, or else this function always returns false.
@@ -60,4 +65,19 @@ func UserInCtx(ctx context.Context) (*User, bool) {
 
 func WithCtxUser(ctx context.Context, user *User) context.Context {
 	return context.WithValue(ctx, userKey, user)
+}
+
+func ExternalWorkspaceIDInCtx(ctx context.Context) (string, bool) {
+	id, ok := ctx.Value(externalWorkspaceIDKey).(string)
+	if !ok || id == "" {
+		return "", false
+	}
+	return id, true
+}
+
+func WithExternalWorkspaceID(ctx context.Context, workspaceID string) context.Context {
+	if workspaceID == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, externalWorkspaceIDKey, workspaceID)
 }

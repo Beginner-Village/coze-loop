@@ -1655,18 +1655,38 @@ func (r *TraceServiceImpl) GetTracesMetaInfo(ctx context.Context, req *GetTraces
 	if err != nil {
 		return nil, errorx.WrapByCode(err, obErrorx.CommercialCommonInternalErrorCodeCode)
 	}
-	baseFields, ok := cfg.FieldMetas[loop_span.PlatformDefault][req.SpanListType]
-	if !ok {
-		return nil, errorx.NewByCode(obErrorx.CommercialCommonInvalidParamCodeCode, errorx.WithExtraMsg("base meta info not found"))
+	if cfg == nil {
+		cfg = &config.TraceFieldMetaInfoCfg{}
+	}
+	availableFields := cfg.AvailableFields
+	if availableFields == nil {
+		availableFields = map[string]*config.FieldMeta{}
+	}
+	var baseFields []string
+	if cfg.FieldMetas != nil {
+		if platformFields, ok := cfg.FieldMetas[loop_span.PlatformDefault]; ok {
+			baseFields = platformFields[req.SpanListType]
+		}
+	}
+	if len(baseFields) == 0 {
+		logs.CtxWarn(ctx, "Trace base meta info not found for span list type %s, using built-in fallback", req.SpanListType)
+		baseFields = defaultTraceMetaInfoFields()
+		availableFields = mergeTraceFieldMetas(availableFields, defaultTraceFieldMetas())
 	}
 
-	fields, ok := cfg.FieldMetas[req.PlatformType][req.SpanListType]
+	var fields []string
+	var ok bool
+	if cfg.FieldMetas != nil {
+		if platformFields, exists := cfg.FieldMetas[req.PlatformType]; exists {
+			fields, ok = platformFields[req.SpanListType]
+		}
+	}
 	if !ok {
 		logs.CtxWarn(ctx, "FieldMetas not found: %v-%v", req.PlatformType, req.SpanListType)
 	}
 	fieldMetas := make(map[string]*config.FieldMeta)
 	for _, field := range baseFields {
-		fieldMta, ok := cfg.AvailableFields[field]
+		fieldMta, ok := availableFields[field]
 		if !ok || fieldMta == nil {
 			logs.CtxError(ctx, "GetTracesMetaInfo invalid field: %v", field)
 			return nil, errorx.NewByCode(obErrorx.CommercialCommonInternalErrorCodeCode)
@@ -1674,7 +1694,7 @@ func (r *TraceServiceImpl) GetTracesMetaInfo(ctx context.Context, req *GetTraces
 		fieldMetas[field] = fieldMta
 	}
 	for _, field := range fields {
-		fieldMta, ok := cfg.AvailableFields[field]
+		fieldMta, ok := availableFields[field]
 		if !ok || fieldMta == nil {
 			logs.CtxError(ctx, "GetTracesMetaInfo invalid field: %v", field)
 			return nil, errorx.NewByCode(obErrorx.CommercialCommonInternalErrorCodeCode)
@@ -1691,6 +1711,75 @@ func (r *TraceServiceImpl) GetTracesMetaInfo(ctx context.Context, req *GetTraces
 		FilesMetas:      fieldMetas,
 		KeySpanTypeList: keySpanTypes,
 	}, nil
+}
+
+func defaultTraceMetaInfoFields() []string {
+	return []string{
+		loop_span.SpanFieldTraceId,
+		loop_span.SpanFieldSpanId,
+		loop_span.SpanFieldSpanName,
+		loop_span.SpanFieldSpanType,
+		loop_span.SpanFieldStatus,
+		loop_span.SpanFieldStatusCode,
+		loop_span.SpanFieldDuration,
+	}
+}
+
+func defaultTraceFieldMetas() map[string]*config.FieldMeta {
+	stringFilters := []loop_span.QueryTypeEnum{
+		loop_span.QueryTypeEnumMatch,
+		loop_span.QueryTypeEnumNotMatch,
+		loop_span.QueryTypeEnumIn,
+		loop_span.QueryTypeEnumNotIn,
+		loop_span.QueryTypeEnumEq,
+		loop_span.QueryTypeEnumNotEq,
+		loop_span.QueryTypeEnumExist,
+		loop_span.QueryTypeEnumNotExist,
+	}
+	longFilters := []loop_span.QueryTypeEnum{
+		loop_span.QueryTypeEnumGte,
+		loop_span.QueryTypeEnumLte,
+		loop_span.QueryTypeEnumGt,
+		loop_span.QueryTypeEnumLt,
+		loop_span.QueryTypeEnumEq,
+		loop_span.QueryTypeEnumNotEq,
+		loop_span.QueryTypeEnumIn,
+		loop_span.QueryTypeEnumNotIn,
+		loop_span.QueryTypeEnumExist,
+		loop_span.QueryTypeEnumNotExist,
+	}
+	stringMeta := func() *config.FieldMeta {
+		return &config.FieldMeta{FieldType: loop_span.FieldTypeString, FilterTypes: append([]loop_span.QueryTypeEnum(nil), stringFilters...)}
+	}
+	longMeta := func() *config.FieldMeta {
+		return &config.FieldMeta{FieldType: loop_span.FieldTypeLong, FilterTypes: append([]loop_span.QueryTypeEnum(nil), longFilters...)}
+	}
+	return map[string]*config.FieldMeta{
+		loop_span.SpanFieldTraceId:  stringMeta(),
+		loop_span.SpanFieldSpanId:   stringMeta(),
+		loop_span.SpanFieldSpanName: stringMeta(),
+		loop_span.SpanFieldSpanType: stringMeta(),
+		loop_span.SpanFieldStatus: &config.FieldMeta{
+			FieldType:    loop_span.FieldTypeString,
+			FilterTypes:  append([]loop_span.QueryTypeEnum(nil), stringFilters...),
+			FieldOptions: &loop_span.FieldOptions{StringList: []string{loop_span.SpanStatusSuccess, loop_span.SpanStatusError}},
+		},
+		loop_span.SpanFieldStatusCode: longMeta(),
+		loop_span.SpanFieldDuration:   longMeta(),
+	}
+}
+
+func mergeTraceFieldMetas(existing, fallback map[string]*config.FieldMeta) map[string]*config.FieldMeta {
+	merged := make(map[string]*config.FieldMeta, len(existing)+len(fallback))
+	for field, meta := range existing {
+		merged[field] = meta
+	}
+	for field, meta := range fallback {
+		if _, ok := merged[field]; !ok {
+			merged[field] = meta
+		}
+	}
+	return merged
 }
 
 func (r *TraceServiceImpl) ListMetadata(ctx context.Context, req *ListMetadataReq) (*ListMetadataResp, error) {

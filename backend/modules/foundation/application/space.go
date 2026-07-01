@@ -6,8 +6,10 @@ package application
 import (
 	"context"
 	"strconv"
+	"strings"
 
 	"github.com/coze-dev/coze-loop/backend/infra/middleware/session"
+	domainspace "github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/foundation/domain/space"
 	"github.com/coze-dev/coze-loop/backend/kitex_gen/coze/loop/foundation/space"
 	"github.com/coze-dev/coze-loop/backend/modules/foundation/application/convertor"
 	"github.com/coze-dev/coze-loop/backend/modules/foundation/domain/user/repo"
@@ -59,9 +61,44 @@ func (s SpaceApplicationImpl) ListUserSpaces(ctx context.Context, request *space
 		return nil, err
 	}
 
+	spaces := slices.Map(spaceDOs, convertor.SpaceDO2DTO)
+	if len(spaces) == 0 {
+		if ctxUser, ok := session.UserInCtx(ctx); ok && isExternalSpaceUser(ctxUser) {
+			spaces = []*domainspace.Space{syntheticExternalSpace(ctx, userIDInCtx)}
+			total = 1
+		} else if spaces == nil {
+			spaces = []*domainspace.Space{}
+		}
+	}
+
 	r = &space.ListUserSpaceResponse{
-		Spaces: slices.Map(spaceDOs, convertor.SpaceDO2DTO),
+		Spaces: spaces,
 		Total:  ptr.Of(total),
 	}
 	return r, nil
+}
+
+func isExternalSpaceUser(ctxUser *session.User) bool {
+	if ctxUser == nil || ctxUser.ID == "" {
+		return false
+	}
+	return ctxUser.IsExternal || strings.HasPrefix(ctxUser.Name, "external-")
+}
+
+func syntheticExternalSpace(ctx context.Context, ownerUserID string) *domainspace.Space {
+	spaceIDStr := ownerUserID
+	if workspaceID, ok := session.ExternalWorkspaceIDInCtx(ctx); ok {
+		spaceIDStr = workspaceID
+	}
+	spaceID, err := strconv.ParseInt(spaceIDStr, 10, 64)
+	if err != nil || spaceID <= 0 {
+		spaceID, _ = strconv.ParseInt(ownerUserID, 10, 64)
+	}
+	return &domainspace.Space{
+		ID:          spaceID,
+		Name:        "Studio Workspace",
+		Description: "External Studio workspace",
+		SpaceType:   domainspace.SpaceType_Personal,
+		OwnerUserID: ownerUserID,
+	}
 }

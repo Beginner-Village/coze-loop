@@ -596,6 +596,40 @@ func TestTraceServiceImpl_GetTracesMetaInfo(t *testing.T) {
 			},
 			wantErr: true,
 		},
+		{
+			name: "get traces meta info uses fallback when base meta is missing",
+			fieldsGetter: func(ctrl *gomock.Controller) fields {
+				confMock := confmocks.NewMockITraceConfig(ctrl)
+				confMock.EXPECT().GetTraceFieldMetaInfo(gomock.Any()).Return(&config.TraceFieldMetaInfoCfg{
+					FieldMetas:      map[loop_span.PlatformType]map[loop_span.SpanListType][]string{},
+					AvailableFields: map[string]*config.FieldMeta{},
+				}, nil)
+				confMock.EXPECT().GetKeySpanTypes(gomock.Any()).Return(map[string][]string{
+					string(loop_span.PlatformDefault): {"model", "tool"},
+				})
+				tenantProviderMock := tenantmocks.NewMockITenantProvider(ctrl)
+				tenantProviderMock.EXPECT().GetTenantsByPlatformType(gomock.Any(), gomock.Any()).Return([]string{"spans"}, nil).AnyTimes()
+				filterFactoryMock := filtermocks.NewMockPlatformFilterFactory(ctrl)
+				buildHelper := NewTraceFilterProcessorBuilder(filterFactoryMock, map[entity.ProcessorScene][]span_processor.Factory{entity.SceneGetTrace: {}, entity.SceneListSpans: {}, entity.SceneAdvanceInfo: {}, entity.SceneIngestTrace: {}, entity.SceneSearchTraceOApi: {}, entity.SceneListSpansOApi: {}})
+				return fields{
+					traceConfig:    confMock,
+					buildHelper:    buildHelper,
+					tenantProvider: tenantProviderMock,
+				}
+			},
+			args: args{
+				ctx: context.Background(),
+				req: &GetTracesMetaInfoReq{
+					WorkspaceID:  1,
+					PlatformType: loop_span.PlatformCozeLoop,
+					SpanListType: loop_span.SpanListTypeRootSpan,
+				},
+			},
+			want: &GetTracesMetaInfoResp{
+				FilesMetas:      defaultTraceFieldMetas(),
+				KeySpanTypeList: []string{"model", "tool"},
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

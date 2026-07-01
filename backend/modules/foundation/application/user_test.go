@@ -1295,8 +1295,8 @@ func TestUserApplicationImpl_GetUserInfoByToken(t *testing.T) {
 				ctx: context.Background(),
 				req: &user.GetUserInfoByTokenRequest{},
 			},
-			want:    nil,
-			wantErr: errorx.NewByCode(errno.CommonInvalidParamCode),
+			want:    &user.GetUserInfoByTokenResponse{},
+			wantErr: nil,
 		},
 		{
 			name: "get user profile error",
@@ -1320,6 +1320,67 @@ func TestUserApplicationImpl_GetUserInfoByToken(t *testing.T) {
 			},
 			want:    nil,
 			wantErr: errors.New("db error"),
+		},
+		{
+			name: "external studio session falls back when loop user missing",
+			fields: fields{
+				userService: func() service.IUserService {
+					ctrl := gomock.NewController(t)
+					mockService := servicemocks.NewMockIUserService(ctrl)
+					mockService.EXPECT().GetUserProfile(gomock.Any(), int64(123)).
+						Return(nil, errors.New("user not exist"))
+					return mockService
+				}(),
+			},
+			args: args{
+				ctx: session.WithCtxUser(context.Background(), &session.User{
+					AppID: 111,
+					ID:    "123",
+					Name:  "external-123",
+					Email: "",
+				}),
+				req: &user.GetUserInfoByTokenRequest{},
+			},
+			want: &user.GetUserInfoByTokenResponse{
+				UserInfo: &domain.UserInfoDetail{
+					UserID:   ptr.Of("123"),
+					Name:     ptr.Of("external-123"),
+					NickName: ptr.Of("external-123"),
+					Email:    ptr.Of(""),
+				},
+			},
+			wantErr: nil,
+		},
+		{
+			name: "signed studio identity falls back when loop user missing",
+			fields: fields{
+				userService: func() service.IUserService {
+					ctrl := gomock.NewController(t)
+					mockService := servicemocks.NewMockIUserService(ctrl)
+					mockService.EXPECT().GetUserProfile(gomock.Any(), int64(123)).
+						Return(nil, errors.New("user not exist"))
+					return mockService
+				}(),
+			},
+			args: args{
+				ctx: session.WithCtxUser(context.Background(), &session.User{
+					AppID:      111,
+					ID:         "123",
+					Name:       "Lu",
+					Email:      "402087139@qq.com",
+					IsExternal: true,
+				}),
+				req: &user.GetUserInfoByTokenRequest{},
+			},
+			want: &user.GetUserInfoByTokenResponse{
+				UserInfo: &domain.UserInfoDetail{
+					UserID:   ptr.Of("123"),
+					Name:     ptr.Of("Lu"),
+					NickName: ptr.Of("Lu"),
+					Email:    ptr.Of("402087139@qq.com"),
+				},
+			},
+			wantErr: nil,
 		},
 		{
 			name: "success",

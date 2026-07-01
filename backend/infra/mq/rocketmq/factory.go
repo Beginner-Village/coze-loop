@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 
 	"github.com/apache/rocketmq-client-go/v2"
 	"github.com/apache/rocketmq-client-go/v2/consumer"
@@ -28,7 +29,7 @@ func (f *Factory) NewProducer(config mq.ProducerConfig) (mq.IProducer, error) {
 		return nil, errors.New("addr is empty")
 	}
 	opts := []producer.Option{
-		producer.WithNsResolver(NewCustomResolver([]string{fmt.Sprintf("%s:%s", getRmqNamesrvDomain(), getRmqNamesrvPort())})),
+		producer.WithNsResolver(NewCustomResolver(resolveNamesrvAddrs(config.Addr))),
 		producer.WithRetry(config.RetryTimes),
 	}
 	if config.ProduceTimeout > 0 {
@@ -66,7 +67,7 @@ func (f *Factory) NewConsumer(config mq.ConsumerConfig) (mq.IConsumer, error) {
 	}
 
 	opts := []consumer.Option{
-		consumer.WithNsResolver(NewCustomResolver([]string{fmt.Sprintf("%s:%s", getRmqNamesrvDomain(), getRmqNamesrvPort())})),
+		consumer.WithNsResolver(NewCustomResolver(resolveNamesrvAddrs(config.Addr))),
 		consumer.WithGroupName(config.ConsumerGroup),
 		consumer.WithConsumerOrder(config.Orderly),
 	}
@@ -104,40 +105,76 @@ type customResolver struct {
 }
 
 func (c *customResolver) Resolve() []string {
-	ret := make([]string, len(c.addrs))
-	for i, addr := range c.addrs {
-		ret[i] = addr
-		host, port, err := net.SplitHostPort(addr)
-		if err != nil {
-			continue
-		}
-		if net.ParseIP(host) != nil {
-			continue
-		}
-		addrs, _ := net.LookupHost(host)
-		if len(addrs) > 0 {
-			ret[i] = net.JoinHostPort(addrs[0], port)
-		}
-	}
-	return ret
+	return normalizeNamesrvAddrs(c.addrs)
 }
 
 func (c *customResolver) Description() string {
 	return fmt.Sprintf("custom resolver: %v", c.addrs)
 }
 
+func resolveNamesrvAddrs(fallback []string) []string {
+	domain := getRmqNamesrvDomain()
+	port := getRmqNamesrvPort()
+	if domain != "" && port != "" {
+		return normalizeNamesrvAddrs([]string{net.JoinHostPort(domain, port)})
+	}
+
+	addrs := make([]string, 0, len(fallback))
+	for _, addr := range fallback {
+		addr = strings.TrimSpace(addr)
+		if addr != "" {
+			addrs = append(addrs, addr)
+		}
+	}
+	return normalizeNamesrvAddrs(addrs)
+}
+
+func normalizeNamesrvAddrs(addrs []string) []string {
+	ret := make([]string, 0, len(addrs))
+	for _, addr := range addrs {
+		addr = strings.TrimSpace(addr)
+		if addr == "" {
+			continue
+		}
+		ret = append(ret, resolveNamesrvAddr(addr))
+	}
+	return ret
+}
+
+func resolveNamesrvAddr(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return addr
+	}
+	if net.ParseIP(host) != nil {
+		return addr
+	}
+	ips, err := net.LookupHost(host)
+	if err != nil || len(ips) == 0 {
+		return addr
+	}
+	return net.JoinHostPort(ips[0], port)
+}
+
 func getRmqNamesrvDomain() string {
-	return os.Getenv("COZE_LOOP_RMQ_NAMESRV_DOMAIN")
+	return getLoopEnv("RMQ_NAMESRV_DOMAIN")
 }
 
 func getRmqNamesrvPort() string {
-	return os.Getenv("COZE_LOOP_RMQ_NAMESRV_PORT")
+	return getLoopEnv("RMQ_NAMESRV_PORT")
 }
 
 func getRmqNamesrvUser() string {
-	return os.Getenv("COZE_LOOP_RMQ_NAMESRV_USER")
+	return getLoopEnv("RMQ_NAMESRV_USER")
 }
 
 func getRmqNamesrvPassword() string {
-	return os.Getenv("COZE_LOOP_RMQ_NAMESRV_PASSWORD")
+	return getLoopEnv("RMQ_NAMESRV_PASSWORD")
+}
+
+func getLoopEnv(name string) string {
+	if v := os.Getenv("COZE_LOOP_" + name); v != "" {
+		return v
+	}
+	return os.Getenv("YNET_LOOP_" + name)
 }

@@ -125,10 +125,12 @@ func (s sessionServiceImpl) ValidateSession(ctx context.Context, sessionID strin
 		if err := json.Unmarshal(sessionData, &session); err != nil {
 			return nil, errorx.New("invalid session data: %w", err)
 		}
-		if time.Now().After(session.ExpiresAt) {
-			return nil, errorx.New("session expired")
+		if isLoopSessionPayload(session) {
+			if time.Now().After(session.ExpiresAt) {
+				return nil, errorx.New("session expired")
+			}
+			return &session, nil
 		}
-		return &session, nil
 	}
 
 	// Fallback: 验 Studio 签名的 session
@@ -155,4 +157,11 @@ func (s sessionServiceImpl) ValidateSession(ctx context.Context, sessionID strin
 	}
 
 	return nil, errorx.New("invalid session signature")
+}
+
+func isLoopSessionPayload(session Session) bool {
+	return session.UserID != "" &&
+		session.SessionID > 0 &&
+		!session.CreatedAt.IsZero() &&
+		!session.ExpiresAt.IsZero()
 }
